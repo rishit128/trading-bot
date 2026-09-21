@@ -1,0 +1,90 @@
+"""The deterministic risk gate. It is the only place order quantity is decided."""
+from dataclasses import dataclass, field
+from typing import Optional, Tuple
+
+from src.config import RiskLimits
+
+
+@dataclass(frozen=True)
+class Portfolio:
+    """Account state the risk engine judges a trade against."""
+    cash: float
+    equity: float
+    positions: dict = field(default_factory=dict)  # symbol -> market value in account currency
+    position_qty: dict = field(default_factory=dict)  # symbol -> shares held
+    start_of_day_equity: Optional[float] = None
+    peak_equity: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class RiskDecision:
+    """Approved or rejected, with the share quantity and the reason."""
+    approved: bool
+    quantity: int
+    reason: str
+
+
+def _reject(reason: str) -> RiskDecision:
+    return RiskDecision(False, 0, reason)
+
+
+class RiskEngine:
+    """Deterministic gate. The only source of order quantity: callers must not size trades themselves."""
+
+    def __init__(self, limits: RiskLimits):
+        self.limits = limits
+
+    def evaluate(self, action: str, confidence: float, symbol: str, price: float, portfolio: Portfolio) -> RiskDecision:
+        """Decide whether, and how much, to trade for a BUY or SELL signal."""
+        if action == "HOLD":
+            return _reject("HOLD: nothing to do")
+        if action not in ("BUY", "SELL"):
+            return _reject(f"unknown action {action!r}")
+        if price <= 0 or portfolio.equity <= 0:
+            return _reject("invalid price or equity")
+        if confidence < self.limits.min_confidence:
+            return _reject(f"confidence {confidence:.2f} below minimum {self.limits.min_confidence:.2f}")
+
+        if action == "SELL":
+            held = portfolio.position_qty.get(symbol, 0)
+            if held <= 0:
+                return _reject(f"no {symbol} position to sell (shorting disabled)")
+            return RiskDecision(True, int(held), f"closing full {symbol} position")
+
+        return self._evaluate_buy(symbol, price, portfolio)
+
+    def halt_reason(self, p: Portfolio) -> Optional[Tuple[str, str]]:
+        """(kind, message) when new buys are blocked at portfolio level; kind is stable across cycles."""
+        lim = self.limits
+        if p.start_of_day_equity and p.start_of_day_equity > 0:
+            day_loss = (p.start_of_day_equity - p.equity) / p.start_of_day_equity
+            if day_loss >= lim.max_daily_loss_pct:
+                return "daily_loss", f"daily loss {day_loss:.2%} reached limit {lim.max_daily_loss_pct:.2%}"
+        if p.peak_equity and p.peak_equity > 0:
+            drawdown = (p.peak_equity - p.equity) / p.peak_equity
+            if drawdown >= lim.max_drawdown_pct:
+                return "drawdown", f"drawdown {drawdown:.2%} reached limit {lim.max_drawdown_pct:.2%}"
+        return None
+
+    def _evaluate_buy(self, symbol: str, price: float, p: Portfolio) -> RiskDecision:
+        lim = self.limits
+
+        halt = self.halt_reason(p)
+        if halt:
+            return _reject(halt[1])
+
+        if symbol not in p.positions and len(p.positions) >= lim.max_open_positions:
+            return _reject(f"max open positions reached ({lim.max_open_positions})")
+
+        existing_value = p.positions.get(symbol, 0.0)
+        position_room = p.equity * lim.max_position_pct - existing_value
+        total_exposure = sum(p.positions.values())
+        exposure_room = p.equity * lim.max_portfolio_exposure_pct - total_exposure
+        budget = min(position_room, exposure_room, p.cash)
+
+        if budget < price:
+            return _reject(
+                f"no room: position_room={position_room:,.0f} exposure_room={exposure_room:,.0f} cash={p.cash:,.0f}"
+            )
+        qty = int(budget // price)
+        return RiskDecision(True, qty, f"approved {qty} shares (value {qty * price:,.0f})")

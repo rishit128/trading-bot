@@ -1,0 +1,51 @@
+"""Per-stock market data and news fetching (Yahoo Finance, Alpaca news)."""
+import logging
+import os
+from datetime import date
+from typing import Callable, List, Optional
+
+import pandas as pd
+import yfinance as yf
+from alpaca.data.historical.news import NewsClient
+from alpaca.data.requests import NewsRequest
+
+from src.net import apply_timeout
+from src.data.indicators import MAX_STALE_DAYS, Snapshot, StaleDataError, build_snapshot
+
+log = logging.getLogger(__name__)
+
+
+def fetch_snapshot(symbol: str, suffix: str = "", as_of: Optional[Callable[[], date]] = None,
+                   download: Callable = yf.download, timeout: float = 30.0,
+                   today: Callable[[], date] = date.today) -> Snapshot:
+    """suffix is the Yahoo exchange suffix, e.g. '.NS' for NSE; the snapshot keeps the plain symbol.
+
+    as_of returns the last COMPLETED session date; later (still-forming) bars are dropped, so the indicators - and the
+    AI prompt built from them - are identical all session and match how the backtest saw the data."""
+    bars = download(symbol + suffix, period="2y", interval="1d", progress=False, auto_adjust=True, timeout=timeout)
+    if bars.empty:
+        raise ValueError(f"{symbol}: no market data returned")
+    if hasattr(bars.columns, "levels"):
+        bars.columns = bars.columns.get_level_values(0)
+    bars = bars.dropna(subset=["Close"])
+    if as_of is not None:
+        idx = bars.index.tz_localize(None) if bars.index.tz is not None else bars.index
+        bars = bars[idx.normalize() <= pd.Timestamp(as_of())]
+    snap = build_snapshot(symbol, bars)
+    expected = as_of() if as_of is not None else today()
+    if snap.bar_date is not None and (expected - date.fromisoformat(snap.bar_date)).days > MAX_STALE_DAYS:
+        raise StaleDataError(f"{symbol}: last bar {snap.bar_date} is more than {MAX_STALE_DAYS} days before {expected} (suspended?)")
+    if snap.volume <= 0:
+        raise StaleDataError(f"{symbol}: last bar {snap.bar_date} shows zero volume (no trading)")
+    return snap
+
+
+def fetch_headlines(symbol: str, limit: int = 8) -> List[str]:
+    """Best effort: news failure means no sentiment signal, never a crash."""
+    try:
+        client = apply_timeout(NewsClient(os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"]))
+        news = client.get_news(NewsRequest(symbols=symbol, limit=limit, sort="desc"))
+        return [n.headline for n in news.data.get("news", [])]
+    except Exception as e:
+        log.warning("news fetch failed for %s: %s: %s", symbol, type(e).__name__, e)
+        return []

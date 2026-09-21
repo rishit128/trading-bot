@@ -1,0 +1,22 @@
+python-dotenv==1.0.1
+pydantic==2.9.2
+
+# Market data / broker
+alpaca-py==0.44.0
+yfinance==1.7.0
+pandas==2.2.3
+
+# LLM (OpenRouter, OpenAI-SDK compatible)
+openai==3.16.2
+
+# Database
+sqlalchemy==2.0.54
+
+# HTTP (Telegram client)
+httpx==0.28.1
+
+# Market calendars (NSE/BSE holidays)
+exchange_calendars==4.13.2
+
+# Orchestration
+langgraph==1.2.11

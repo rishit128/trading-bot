@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Testing
+pytest==8.3.3
+pyflakes==3.4.0
