@@ -1,8 +1,7 @@
 # AI Trading Bot (India / NSE first)
 
 A paper-trading bot: free OpenRouter AI models propose trades, a deterministic risk engine alone decides order size, and
-a LangGraph workflow orchestrates everything. **Indian market by default** (NSE, rupees, IST hours, NSE holidays);
-US stocks are supported via Alpaca with `MARKET=us`.
+a LangGraph workflow orchestrates everything. **Indian market by default** (NSE, rupees, IST hours, NSE holidays).
 
 > **Status: entry signal unproven. Paper trading / dry run only. Never real money.**
 > - 10-year test on Indian stocks: the bot's entry rule earned the same as simply holding the stock universe (+0.2%/yr
@@ -25,6 +24,9 @@ python main.py --screen        # scan all ~2,300 NSE stocks, print today's top c
 python main.py                 # one dry-run cycle: scan + AI + risk check, records decisions, trades nothing
 python main.py --loop 30       # repeat every 30 min while NSE is open (dry run)
 python main.py --loop 30 --live   # same, but trade in the built-in paper simulator
+python main.py --positions     # every open position (P&L, buy date), closed-trade history, overall status
+python main.py --intraday [--live]   # intraday breakout engine, own paper account (dry run without --live); backtest lost, see STRATEGY.md
+python main.py --intraday-report     # the intraday account's positions, history and status
 python main.py --report        # paper account: equity, trades, win rate, fees, exits
 python main.py --graph         # print the LangGraph workflows as Mermaid diagrams
 python main.py --check         # test keys and connectivity (OpenRouter, broker, Yahoo, Telegram) and exit
@@ -44,7 +46,7 @@ DECISION (per stock)   decide -> risk approved? -> execute
 
 1. **Universe** (`src/data`): the official NSE EQ-series list (~2,300 stocks) is scanned once a day with plain code:
    drops price < Rs 100, average daily traded value < Rs 10 crore, < 200 days of history, daily volatility > 4%, and
-   anything not in an uptrend (price > MA50 > MA200, RSI < 70); ranks the rest by risk-adjusted 3-month momentum and
+   anything not in an uptrend (price > MA50 > MA200, RSI < 70); ranks the rest by 12-1 month momentum (12-month return skipping the latest month; needs a year of history) and
    keeps the top 15. Stocks you hold are always added so exits are evaluated.
 2. **Analysis on completed daily bars only.** The AI prompt is therefore identical all session (and matches the
    backtest), so **AI answers are cached**: after the first cycle, later cycles cost 0 AI calls (measured: 84 s for the
@@ -84,7 +86,7 @@ In `main.py`, add it to the `agents` list in `build_pipeline`. No graph or strat
 | A position loses its stop (for example a SELL fails after its stop was cancelled) | Every cycle checks each long position for a working stop; alerts once, waits 3 s, re-checks, then places a protective stop (`AUTO_PROTECT=false` = alert only). A failed SELL triggers the check immediately. |
 | An order is accepted but not fully filled | The broker is asked what really filled; the filled quantity and price are stored, and a partial fill raises an alert. |
 | Stale or dead data (suspended stock, no volume) | Refused with a clear error for that stock; the scanner drops stocks whose data stops early. |
-| A network call hangs | Every Yahoo, Alpaca, OpenRouter and Telegram call has a timeout (30-60 s). |
+| A network call hangs | Every Yahoo, OpenRouter and Telegram call has a timeout (30-60 s). |
 | A bad key or dead service | `python main.py --check` (also run at every start) tests OpenRouter, the broker, market data and Telegram; a critical failure stops startup with a clear message. |
 | All AI models fail | Stocks become HOLD (flagged degraded) and you are alerted. |
 | A -20% drawdown halt | Buying stops and you are alerted; after you review, `/rebase` in Telegram restarts the peak measurement (the daily-loss limit is unaffected). |
@@ -94,7 +96,7 @@ In `main.py`, add it to the `agents` list in `build_pipeline`. No graph or strat
 ## Configuration
 
 `.env` keys and every tunable (with defaults) are documented in `.env.example`. Limits are validated at startup
-(a typo like `MAX_POSITION_PCT=5` refuses to start). `MARKET=us` needs Alpaca paper keys and adds the news-sentiment agent.
+(a typo like `MAX_POSITION_PCT=5` refuses to start).
 
 ## Docker
 
@@ -225,16 +227,26 @@ flowchart TD
 - **No real Indian broker integration.** Automated real-money trading in India is subject to SEBI/exchange rules and
   your broker's requirements; check the current rules before ever attempting it.
 - The universe scan and the AI answer cache live in memory per process (a restart re-scans and re-asks once).
-- If a US SELL fails after its stop/target orders were cancelled, the position is briefly unprotected: one retry, then an
-  immediate protection check that alerts and places a protective stop. That repair path is unit-tested; `protect()` has
-  not yet been exercised against the real Alpaca API with an open position. Free OpenRouter models are rate-limited and get withdrawn; an all-models outage makes the bot
-  hold and alerts you. Headlines (US) are untrusted AI input: mitigated, not eliminated.
+- Free OpenRouter models are rate-limited and get withdrawn; an all-models outage makes the bot hold and alerts you.
 - **Phase 5 (weeks of paper trading) was started** (see Docker) and needs ~4 weeks to judge. **Phase 6 (real money) is
   deliberately not built and not advised**: the entry signal is unproven, there is no Indian broker integration, and
-  real-money automated trading in India is regulated. Until now `--live` had only been run on a closed market and the
-  Alpaca path against fakes; the real Alpaca test (`scripts/test_alpaca_connection.py`) has since passed.
+  real-money automated trading in India is regulated.
 
 ## Scripts
 
-`scripts/test_yfinance.py`, `scripts/test_openrouter_api.py` (real calls, safe), `scripts/test_alpaca_connection.py`
-(US only; submits a 1-share order and a bracket order to your Alpaca PAPER account, then cancels both and checks nothing is left).
+`scripts/test_yfinance.py`, `scripts/test_openrouter_api.py` (real calls, safe).
+
+## Project layout
+
+```
+main.py                 argument parsing and the swing bot's wiring (build_pipeline, preflight)
+src/app/                kit.py (market kit, paper-broker factory), reports.py (--report/--positions/--screen/--graph), intraday_cli.py
+src/agents/, llm.py     AI agents and the OpenRouter client (cached, with model fallback)
+src/data/               NSE list, Yahoo data, indicators, universe scanner, market clock
+src/engine/             risk engine, strategy (agent combination), paper broker
+src/intraday/           opening-range-breakout strategy (pure functions) and the 5-minute engine
+src/monitoring/         Telegram alerts and commands
+src/research/           research engine, candidate signals, NSE delivery-% data
+scripts/                backtests, research, start_bots.sh (idempotent starter, also run at reboot by cron)
+logs/                   bot.log, intraday.log (git-ignored)
+```

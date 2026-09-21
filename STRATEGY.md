@@ -3,14 +3,14 @@
 Defaults chosen by the builder, NOT by the account owner: review them, then change via `.env` (see `.env.example`).
 
 ## Market and universe
-- **India (default):** all NSE main-board EQ-series stocks (~2,300), scanned once per day. `MARKET=us` switches to US stocks.
+- **India (default):** all NSE main-board EQ-series stocks (~2,300), scanned once per day.
 - Filters: price >= Rs 100, average daily traded value >= Rs 10 crore, >= 200 days of history, daily volatility <= 4%,
   price > MA50 > MA200, RSI(14) < 70. Ranked by 63-day return / volatility; top 15 analysed, plus current holdings.
 - `UNIVERSE=watchlist` uses a fixed `WATCHLIST` instead.
 
 ## Entry
 - Technical agent (AI over price, MA50, MA200, RSI14, volume of the **last completed session**) proposes BUY / SELL / HOLD
-  with a confidence; long only. US adds a news-sentiment advisor that can only confirm or veto.
+  with a confidence; long only.
 - Multiple agents combine by role: leads must agree, advisors confirm or veto (`src/engine/strategy.py`). Minimum confidence 0.60.
 
 ## Exits (changed after a 9-year test, see below)
@@ -84,3 +84,22 @@ Zero-cost the original still only made +7.9%: costs (~0.24% round trip on ~3,700
 - **Not established:** any edge from the entry signal; anything about the AI agent on Indian stocks (all Indian evidence
   uses the plain rule as a stand-in); results without survivorship bias; live behaviour (circuit limits, real fills).
 - The exit change does not make this a validated strategy. Still paper / dry run only, never real money.
+
+## Round 2 research (2026-09-21) and the ranking change
+Ten years of Nifty 500 daily data, same pre-declared rules as `scripts/research_signals.py`. Excess is CAGR over an equal-weight basket of the same stocks (which carries ~9 points/yr of survivorship bias).
+- Current trend rule: +0.1%/yr excess. Adds nothing over holding the basket.
+- 12-1 momentum, top 20 monthly: +11.2%/yr excess, information ratio 0.80, +7.9%/yr in the last 3 years. Max drawdown -41% (fails the -30% rule).
+- 6-1 momentum: +8.3%. Trend rule + beats Nifty over 6m: +0.6%. Trend rule + Nifty>200d regime filter: -4.7% (drawdown -29%). 12-1 + regime filter: +4.0%.
+- **Change made:** the scanner now ranks by 12-1 month momentum instead of risk-adjusted 3-month momentum. Not proven; watch the paper results.
+- Not tested: results-date and delivery-% filters (need historical NSE data that Yahoo does not provide).
+
+## Round 3: delivery percentage (2026-09-21, only ~3 years of data: 2023-09 to 2026-09)
+Filter: 20-day average delivery % above the day's cross-sectional median. Compared with the same-window equal-weight basket (21.2% CAGR).
+- Momentum 12-1: 30.3% CAGR, Sharpe 1.12, max DD -33%. **With the delivery filter: 35.3%, Sharpe 1.54, DD -27%** (excess +14.1%/yr; last year +18.2%).
+- Trend rule: 19.5% -> 17.6% with the filter. No help.
+- One short window, one bull-market regime, single test: promising, **not proven**, and NOT wired into the bot. Re-run `scripts/research_delivery.py` as the cache grows before using it.
+
+## Intraday opening-range breakout (2026-09-21)
+Rule (`src/intraday/strategy.py`, parameters fixed in advance, not tuned): long only; opening range = first 15 minutes; buy when a 5-minute bar closes above the range high, above VWAP, with volume >= 1.5x average, 09:30-14:00; stop = range low; target = 2x risk; everything closed by 15:15 IST; one trade per stock per day; risk 0.5% of equity per trade, at most 5 positions, 2% daily loss halt. Runs in its own paper account (`intraday.db`).
+- **Backtest** (`scripts/backtest_intraday.py`, Nifty 100, Yahoo's last 58 trading days, costs + 0.05% slippage): 290 trades, win rate 36%, **-11.2%**, Sharpe -6.3, 28% profitable days, negative in both halves. Stops lost ₹189k, targets made ₹75k, fees ₹33k.
+- Sample is one ~3-month regime, so this is not final, but there is no evidence of an edge. Not tuned afterwards on purpose (tuning on 58 days would just fit noise). The engine is paper-only to gather live evidence.

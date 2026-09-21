@@ -69,6 +69,14 @@ def main():
         "RSI(2) dip in uptrend (max 20)": signals.rsi2_mean_reversion(close, volume, mtv),
         "current trend rule, no stops (max 20)": signals.trend_rule(close, volume, mtv),
     }
+    # Round 2 (declared before running): does an index-relative filter or a market-regime filter improve the signal?
+    nifty_aligned = nifty.reindex(close.index).ffill()
+    candidates.update({
+        "R2 momentum 6-1 (top 20, monthly)": signals.xs_momentum_6m(close, volume, mtv),
+        "R2 trend rule + beats Nifty 6m": signals.trend_rule_beating_index(close, volume, mtv, nifty_aligned),
+        "R2 trend rule + Nifty>200d regime": signals.regime_filter(signals.trend_rule(close, volume, mtv), nifty_aligned),
+        "R2 momentum 12-1 + Nifty>200d regime": signals.regime_filter(signals.xs_momentum(close, volume, mtv), nifty_aligned),
+    })
     results = [evaluate(n, w, close, args, nifty_stats["sharpe"]) for n, w in candidates.items()]
     timing = signals.index_trend_timing(nifty).reindex(close.index).fillna(0.0)
     results.append(evaluate("Nifty 50 above 200-day (else cash)", timing, nifty.to_frame("INDEX").reindex(close.index), args,

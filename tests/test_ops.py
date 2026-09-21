@@ -141,16 +141,15 @@ def test_broker_and_telegram_checks_report_what_they_found():
 def test_build_checks_marks_keys_and_broker_critical_and_covers_the_market():
     india = build_checks(Settings(market="india"), FakeBroker(Portfolio(1, 1)), {"OPENROUTER_API_KEY": "k"}, download=lambda *a, **k: None)
     assert [(n.split(" (")[0], crit) for n, crit, _ in india] == [("OpenRouter key", True), ("Broker", True), ("Market data", False)]
-    with_tg = build_checks(Settings(market="us"), FakeBroker(Portfolio(1, 1)), {"TELEGRAM_BOT_TOKEN": "t"}, download=lambda *a, **k: None)
+    with_tg = build_checks(Settings(market="india"), FakeBroker(Portfolio(1, 1)), {"TELEGRAM_BOT_TOKEN": "t"}, download=lambda *a, **k: None)
     assert with_tg[-1][0] == "Telegram bot" and with_tg[-1][1] is False
 
 
-def test_the_market_data_probe_uses_the_right_index_per_market():
+def test_the_market_data_probe_uses_the_nifty_index():
     seen = []
-    for market in ("india", "us"):
-        checks = build_checks(Settings(market=market), FakeBroker(Portfolio(1, 1)), {}, download=lambda t, **k: seen.append(t))
-        run_checks([c for c in checks if c[0].startswith("Market data")])
-    assert seen == ["^NSEI", "SPY"]
+    checks = build_checks(Settings(market="india"), FakeBroker(Portfolio(1, 1)), {}, download=lambda t, **k: seen.append(t))
+    run_checks([c for c in checks if c[0].startswith("Market data")])
+    assert seen == ["^NSEI"]
 
 
 # ---------------------------------------------------------------- drawdown baseline reset

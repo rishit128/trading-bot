@@ -256,3 +256,26 @@ def test_works_end_to_end_inside_the_trading_pipeline(tmp_path):
     assert r.order_status == "filled" and broker.portfolio().position_qty == {"AAA": 500}  # 5% of 1,000,000 / 100
     [again] = pipe.run_once()  # position now at its 5% cap: the risk engine stops a second buy before cooldown matters
     assert again.order_status is None and "no room" in again.risk.reason
+
+
+def test_holdings_show_buy_date_live_price_and_profit_or_loss_best_first(tmp_path):
+    broker, feed, _, _, _ = make(tmp_path, prices={"UP": 100.0, "DOWN": 200.0})
+    broker.buy_with_bracket("UP", 10, 100.0, 0.08, 1.0)
+    broker.buy_with_bracket("DOWN", 5, 200.0, 0.08, 1.0)
+    feed.prices.update({"UP": 110.0, "DOWN": 180.0})
+    up, down = broker.holdings()
+    assert (up["symbol"], up["pnl"], round(up["pnl_pct"], 2), up["opened_at"]) == ("UP", 100.0, 0.10, T0)
+    assert (down["symbol"], down["pnl"], round(down["pnl_pct"], 2), down["stop"]) == ("DOWN", -100.0, -0.10, 184.0)
+
+
+def test_trade_history_lists_closed_trades_newest_first_with_both_dates(tmp_path):
+    broker, feed, _, now, _ = make(tmp_path, prices={"AAA": 100.0, "BBB": 50.0})
+    broker.buy_with_bracket("AAA", 10, 100.0, 0.08, 1.0)
+    broker.buy_with_bracket("BBB", 10, 50.0, 0.08, 1.0)
+    feed.prices.update({"AAA": 120.0, "BBB": 40.0})
+    broker.sell("AAA", 10)
+    now[0] = T0 + timedelta(days=1)
+    broker.sell("BBB", 10)
+    first, second = broker.trade_history()
+    assert (first["symbol"], first["net_pnl"], first["opened_at"], first["closed_at"]) == ("BBB", -100.0, T0, T0 + timedelta(days=1))
+    assert (second["symbol"], second["net_pnl"], second["reason"]) == ("AAA", 200.0, "SIGNAL")

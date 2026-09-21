@@ -1,15 +1,11 @@
-"""Per-stock market data and news fetching (Yahoo Finance, Alpaca news)."""
+"""Per-stock market data and news fetching (Yahoo Finance)."""
 import logging
-import os
 from datetime import date
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 import pandas as pd
 import yfinance as yf
-from alpaca.data.historical.news import NewsClient
-from alpaca.data.requests import NewsRequest
 
-from src.net import apply_timeout
 from src.data.indicators import MAX_STALE_DAYS, Snapshot, StaleDataError, build_snapshot
 
 log = logging.getLogger(__name__)
@@ -39,13 +35,3 @@ def fetch_snapshot(symbol: str, suffix: str = "", as_of: Optional[Callable[[], d
         raise StaleDataError(f"{symbol}: last bar {snap.bar_date} shows zero volume (no trading)")
     return snap
 
-
-def fetch_headlines(symbol: str, limit: int = 8) -> List[str]:
-    """Best effort: news failure means no sentiment signal, never a crash."""
-    try:
-        client = apply_timeout(NewsClient(os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"]))
-        news = client.get_news(NewsRequest(symbols=symbol, limit=limit, sort="desc"))
-        return [n.headline for n in news.data.get("news", [])]
-    except Exception as e:
-        log.warning("news fetch failed for %s: %s: %s", symbol, type(e).__name__, e)
-        return []

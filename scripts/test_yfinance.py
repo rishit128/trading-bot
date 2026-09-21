@@ -1,4 +1,4 @@
-"""Verify yfinance can fetch market data (fallback data source behind Alpaca)."""
+"""Verify yfinance can fetch market data."""
 import sys
 
 import yfinance as yf

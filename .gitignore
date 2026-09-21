@@ -8,4 +8,7 @@ backtest_cache.json
 backtest_report.json
 backtest_run.log
 research_cache/
+logs/
+*.log
+*_out.txt
 research_results.csv

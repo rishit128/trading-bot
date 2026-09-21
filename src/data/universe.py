@@ -1,11 +1,10 @@
-"""Whole-market scanner. Stage 1 (this module) is cheap deterministic code over every listed US common stock;
+"""Whole-market scanner. Stage 1 (this module) is cheap deterministic code over every listed NSE stock;
 only the few survivors go on to the (rate-limited, free) LLM agents."""
 import logging
 import math
-import re
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Callable, List, Optional, Sequence
 
 import pandas as pd
@@ -14,13 +13,7 @@ from src.data.indicators import MAX_STALE_DAYS, MIN_BARS, compute_rsi
 
 log = logging.getLogger(__name__)
 
-EXCHANGES = ("NASDAQ", "NYSE", "AMEX")
-# Heuristic: Alpaca does not flag ETFs/warrants/preferreds, so drop them by name. Deliberately conservative.
-NON_COMMON = re.compile(
-    r"\b(ETF|ETN|Fund|Index|Warrants?|Rights?|Units?|Notes?|Preferred|Depositary)\b"
-    r"|\b(iShares|ProShares|Direxion|SPDR|Vanguard|Invesco|WisdomTree|VanEck|GraniteShares)\b",
-    re.IGNORECASE,
-)
+MOMENTUM_BARS = 253  # bars needed for 12-1 month momentum (252 trading days back, skipping the latest 21)
 
 
 @dataclass(frozen=True)
@@ -32,10 +25,14 @@ class Candidate:
     rsi: float
     avg_traded_value: float
     daily_volatility: float
+    momentum_12_1: Optional[float] = None  # return from 12 months ago to 1 month ago (skips the latest month)
 
     @property
     def score(self) -> float:
-        """Risk-adjusted momentum: 63-day return per unit of 63-day volatility. Favours smooth trends over spikes."""
+        """Ranking score: 12-1 month momentum when known (the only signal that beat holding everything in the 10-year
+        research, see STRATEGY.md); otherwise 63-day return per unit of 63-day volatility."""
+        if self.momentum_12_1 is not None:
+            return self.momentum_12_1
         return self.momentum_63d / (self.daily_volatility * math.sqrt(63)) if self.daily_volatility > 0 else 0.0
 
 
@@ -48,19 +45,6 @@ class ScreenConfig:
     max_daily_volatility: float = 0.04
 
 
-def list_tradable_stocks(assets: Sequence) -> List[str]:
-    """Tradable US common stocks, excluding ETFs, warrants and OTC by exchange and name."""
-    out = []
-    for a in assets:
-        exchange = getattr(a.exchange, "value", str(a.exchange))
-        if not a.tradable or exchange not in EXCHANGES or not a.symbol.isalpha():
-            continue
-        if NON_COMMON.search(a.name or ""):
-            continue
-        out.append(a.symbol)
-    return sorted(out)
-
-
 def screen_bars(bars: pd.DataFrame, cfg: ScreenConfig) -> List[Candidate]:
     """bars: MultiIndex (symbol, timestamp) daily OHLCV of COMPLETED sessions. Returns every symbol that passes."""
     found = []
@@ -68,7 +52,7 @@ def screen_bars(bars: pd.DataFrame, cfg: ScreenConfig) -> List[Candidate]:
         return found
     newest = bars.index.get_level_values(1).max()
     for symbol, g in bars.groupby(level=0):
-        if len(g) < MIN_BARS:
+        if len(g) < max(MIN_BARS, MOMENTUM_BARS):  # a full year is needed to rank by 12-1 month momentum
             continue
         if (newest - g.index.get_level_values(1)[-1]).days > MAX_STALE_DAYS:
             continue  # data stops early: suspended or delisted, not a tradable candidate
@@ -87,12 +71,13 @@ def screen_bars(bars: pd.DataFrame, cfg: ScreenConfig) -> List[Candidate]:
         rsi = compute_rsi(close)
         if rsi >= 70:
             continue
-        found.append(Candidate(symbol, price, price / float(close.iloc[-64]) - 1, rsi, traded_value, volatility))
+        mom_12_1 = float(close.iloc[-22] / close.iloc[-253] - 1)
+        found.append(Candidate(symbol, price, price / float(close.iloc[-64]) - 1, rsi, traded_value, volatility, mom_12_1))
     return found
 
 
 def rank(candidates: Sequence[Candidate], n: int) -> List[Candidate]:
-    """The top n candidates by risk-adjusted momentum."""
+    """The top n candidates by score (12-1 month momentum when available)."""
     return sorted(candidates, key=lambda c: c.score, reverse=True)[:n]
 
 
@@ -136,21 +121,3 @@ class UniverseScreener:
         """Current holdings first, then today's candidates: everything to analyse this cycle."""
         held = sorted(portfolio.positions)
         return held + [c.symbol for c in self.candidates() if c.symbol not in portfolio.positions]
-
-
-def alpaca_bar_fetcher(data_client, feed: str = "sip", lookback_days: int = 330):
-    """Completed sessions only (end = start of today UTC), so the screen matches how the backtest saw the data."""
-    from alpaca.data.enums import DataFeed
-    from alpaca.data.requests import StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame
-
-    def fetch(symbols: List[str]) -> pd.DataFrame:
-        """Completed daily bars for a batch of US symbols from Alpaca."""
-        now = datetime.now(timezone.utc)
-        end = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
-        request = StockBarsRequest(symbol_or_symbols=symbols, timeframe=TimeFrame.Day,
-                                   start=end - timedelta(days=lookback_days), end=end, feed=DataFeed(feed))
-        df = data_client.get_stock_bars(request).df
-        return df.rename(columns={"close": "Close", "volume": "Volume"}) if not df.empty else df
-
-    return fetch

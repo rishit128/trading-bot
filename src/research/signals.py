@@ -111,3 +111,25 @@ def equal_weight_universe(close, volume, min_traded_value):
 def index_trend_timing(index_close: pd.Series, window: int = 200) -> pd.DataFrame:
     """Hold the index while it is above its 200-day average, otherwise cash."""
     return pd.DataFrame({"INDEX": (index_close > index_close.rolling(window).mean()).astype(float)})
+
+
+# ---- Round 2 candidates (declared before running; literature-default parameters, not tuned) ----
+def regime_filter(weights: pd.DataFrame, index_close: pd.Series, window: int = 200) -> pd.DataFrame:
+    """Hold the given weights only while the index is above its 200-day average; otherwise go to cash."""
+    on = (index_close > index_close.rolling(window).mean()).astype(float).reindex(weights.index).fillna(0.0)
+    return weights.mul(on, axis=0)
+
+
+def xs_momentum_6m(close, volume, min_traded_value, top_n=20):
+    """6-1 month momentum (shorter memory than 12-1), top 20 by return, rebalanced monthly."""
+    return xs_momentum(close, volume, min_traded_value, lookback=126, skip=21, top_n=top_n)
+
+
+def trend_rule_beating_index(close, volume, min_traded_value, index_close: pd.Series, lookback=126, cap=20):
+    """The current trend rule, but a stock may only be bought if it beat the Nifty over the last 6 months."""
+    ma50, ma200 = close.rolling(50).mean(), close.rolling(200).mean()
+    idx = index_close.reindex(close.index).ffill()
+    beats = (close / close.shift(lookback) - 1).gt(idx / idx.shift(lookback) - 1, axis=0)
+    ok = liquid_mask(close, volume, min_traded_value)
+    enter = (close > ma50) & (ma50 > ma200) & (rsi_series(close, 14) < 70) & beats & ok
+    return _capped_equal_weight(stateful(enter, close < ma200), cap)

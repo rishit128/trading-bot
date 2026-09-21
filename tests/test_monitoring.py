@@ -8,10 +8,10 @@ from src.config import RiskLimits, Settings
 from src.control import Control
 from src.database import make_session_factory
 from src.engine.risk_engine import Portfolio
-from src.monitoring.telegram import HELP, CommandListener, Notifier, handle_command
+from src.monitoring.telegram import HELP, CommandListener, Html, Notifier, handle_command
 from tests.test_llm_and_pipeline import FakeBroker, make_pipeline
 
-SETTINGS = Settings(dry_run=True, risk=RiskLimits(), market="us", currency="$")
+SETTINGS = Settings(dry_run=True, risk=RiskLimits(), market="india", currency="₹")
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def test_commands_pause_resume_status_positions(control):
     broker = FakeBroker(Portfolio(90_000.0, 100_500.0, {"AAPL": 10_500.0}, {"AAPL": 70}, 100_000.0))
     assert "PAUSED" in handle_command("/pause", control, broker, SETTINGS) and control.is_paused()
     status = handle_command("/status", control, broker, SETTINGS)
-    assert "PAUSED" in status and "$100,500.00" in status and "+0.50% today" in status and "DRY RUN" in status
+    assert "PAUSED" in status and "₹100,500.00" in status and "+0.50% today" in status and "DRY RUN" in status
     assert "RESUMED" in handle_command("/resume", control, broker, SETTINGS) and not control.is_paused()
     assert "AAPL: 70 sh" in handle_command("/positions", control, broker, SETTINGS)
     assert handle_command("/pause@my_bot", control, broker, SETTINGS).startswith("Trading PAUSED")
@@ -131,3 +131,50 @@ def test_status_and_positions_use_rupees_for_the_india_market(control):
     india = Settings(dry_run=True, risk=RiskLimits(), market="india", currency="₹")
     assert "₹1,005,000.00" in handle_command("/status", control, broker, india)
     assert "RELIANCE: 85 sh, ₹105,000" in handle_command("/positions", control, broker, india)
+
+
+def test_positions_command_shows_buy_date_price_and_profit_when_the_broker_has_holdings(control):
+    from datetime import datetime, timezone
+
+    class Detailed(FakeBroker):
+        def holdings(self):
+            return [{"symbol": "RELIANCE", "qty": 10, "avg_price": 100.0, "price": 110.0, "pnl": 100.0, "pnl_pct": 0.1, "stop": 92.0,
+                     "opened_at": datetime(2026, 9, 21, tzinfo=timezone.utc)}]
+
+    text = handle_command("/positions", control, Detailed(Portfolio(1, 1)), SETTINGS)
+    assert isinstance(text, Html) and "<b>RELIANCE</b>  🟢 +10.0% (+₹100)" in text
+    assert "10 sh · bought 21 Sep at ₹100.00" in text and "now ₹110.00" in text and "Total unrealised</b>  🟢" in text
+
+
+def test_history_command_and_html_replies_are_sent_with_parse_mode(control):
+    from datetime import datetime, timezone
+
+    class Detailed(FakeBroker):
+        def trade_history(self):
+            return [{"symbol": "A<B", "qty": 5, "entry_price": 100.0, "exit_price": 90.0, "reason": "STOP", "fees": 12.0,
+                     "net_pnl": -62.0, "opened_at": datetime(2026, 9, 21, tzinfo=timezone.utc),
+                     "closed_at": datetime(2026, 9, 25, tzinfo=timezone.utc)}]
+
+    text = handle_command("/history", control, Detailed(Portfolio(1, 1)), SETTINGS)
+    assert "A&lt;B" in text and "🔴 -10.0% (-₹62)" in text and "21 Sep → 25 Sep" in text and "Realised net</b>  -₹62" in text
+    sent = []
+    Notifier("tok", "42", httpx.Client(transport=telegram_transport([], sent))).send(text)
+    assert sent[0]["parse_mode"] == "HTML"
+
+
+def test_intraday_commands_show_the_separate_account(control):
+    from datetime import datetime, timezone
+
+    class Intra(FakeBroker):
+        def holdings(self):
+            return [{"symbol": "ORB1", "qty": 10, "avg_price": 100.0, "price": 101.0, "pnl": 10.0, "pnl_pct": 0.01,
+                     "stop": 99.0, "opened_at": datetime(2026, 9, 21, tzinfo=timezone.utc)}]
+
+        def trade_history(self):
+            return []
+
+    intra = Intra(Portfolio(900_000.0, 1_000_500.0, {"ORB1": 1010.0}, {"ORB1": 10}, 1_000_000.0))
+    text = handle_command("/intraday", control, FakeBroker(Portfolio(1, 1)), SETTINGS, intra)
+    assert "INTRADAY account" in text and "₹1,000,500.00" in text and "+0.05% today" in text and "<b>ORB1</b>" in text
+    assert handle_command("/intraday_history", control, FakeBroker(Portfolio(1, 1)), SETTINGS, intra) == "No closed trades yet."
+    assert handle_command("/intraday", control, FakeBroker(Portfolio(1, 1)), SETTINGS) == HELP  # no intraday account wired

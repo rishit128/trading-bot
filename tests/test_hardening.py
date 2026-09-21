@@ -1,128 +1,18 @@
 import json
 import sqlite3
 from datetime import date
-from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-from alpaca.trading.enums import OrderSide, TimeInForce
 from sqlalchemy import select
 
 from src.data.indicators import StaleDataError, build_snapshot
 from src.data.market_data import fetch_snapshot
 from src.data.universe import ScreenConfig, screen_bars
 from src.database import DecisionRecord, OrderRecord, make_session_factory
-from src.engine.broker import AlpacaBroker, Fill
+from src.engine.paper_broker import Fill
 from src.engine.risk_engine import Portfolio
-from src.net import apply_timeout
 from tests.test_llm_and_pipeline import FakeBroker, make_pipeline
-
-
-# ---------------------------------------------------------------- Alpaca: finding unprotected positions
-def order(symbol, side, otype, legs=()):
-    return SimpleNamespace(symbol=symbol, side=side, order_type=otype, legs=list(legs), id=f"{symbol}-{otype}")
-
-
-def position(symbol, qty=50, avg=100.0):
-    return SimpleNamespace(symbol=symbol, qty=str(qty), avg_entry_price=str(avg))
-
-
-class FakeAlpaca:
-    def __init__(self, orders=(), positions=(), statuses=()):
-        self.orders, self.positions, self.statuses = list(orders), list(positions), list(statuses)
-        self.requests, self.submitted, self.polls = [], [], 0
-
-    def get_orders(self, req):
-        self.requests.append(req)
-        return self.orders
-
-    def get_all_positions(self):
-        return self.positions
-
-    def submit_order(self, req):
-        self.submitted.append(req)
-        return SimpleNamespace(id="stop-1", status="accepted")
-
-    def get_order_by_id(self, oid):
-        self.polls += 1
-        return self.statuses[min(self.polls - 1, len(self.statuses) - 1)]
-
-
-def unprotected(orders, positions):
-    return AlpacaBroker(FakeAlpaca(orders, positions)).unprotected_positions()
-
-
-def test_position_with_a_stop_leg_inside_a_bracket_is_protected():
-    bracket = order("AAPL", "buy", "market", legs=[order("AAPL", "sell", "limit"), order("AAPL", "sell", "stop")])
-    assert unprotected([bracket], [position("AAPL")]) == []
-
-
-def test_position_with_a_standalone_stop_order_is_protected():
-    assert unprotected([order("AAPL", "sell", "stop")], [position("AAPL")]) == []
-    assert unprotected([order("AAPL", "sell", "trailing_stop")], [position("AAPL")]) == []
-
-
-def test_a_take_profit_limit_leg_alone_is_not_protection():
-    assert unprotected([order("AAPL", "sell", "limit")], [position("AAPL", 50, 100.0)]) == [("AAPL", 50, 100.0)]
-
-
-def test_a_buy_side_stop_does_not_protect_a_long_position():
-    assert unprotected([order("AAPL", "buy", "stop")], [position("AAPL")]) == [("AAPL", 50, 100.0)]
-
-
-def test_stop_on_a_different_symbol_does_not_count():
-    assert [s for s, _, _ in unprotected([order("MSFT", "sell", "stop")], [position("AAPL"), position("MSFT")])] == ["AAPL"]
-
-
-def test_short_positions_and_empty_accounts_are_ignored():
-    assert unprotected([], [position("AAPL", -10)]) == []
-    assert unprotected([], []) == []
-
-
-def test_enum_style_values_from_the_real_api_are_understood():
-    class E:  # mimics alpaca-py enums, which carry the string in .value
-        def __init__(self, value):
-            self.value = value
-
-    assert unprotected([order("AAPL", E("sell"), E("stop"))], [position("AAPL")]) == []
-
-
-def test_lookup_asks_for_nested_legs():
-    fake = FakeAlpaca()
-    AlpacaBroker(fake).unprotected_positions()
-    assert fake.requests[0].nested is True
-
-
-def test_protect_places_a_gtc_sell_stop_with_a_rounded_price():
-    fake = FakeAlpaca()
-    fill = AlpacaBroker(fake).protect("AAPL", 50, 92.3456)
-    req = fake.submitted[0]
-    assert (req.symbol, req.qty, req.side, req.time_in_force) == ("AAPL", 50, OrderSide.SELL, TimeInForce.GTC)
-    assert req.stop_price == 92.35 and fill.broker_order_id == "stop-1"
-
-
-# ---------------------------------------------------------------- Alpaca: confirming what was filled
-def status(name, qty=0, price=None):
-    return SimpleNamespace(status=name, filled_qty=str(qty), filled_avg_price=None if price is None else str(price))
-
-
-def test_confirm_waits_for_the_fill_and_reports_quantity_and_price():
-    fake = FakeAlpaca(statuses=[status("accepted"), status("partially_filled", 20, 101), status("filled", 50, 101.5)])
-    naps = []
-    result = AlpacaBroker(fake).confirm(Fill("id", "accepted"), 50, sleep=naps.append)
-    assert (result.status, result.filled_qty, result.avg_price) == ("filled", 50, 101.5) and len(naps) == 2
-
-
-def test_confirm_gives_up_after_the_wait_and_reports_the_partial_state():
-    fake = FakeAlpaca(statuses=[status("partially_filled", 20, 101)])
-    result = AlpacaBroker(fake).confirm(Fill("id", "accepted"), 50, wait=3.0, poll=1.0, sleep=lambda s: None)
-    assert result.status == "partially_filled" and result.filled_qty == 20 and fake.polls == 4
-
-
-def test_confirm_stops_immediately_on_a_rejected_order():
-    fake = FakeAlpaca(statuses=[status("rejected")])
-    result = AlpacaBroker(fake).confirm(Fill("id", "accepted"), 50, sleep=lambda s: pytest.fail("should not wait"))
-    assert result.status == "rejected" and result.filled_qty == 0 and fake.polls == 1
 
 
 # ---------------------------------------------------------------- pipeline: protection sweep
@@ -315,41 +205,6 @@ def test_screener_skips_stocks_whose_data_stops_early():
     both = pd.concat([frame("LIVE", "2026-09-18"), frame("HALTED", "2026-08-01")])
     assert {c.symbol for c in screen_bars(both, cfg)} == {"LIVE"}
     assert {c.symbol for c in screen_bars(frame("HALTED", "2026-08-01"), cfg)} == {"HALTED"}  # alone it IS the newest, so it passes
-
-
-# ---------------------------------------------------------------- network timeouts
-class FakeSession:
-    def __init__(self):
-        self.calls = []
-
-    def request(self, method, url, **kwargs):
-        self.calls.append(kwargs)
-        return "ok"
-
-
-def test_default_timeout_is_added_to_every_request_but_an_explicit_one_wins():
-    client = SimpleNamespace(_session=FakeSession())
-    session = client._session
-    assert apply_timeout(client, 7.0) is client
-    client._session.request("GET", "http://x")
-    client._session.request("GET", "http://x", timeout=1.5)
-    assert [c["timeout"] for c in session.calls] == [7.0, 1.5]
-
-
-def test_applying_a_timeout_twice_does_not_stack_wrappers():
-    client = SimpleNamespace(_session=FakeSession())
-    session = client._session
-    apply_timeout(client, 7.0)
-    wrapped = client._session.request
-    apply_timeout(client, 99.0)
-    assert client._session.request is wrapped
-    client._session.request("GET", "http://x")
-    assert session.calls[0]["timeout"] == 7.0
-
-
-def test_clients_without_a_session_are_left_alone():
-    plain = SimpleNamespace()
-    assert apply_timeout(plain) is plain
 
 
 # ---------------------------------------------------------------- database

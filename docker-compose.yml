@@ -8,7 +8,6 @@ services:
     # Phase 5: paper trading in the built-in Indian simulator (no real money, no broker account involved).
     # Check progress any time:   docker compose exec trading-bot python main.py --report
     # For a dry run (decisions only, no simulated trades), remove "--live" below.
-    # For the US market set MARKET=us in .env (needs Alpaca keys).
     command: ["python", "main.py", "--loop", "30", "--live"]
 
 volumes:

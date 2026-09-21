@@ -47,10 +47,10 @@ def test_dry_run_is_the_default_and_only_false_disables_it(monkeypatch):
 
 
 def test_market_scan_is_the_default_universe(monkeypatch):
-    for name in ("UNIVERSE", "MAX_CANDIDATES", "DATA_FEED"):
+    for name in ("UNIVERSE", "MAX_CANDIDATES"):
         monkeypatch.delenv(name, raising=False)
     s = load_settings()
-    assert s.universe == "market" and s.max_candidates == 15 and s.data_feed == "sip"
+    assert s.universe == "market" and s.max_candidates == 15
 
 
 def test_universe_settings_from_env(monkeypatch):
@@ -59,14 +59,13 @@ def test_universe_settings_from_env(monkeypatch):
     monkeypatch.setenv("MIN_PRICE", "20")
     monkeypatch.setenv("MIN_TRADED_VALUE", "50000000")
     monkeypatch.setenv("MAX_DAILY_VOLATILITY", "0.03")
-    monkeypatch.setenv("DATA_FEED", "IEX")
     s = load_settings()
-    assert (s.universe, s.max_candidates, s.min_price, s.min_traded_value, s.max_daily_volatility, s.data_feed) == \
-        ("watchlist", 5, 20.0, 50_000_000.0, 0.03, "iex")
+    assert (s.universe, s.max_candidates, s.min_price, s.min_traded_value, s.max_daily_volatility) == \
+        ("watchlist", 5, 20.0, 50_000_000.0, 0.03)
 
 
 @pytest.mark.parametrize("name,value", [
-    ("UNIVERSE", "everything"), ("DATA_FEED", "sip2"), ("MAX_CANDIDATES", "0"),
+    ("UNIVERSE", "everything"), ("MAX_CANDIDATES", "0"),
     ("MIN_PRICE", "-1"), ("MAX_DAILY_VOLATILITY", "4"),
 ])
 def test_invalid_universe_settings_are_rejected(monkeypatch, name, value):
@@ -89,15 +88,6 @@ def test_india_is_the_default_market_with_rupee_thresholds(monkeypatch):
     assert s.market == "india" and s.currency == "₹"
     assert s.min_price == 100.0 and s.min_traded_value == 100_000_000.0 and s.paper_initial_cash == 1_000_000.0
     assert s.watchlist == ("RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK")
-
-
-def test_us_market_keeps_dollar_defaults(monkeypatch):
-    for name in ("MIN_PRICE", "MIN_TRADED_VALUE", "WATCHLIST"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("MARKET", "US")
-    s = load_settings()
-    assert s.market == "us" and s.currency == "$" and s.min_price == 10.0 and s.min_traded_value == 20_000_000.0
-    assert s.watchlist[0] == "AAPL"
 
 
 def test_explicit_env_overrides_beat_market_defaults(monkeypatch):

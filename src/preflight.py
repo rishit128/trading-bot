@@ -71,11 +71,11 @@ def build_checks(settings, broker, env: Mapping[str, str], get: Callable = httpx
         import yfinance as yf
 
         download = yf.download
-    label = "Alpaca paper" if settings.market == "us" else "built-in paper simulator"
+    label = "built-in paper simulator"
     checks = [
         ("OpenRouter key", True, lambda: openrouter_check(env.get("OPENROUTER_API_KEY", ""), get)),
         ("Broker (" + label + ")", True, lambda: broker_check(broker, label)),
-        ("Market data (Yahoo)", False, lambda: market_data_check(download, "^NSEI" if settings.market == "india" else "SPY")),
+        ("Market data (Yahoo)", False, lambda: market_data_check(download, "^NSEI")),
     ]
     if env.get("TELEGRAM_BOT_TOKEN"):
         checks.append(("Telegram bot", False, lambda: telegram_check(env["TELEGRAM_BOT_TOKEN"], get)))

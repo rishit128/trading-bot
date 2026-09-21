@@ -1,12 +1,10 @@
-from datetime import date, datetime, timezone
-from types import SimpleNamespace
+from datetime import date
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from src.data.universe import (Candidate, ScreenConfig, UniverseScreener, alpaca_bar_fetcher, list_tradable_stocks,
-                               rank, screen_bars)
+from src.data.universe import (Candidate, ScreenConfig, UniverseScreener, rank, screen_bars)
 from src.engine.risk_engine import Portfolio
 
 CFG = ScreenConfig(max_candidates=10)
@@ -66,25 +64,6 @@ def test_ranking_prefers_smooth_trend_over_spiky_and_truncates():
 
 def test_score_is_safe_with_zero_volatility():
     assert cand("X", 0.2, 0.0).score == 0.0
-
-
-def asset(symbol, exchange="NASDAQ", name="Acme Corporation Common Stock", tradable=True):
-    return SimpleNamespace(symbol=symbol, exchange=SimpleNamespace(value=exchange), name=name, tradable=tradable)
-
-
-def test_tradable_stock_filter():
-    assets = [
-        asset("AAPL", name="Apple Inc. Common Stock"),
-        asset("IBM", "NYSE", "International Business Machines Corporation Common Stock"),
-        asset("SPY", "ARCA", "SPDR S&P 500 ETF Trust"),            # wrong exchange
-        asset("QQQX", "NASDAQ", "Some Growth ETF"),                 # ETF by name
-        asset("BKLN", "NASDAQ", "Invesco Senior Loan ETF"),
-        asset("FTRA.WS", "NYSE", "Foo Warrants"),                   # non-alpha symbol
-        asset("PENN", "OTC", "Penny Corp"),                         # OTC
-        asset("HALT", "NYSE", "Halted Inc", tradable=False),
-        asset("SPOT", "NYSE", "Spotify Technology S.A. Ordinary Shares"),  # foreign common stock stays
-    ]
-    assert list_tradable_stocks(assets) == ["AAPL", "IBM", "SPOT"]
 
 
 def make_screener(tmp_days, chunk=500, fetch=None, listing=None, sleep=lambda s: None):
@@ -151,22 +130,26 @@ def test_symbols_for_puts_holdings_first_without_duplicates():
     assert s.symbols_for(Portfolio(cash=0, equity=1)) == ["GOOD"]
 
 
-def test_alpaca_fetcher_requests_completed_sessions_with_configured_feed_and_renames_columns():
-    seen = {}
-
-    def get_stock_bars(request):
-        seen["req"] = request
-        return SimpleNamespace(df=market())
-
-    fetch = alpaca_bar_fetcher(SimpleNamespace(get_stock_bars=get_stock_bars), feed="iex")
-    df = fetch(["GOOD"])
-    req = seen["req"]
-    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-    assert req.end.replace(tzinfo=None) == today and req.feed.value == "iex" and req.symbol_or_symbols == ["GOOD"]
-    assert "Close" in df.columns and "Volume" in df.columns
-
-
 def test_price_filter_works_independently_of_liquidity():
     cheap_but_liquid = frame("CHEAP", series([1.01, 0.994], 3), volume=10_000_000)  # ~$5 x 10M sh = $50M/day
     assert screen_bars(cheap_but_liquid, CFG) == []
     assert [c.symbol for c in screen_bars(cheap_but_liquid, ScreenConfig(min_price=1.0))] == ["CHEAP"]
+
+
+def test_score_uses_12_1_momentum_when_known_and_the_old_score_otherwise():
+    with_12_1 = Candidate("A", 50.0, 0.1, 60.0, 50e6, 0.02, momentum_12_1=0.8)
+    assert with_12_1.score == 0.8
+    assert cand("B", 0.2, 0.02).score == pytest.approx(0.2 / (0.02 * 63 ** 0.5))
+
+
+def test_stocks_are_ranked_by_12_1_momentum_not_by_recent_smoothness():
+    smooth_recent = Candidate("SMOOTH", 50.0, 0.30, 60.0, 50e6, 0.005, momentum_12_1=0.10)
+    year_winner = Candidate("WINNER", 50.0, 0.05, 60.0, 50e6, 0.03, momentum_12_1=0.90)
+    assert [c.symbol for c in rank([smooth_recent, year_winner], 2)] == ["WINNER", "SMOOTH"]
+
+
+def test_screen_needs_a_full_year_of_bars_for_12_1_momentum():
+    days = pd.bdate_range(end="2026-09-18", periods=252)
+    bars = pd.DataFrame({"Close": np.linspace(100, 200, 252), "Volume": 5_000_000.0},
+                        index=pd.MultiIndex.from_product([["SHORT"], days]))
+    assert screen_bars(bars, CFG) == []

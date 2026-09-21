@@ -12,7 +12,7 @@ from src.agents.base import ADVISOR, LEAD, AgentContext
 from src.config import RiskLimits, Settings
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord, OrderRecord, make_session_factory
-from src.engine.broker import Fill
+from src.engine.paper_broker import Fill
 from src.engine.risk_engine import Portfolio
 from src.llm import LLMClient, LLMUnavailable
 from src.pipeline import TradingPipeline

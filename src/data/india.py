@@ -56,7 +56,7 @@ def fetch_index_symbols(index: int = 500, get: Callable = httpx.get) -> List[str
     return _parse_symbols(r.text)
 
 
-def yf_bar_fetcher(lookback_days: int = 330, download: Optional[Callable] = None,
+def yf_bar_fetcher(lookback_days: int = 400, download: Optional[Callable] = None,
                    today: Callable[[], datetime] = lambda: datetime.now(IST)):
     """Bulk completed daily bars in the same long format the screener uses. Symbols Yahoo cannot resolve are skipped."""
     if download is None:

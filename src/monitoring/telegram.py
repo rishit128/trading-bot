@@ -1,4 +1,5 @@
 """Telegram alerts and remote commands (/status, /positions, /pause, /resume, /rebase)."""
+import html
 import logging
 import threading
 from typing import Callable, Optional
@@ -7,11 +8,58 @@ import httpx
 
 log = logging.getLogger(__name__)
 API = "https://api.telegram.org"
-HELP = ("/status - equity, cash, mode\n/positions - open positions\n/pause - stop placing orders\n/resume - allow orders again\n"
+HELP = ("/status - equity, cash, mode\n/positions - open positions with profit/loss\n/history - closed trades\n/intraday - intraday account and open positions\n/intraday_history - intraday closed trades\n/pause - stop placing orders\n/resume - allow orders again\n"
         "/rebase - reset the peak-equity baseline (clears a drawdown halt)")
 
 # The bot token is part of every request URL; never let the HTTP library log it.
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+class Html(str):
+    """A reply that is already Telegram-HTML (bold, emoji); it is sent with parse_mode=HTML. Plain str is sent as is."""
+
+
+def _payload(chat_id: str, text: str) -> dict:
+    body = {"chat_id": chat_id, "text": text[:4000]}
+    if isinstance(text, Html):
+        body["parse_mode"] = "HTML"
+    return body
+
+
+def _e(value) -> str:
+    return html.escape(str(value))
+
+
+def _pl(amount: float, pct: float, cur: str) -> str:
+    """Coloured marker plus signed percent and amount, e.g. '🟢 +2.9% (+₹1,431)'."""
+    mark = "🟢" if amount > 0 else "🔴" if amount < 0 else "⚪"
+    return f"{mark} {pct:+.1%} ({'+' if amount >= 0 else '-'}{cur}{abs(amount):,.0f})"
+
+
+def format_positions(held: list, cur: str) -> Html:
+    """Open positions as small cards, best first, with a total."""
+    if not held:
+        return Html("No open positions.")
+    cards = [f"<b>{_e(h['symbol'])}</b>  {_pl(h['pnl'], h['pnl_pct'], cur)}\n"
+             f"   {h['qty']} sh · bought {h['opened_at']:%d %b} at {cur}{h['avg_price']:,.2f}\n"
+             f"   now {cur}{h['price']:,.2f} · stop {cur}{h['stop']:,.2f}" for h in held]
+    total, cost = sum(h["pnl"] for h in held), sum(h["qty"] * h["avg_price"] for h in held)
+    up = sum(1 for h in held if h["pnl"] > 0)
+    head = f"📊 <b>Open positions ({len(held)})</b>  ·  {up} up, {len(held) - up} down"
+    return Html(head + "\n\n" + "\n\n".join(cards) + f"\n\n<b>Total unrealised</b>  {_pl(total, total / cost if cost else 0.0, cur)}")
+
+
+def format_history(trades: list, cur: str, limit: int = 15) -> Html:
+    """Closed trades as small cards, newest first."""
+    if not trades:
+        return Html("No closed trades yet.")
+    cards = [f"<b>{_e(t['symbol'])}</b>  {_pl(t['net_pnl'], t['exit_price'] / t['entry_price'] - 1, cur)}  · {_e(t['reason'])}\n"
+             f"   {t['qty']} sh · {t['opened_at']:%d %b} → {t['closed_at']:%d %b}\n"
+             f"   {cur}{t['entry_price']:,.2f} → {cur}{t['exit_price']:,.2f} · fees {cur}{t['fees']:,.0f}" for t in trades[:limit]]
+    total = sum(t["net_pnl"] for t in trades)
+    wins = sum(1 for t in trades if t["net_pnl"] > 0)
+    head = f"📜 <b>Closed trades ({len(trades)})</b>  ·  {wins} won, {len(trades) - wins} lost"
+    return Html(head + "\n\n" + "\n\n".join(cards) + f"\n\n<b>Realised net</b>  {'+' if total >= 0 else '-'}{cur}{abs(total):,.0f}")
 
 
 class Notifier:
@@ -24,7 +72,7 @@ class Notifier:
     def send(self, text: str) -> bool:
         """Send an alert; never raises."""
         try:
-            r = self.http.post(f"{API}/bot{self.token}/sendMessage", json={"chat_id": self.chat_id, "text": text[:4000]})
+            r = self.http.post(f"{API}/bot{self.token}/sendMessage", json=_payload(self.chat_id, text))
             r.raise_for_status()
             return True
         except Exception as e:
@@ -32,7 +80,7 @@ class Notifier:
             return False
 
 
-def handle_command(text: str, control, broker, settings) -> str:
+def handle_command(text: str, control, broker, settings, intraday=None) -> str:
     """Turn a command text into a reply, applying pause/resume/rebase as needed."""
     cmd = (text or "").strip().split()[0].split("@")[0].lower() if (text or "").strip() else ""
     if cmd == "/pause":
@@ -52,12 +100,26 @@ def handle_command(text: str, control, broker, settings) -> str:
         state = "PAUSED" if control.is_paused() else "RUNNING"
         day = f"{(p.equity / p.start_of_day_equity - 1):+.2%} today" if p.start_of_day_equity else "n/a"
         cur = settings.currency
-        return f"{state} | {mode}\nEquity {cur}{p.equity:,.2f} ({day})\nCash {cur}{p.cash:,.2f}\nPositions: {len(p.positions)}"
+        icon = "⏸" if state == "PAUSED" else "▶️"
+        return Html(f"{icon} <b>{state}</b>  ·  {mode}\n\n💰 Equity   <b>{cur}{p.equity:,.2f}</b> ({day})\n"
+                    f"💵 Cash       {cur}{p.cash:,.2f}\n📦 Positions  {len(p.positions)}")
     if cmd == "/positions":
+        if hasattr(broker, "holdings"):
+            return format_positions(broker.holdings(), settings.currency)
         p = broker.portfolio()
         if not p.positions:
             return "No open positions."
         return "\n".join(f"{s}: {p.position_qty.get(s, 0)} sh, {settings.currency}{v:,.0f}" for s, v in sorted(p.positions.items()))
+    if cmd == "/history" and hasattr(broker, "trade_history"):
+        return format_history(broker.trade_history(), settings.currency)
+    if cmd in ("/intraday", "/intraday_history") and intraday is not None:
+        cur = settings.currency
+        if cmd == "/intraday_history":
+            return format_history(intraday.trade_history(), cur)
+        p, held = intraday.portfolio(), intraday.holdings()
+        day = f"{(p.equity / p.start_of_day_equity - 1):+.2%} today" if p.start_of_day_equity else "n/a"
+        head = f"⚡ <b>INTRADAY account</b>\n💰 Equity <b>{cur}{p.equity:,.2f}</b> ({day})\n💵 Cash {cur}{p.cash:,.2f}\n\n"
+        return Html(head + format_positions(held, cur))
     return HELP
 
 
@@ -86,7 +148,7 @@ class CommandListener:
             except Exception as e:
                 log.exception("command failed")
                 reply = f"Command failed: {type(e).__name__}"
-            self.http.post(f"{API}/bot{self.token}/sendMessage", json={"chat_id": self.chat_id, "text": reply[:4000]})
+            self.http.post(f"{API}/bot{self.token}/sendMessage", json=_payload(self.chat_id, reply))
             handled += 1
         return handled
 

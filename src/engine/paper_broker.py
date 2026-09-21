@@ -1,4 +1,4 @@
-"""Simulated broker for markets with no broker sandbox (India). Same interface as AlpacaBroker.
+"""Simulated broker for markets with no broker sandbox (India).
 
 Simplifications, all optimistic and worth remembering: fills happen at the latest 5-minute close plus a fixed slippage;
 stop/target exits fill at the stop/target level (or the bar open on a gap) with no slippage; no circuit-limit modelling
@@ -8,15 +8,23 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, List, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from sqlalchemy import func, select
 
 from src.database import PaperAccountRecord, PaperPositionRecord, PaperTradeRecord
-from src.engine.broker import Fill
 from src.engine.risk_engine import Portfolio
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Fill:
+    """What the broker reported for an order: id, status, and the quantity and price actually filled when known."""
+    broker_order_id: str
+    status: str
+    filled_qty: Optional[int] = None
+    avg_price: Optional[float] = None
 
 
 def _utc(dt: datetime) -> datetime:
@@ -37,7 +45,7 @@ def india_delivery_fees(side: str, value: float) -> float:
 
 @dataclass
 class PaperBroker:
-    """Simulated broker for markets with no sandbox: same interface as AlpacaBroker, state kept in the database."""
+    """Simulated broker for markets with no sandbox: state kept in the database."""
     sessions: Callable
     feed: object  # needs last_price(symbol) and bars_since(symbol, since)
     clock: object  # needs is_open() and today_ist()
@@ -59,7 +67,7 @@ class PaperBroker:
         return self.clock.is_open(self.now_fn())
 
     def has_open_order(self, symbol: str) -> bool:
-        """A held position has its stop/target 'legs' working, exactly like an Alpaca bracket."""
+        """A held position has its stop/target 'legs' working, like a broker-side bracket."""
         with self.sessions() as s:
             return s.get(PaperPositionRecord, symbol) is not None
 
@@ -179,6 +187,33 @@ class PaperBroker:
                     pos = s.get(PaperPositionRecord, symbol)
                     pos.last_checked = self.now_fn()
                     s.commit()
+
+    def holdings(self) -> List[dict]:
+        """Open positions in detail: buy date and price, live price, profit or loss (amount and %), stop level."""
+        with self._lock:
+            self._settle_exits()
+            with self.sessions() as s:
+                rows = s.scalars(select(PaperPositionRecord)).all()
+                out = []
+                for p in rows:
+                    try:
+                        price = self.feed.last_price(p.symbol)
+                    except Exception as e:
+                        log.warning("no price for %s, showing cost: %s", p.symbol, e)
+                        price = p.avg_price
+                    out.append({"symbol": p.symbol, "qty": p.qty, "avg_price": p.avg_price, "price": price,
+                                "value": p.qty * price, "pnl": p.qty * (price - p.avg_price),
+                                "pnl_pct": price / p.avg_price - 1, "stop": p.stop, "opened_at": _utc(p.opened_at)})
+                return sorted(out, key=lambda h: h["pnl"], reverse=True)
+
+    def trade_history(self, limit: Optional[int] = None) -> List[dict]:
+        """Closed trades, newest first (optionally only the latest `limit`): dates, prices, why, fees and net P&L."""
+        with self.sessions() as s:
+            query = select(PaperTradeRecord).order_by(PaperTradeRecord.closed_at.desc(), PaperTradeRecord.id.desc())
+            trades = s.scalars(query.limit(limit) if limit else query).all()
+            return [{"symbol": t.symbol, "qty": t.qty, "entry_price": t.entry_price, "exit_price": t.exit_price,
+                     "opened_at": _utc(t.opened_at), "closed_at": _utc(t.closed_at), "reason": t.reason,
+                     "fees": t.fees, "net_pnl": t.net_pnl} for t in trades]
 
     def summary(self) -> dict:
         """Account summary for --report: equity, return, trades, win rate, fees, exits."""

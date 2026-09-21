@@ -17,8 +17,6 @@ DEFAULT_MODELS = (
 MARKET_DEFAULTS = {
     "india": dict(currency="₹", min_price=100.0, min_traded_value=100_000_000.0,  # Rs 10 crore/day
                   watchlist=("RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK")),
-    "us": dict(currency="$", min_price=10.0, min_traded_value=20_000_000.0,
-               watchlist=("AAPL", "MSFT", "GOOGL", "AMZN", "TSLA")),
 }
 
 
@@ -59,7 +57,7 @@ class RiskLimits:
 @dataclass(frozen=True)
 class Settings:
     """All runtime settings for one run."""
-    market: str = "india"  # "india": NSE via Yahoo + built-in paper broker; "us": Alpaca paper trading
+    market: str = "india"  # NSE via Yahoo + built-in paper broker
     currency: str = "₹"
     paper_initial_cash: float = 1_000_000.0  # India paper account starting balance
     watchlist: tuple = ("RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK")
@@ -67,7 +65,7 @@ class Settings:
     database_url: str = "sqlite:///trading.db"
     models: tuple = ()
     rebuy_cooldown_hours: float = 24.0
-    universe: str = "market"  # "market": scan every listed US stock; "watchlist": only WATCHLIST
+    universe: str = "market"  # "market": scan every listed NSE stock; "watchlist": only WATCHLIST
     max_candidates: int = 15
     min_price: float = 100.0
     min_traded_value: float = 100_000_000.0
@@ -76,7 +74,6 @@ class Settings:
     trend_exit: bool = True  # sell a held stock when its last completed close is below its 200-day average
     analysis_workers: int = 3  # stocks analysed concurrently (LLM calls are latency-bound; keep modest for free tiers)
     llm_cache_hours: float = 12.0
-    data_feed: str = "sip"
     risk: RiskLimits = field(default_factory=RiskLimits)
 
     def __post_init__(self):
@@ -86,8 +83,6 @@ class Settings:
             raise ValueError("paper_initial_cash must be > 0")
         if self.universe not in ("market", "watchlist"):
             raise ValueError(f"universe must be 'market' or 'watchlist', got {self.universe!r}")
-        if self.data_feed not in ("sip", "iex"):
-            raise ValueError(f"data_feed must be 'sip' or 'iex', got {self.data_feed!r}")
         if self.max_candidates < 1 or self.min_price < 0 or self.min_traded_value < 0:
             raise ValueError("max_candidates must be >= 1 and min_price/min_traded_value must be >= 0")
         if self.analysis_workers < 1 or self.llm_cache_hours < 0:
@@ -133,6 +128,5 @@ def load_settings() -> Settings:
         auto_protect=os.getenv("AUTO_PROTECT", "true").strip().lower() != "false",
         analysis_workers=int(_float("ANALYSIS_WORKERS", 3)),
         llm_cache_hours=_float("LLM_CACHE_HOURS", 12.0),
-        data_feed=os.getenv("DATA_FEED", "sip").strip().lower(),
         risk=risk,
     )
