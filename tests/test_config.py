@@ -37,6 +37,14 @@ def test_env_overrides_are_applied(monkeypatch):
     assert s.risk.max_position_pct == 0.10 and s.rebuy_cooldown_hours == 6 and s.watchlist == ("NVDA", "AMD")
 
 
+def test_min_position_pct_defaults_to_max_position_pct_flat_sizing_unless_set(monkeypatch):
+    monkeypatch.delenv("MIN_POSITION_PCT", raising=False)
+    monkeypatch.setenv("MAX_POSITION_PCT", "0.10")
+    assert load_settings().risk.min_position_pct == 0.10  # flat: no confidence scaling unless MIN_POSITION_PCT is set
+    monkeypatch.setenv("MIN_POSITION_PCT", "0.02")
+    assert load_settings().risk.min_position_pct == 0.02 and load_settings().risk.max_position_pct == 0.10
+
+
 def test_dry_run_is_the_default_and_only_false_disables_it(monkeypatch):
     monkeypatch.delenv("DRY_RUN", raising=False)
     assert load_settings().dry_run is True
@@ -110,3 +118,10 @@ def test_dataclass_defaults_match_the_evidence_backed_exit_settings():
 
     s = Settings()
     assert s.trend_exit is True and s.risk.stop_loss_pct == 0.08 and s.risk.take_profit_pct == 1.00
+
+
+def test_delivery_filter_defaults_on_and_can_be_disabled(monkeypatch):
+    monkeypatch.delenv("DELIVERY_FILTER", raising=False)
+    assert load_settings().delivery_filter is True
+    monkeypatch.setenv("DELIVERY_FILTER", "false")
+    assert load_settings().delivery_filter is False

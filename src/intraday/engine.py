@@ -49,8 +49,8 @@ class IntradayEngine:
     notify: Optional[Callable[[str], object]] = None
     live: bool = False  # False: log signals only, place nothing
     max_positions: int = 5
-    risk_pct: float = 0.005
-    max_notional_pct: float = 0.20
+    min_position_pct: float = 0.02  # position size at a barely-qualifying breakout (Setup.strength == 0.0)
+    max_position_pct: float = 0.05  # position size at a much stronger breakout (Setup.strength == 1.0)
     max_daily_loss_pct: float = 0.02
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     _day: Optional[str] = field(default=None, init=False)
@@ -103,12 +103,13 @@ class IntradayEngine:
         return f"scanned {len(bars)} stocks, entered {entered}"
 
     def _enter(self, setup: st.Setup, equity: float) -> int:
-        qty = st.position_size(equity, setup.signal_price, setup.stop, self.risk_pct, self.max_notional_pct)
+        qty = st.position_size(equity, setup.signal_price, setup.stop, setup.strength,
+                               self.min_position_pct, self.max_position_pct)
         self._done_today.add(setup.symbol)  # one attempt per stock per day, filled or not
         if qty <= 0:
             return 0
         text = (f"BUY {setup.symbol} x{qty} breakout above {setup.range_high:,.2f}; stop {setup.stop:,.2f}, "
-                f"target {setup.target:,.2f}")
+                f"target {setup.target:,.2f}, volume strength {setup.strength:.0%}")
         if not self.live:
             self._say("DRY RUN signal: " + text)
             return 0

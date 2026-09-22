@@ -51,7 +51,7 @@ class RiskEngine:
                 return _reject(f"no {symbol} position to sell (shorting disabled)")
             return RiskDecision(True, int(held), f"closing full {symbol} position")
 
-        return self._evaluate_buy(symbol, price, portfolio)
+        return self._evaluate_buy(symbol, confidence, price, portfolio)
 
     def halt_reason(self, p: Portfolio) -> Optional[Tuple[str, str]]:
         """(kind, message) when new buys are blocked at portfolio level; kind is stable across cycles."""
@@ -66,7 +66,16 @@ class RiskEngine:
                 return "drawdown", f"drawdown {drawdown:.2%} reached limit {lim.max_drawdown_pct:.2%}"
         return None
 
-    def _evaluate_buy(self, symbol: str, price: float, p: Portfolio) -> RiskDecision:
+    def position_pct(self, confidence: float) -> float:
+        """Position size as a fraction of equity, scaled linearly with confidence: min_position_pct at
+        min_confidence, max_position_pct at confidence 1.0 (and beyond min_confidence..1.0, clamped)."""
+        lim = self.limits
+        span = 1.0 - lim.min_confidence
+        frac = (confidence - lim.min_confidence) / span if span > 0 else 1.0
+        frac = min(1.0, max(0.0, frac))
+        return lim.min_position_pct + frac * (lim.max_position_pct - lim.min_position_pct)
+
+    def _evaluate_buy(self, symbol: str, confidence: float, price: float, p: Portfolio) -> RiskDecision:
         lim = self.limits
 
         halt = self.halt_reason(p)
@@ -76,8 +85,9 @@ class RiskEngine:
         if symbol not in p.positions and len(p.positions) >= lim.max_open_positions:
             return _reject(f"max open positions reached ({lim.max_open_positions})")
 
+        pct = self.position_pct(confidence)
         existing_value = p.positions.get(symbol, 0.0)
-        position_room = p.equity * lim.max_position_pct - existing_value
+        position_room = p.equity * pct - existing_value
         total_exposure = sum(p.positions.values())
         exposure_room = p.equity * lim.max_portfolio_exposure_pct - total_exposure
         budget = min(position_room, exposure_room, p.cash)
@@ -87,4 +97,4 @@ class RiskEngine:
                 f"no room: position_room={position_room:,.0f} exposure_room={exposure_room:,.0f} cash={p.cash:,.0f}"
             )
         qty = int(budget // price)
-        return RiskDecision(True, qty, f"approved {qty} shares (value {qty * price:,.0f})")
+        return RiskDecision(True, qty, f"approved {qty} shares (value {qty * price:,.0f}, sized at {pct:.1%} for confidence {confidence:.2f})")

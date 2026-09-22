@@ -4,6 +4,8 @@ __pycache__/
 .env
 .pytest_cache/
 *.db
+*.db-shm
+*.db-wal
 backtest_cache.json
 backtest_report.json
 backtest_run.log

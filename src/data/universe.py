@@ -81,14 +81,41 @@ def rank(candidates: Sequence[Candidate], n: int) -> List[Candidate]:
     return sorted(candidates, key=lambda c: c.score, reverse=True)[:n]
 
 
+def delivery_filter(as_of: date, load_delivery: Optional[Callable] = None, window: int = 20,
+                    min_days: int = 10) -> Optional[set]:
+    """Symbols whose 20-day average NSE delivery % is above that day's cross-sectional median, or None when delivery
+    data is unavailable (any failure disables the filter for the day rather than blocking the scan).
+
+    Research finding (STRATEGY.md, 2026-09-22): combined with 12-1 month momentum ranking (the live default), this
+    added ~14%/yr over the same-window equal-weight basket in a single 3-year test. Promising, not proven."""
+    if load_delivery is None:
+        from src.research.delivery import load_delivery as _load
+
+        load_delivery = _load
+    try:
+        deliv = load_delivery(years=3)
+    except Exception as e:
+        log.warning("delivery filter unavailable, screening without it today: %s", type(e).__name__)
+        return None
+    if deliv.empty:
+        return None
+    avg = deliv.rolling(window, min_periods=min_days).mean()
+    usable = avg.index[avg.index <= pd.Timestamp(as_of)]
+    if len(usable) == 0:
+        return None
+    row = avg.loc[usable[-1]]
+    return set(row[row > row.median()].dropna().index)
+
+
 class UniverseScreener:
     """Scans the full market once per day (and caches it); symbols_for() adds anything currently held."""
 
     def __init__(self, list_symbols: Callable[[], List[str]], fetch_bars: Callable[[List[str]], pd.DataFrame],
                  cfg: ScreenConfig, today: Callable[[], date] = lambda: datetime.now(timezone.utc).date(),
-                 chunk: int = 500, sleep: Callable[[float], None] = time.sleep):
+                 chunk: int = 500, sleep: Callable[[float], None] = time.sleep, use_delivery_filter: bool = False,
+                 delivery_loader: Optional[Callable] = None):
         self.list_symbols, self.fetch_bars, self.cfg, self.today, self.chunk = list_symbols, fetch_bars, cfg, today, chunk
-        self.sleep = sleep
+        self.sleep, self.use_delivery_filter, self.delivery_loader = sleep, use_delivery_filter, delivery_loader
         self._day: Optional[date] = None
         self._cached: List[Candidate] = []
 
@@ -101,6 +128,12 @@ class UniverseScreener:
         passed: List[Candidate] = []
         for i in range(0, len(symbols), self.chunk):
             passed.extend(screen_bars(self._fetch_with_retry(symbols[i:i + self.chunk]), self.cfg))
+        if self.use_delivery_filter:
+            ok = delivery_filter(self.today(), self.delivery_loader)
+            if ok is not None:
+                before = len(passed)
+                passed = [c for c in passed if c.symbol in ok]
+                log.info("delivery filter: kept %d/%d (above the day's median 20-day delivery %%)", len(passed), before)
         self._cached = rank(passed, self.cfg.max_candidates)
         self._day = self.today()
         log.info("screen: %d passed filters, keeping top %d: %s", len(passed), len(self._cached),

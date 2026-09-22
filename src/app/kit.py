@@ -29,7 +29,8 @@ def build_india_screener(settings: Settings) -> UniverseScreener:
     """Whole-NSE scanner backed by NSE's stock list and Yahoo bars."""
     from src.data.india import fetch_nse_symbols, yf_bar_fetcher
 
-    return UniverseScreener(fetch_nse_symbols, yf_bar_fetcher(), screen_config(settings), chunk=200)
+    return UniverseScreener(fetch_nse_symbols, yf_bar_fetcher(), screen_config(settings), chunk=200,
+                            use_delivery_filter=settings.delivery_filter)
 
 
 def intraday_db_url() -> str:

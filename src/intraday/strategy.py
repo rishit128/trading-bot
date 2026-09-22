@@ -21,7 +21,11 @@ TARGET_R = 2.0
 
 @dataclass(frozen=True)
 class Setup:
-    """A breakout signal: where to stop and where to take profit, for an entry at `signal_price`."""
+    """A breakout signal: where to stop and where to take profit, for an entry at `signal_price`.
+
+    `strength` stands in for an AI confidence score, since this rule has none: 0.0 at the minimum required volume
+    surge (1.5x average), 1.0 at 2x that (3x average) or more. Used to size the position like a confidence-scaled
+    swing signal -- a barely-qualifying breakout gets the floor size, a much stronger one gets closer to the ceiling."""
     symbol: str
     signal_price: float
     stop: float
@@ -29,6 +33,7 @@ class Setup:
     range_high: float
     range_low: float
     bar_time: pd.Timestamp
+    strength: float = 1.0
 
 
 def vwap(bars: pd.DataFrame) -> pd.Series:
@@ -56,21 +61,26 @@ def find_setup(symbol: str, day_bars: pd.DataFrame, start_index: int = RANGE_BAR
         if t < ENTRY_FROM or t >= ENTRY_UNTIL:
             continue
         avg_volume = day_bars["Volume"].iloc[:i].mean()
-        if bar["Close"] > range_high and bar["Close"] > vw.iloc[i] and bar["Volume"] >= VOLUME_MULT * avg_volume:
+        volume_ratio = bar["Volume"] / avg_volume if avg_volume > 0 else 0.0
+        if bar["Close"] > range_high and bar["Close"] > vw.iloc[i] and volume_ratio >= VOLUME_MULT:
             entry = float(bar["Close"])
             risk = entry - range_low
             if risk <= 0:
                 return None
-            return Setup(symbol, entry, range_low, entry + TARGET_R * risk, range_high, range_low, day_bars.index[i])
+            strength = min(1.0, max(0.0, (volume_ratio - VOLUME_MULT) / VOLUME_MULT))
+            return Setup(symbol, entry, range_low, entry + TARGET_R * risk, range_high, range_low,
+                        day_bars.index[i], strength)
     return None
 
 
-def position_size(equity: float, entry: float, stop: float, risk_pct: float = 0.005, max_notional_pct: float = 0.20) -> int:
-    """Shares so that hitting the stop loses about risk_pct of equity, capped so one position is at most max_notional_pct."""
-    risk_per_share = entry - stop
-    if risk_per_share <= 0 or entry <= 0:
+def position_size(equity: float, entry: float, stop: float, strength: float = 1.0,
+                  min_pct: float = 0.02, max_pct: float = 0.05) -> int:
+    """Shares to buy: position value scaled linearly with signal strength, from min_pct of equity (a barely-qualifying
+    breakout) to max_pct (a much stronger one) -- same scaling logic as the swing risk engine's confidence sizing."""
+    if entry <= 0 or stop >= entry:
         return 0
-    return max(0, int(min(equity * risk_pct / risk_per_share, equity * max_notional_pct / entry)))
+    pct = min_pct + min(1.0, max(0.0, strength)) * (max_pct - min_pct)
+    return max(0, int(equity * pct / entry))
 
 
 def intraday_fees(side: str, value: float) -> float:

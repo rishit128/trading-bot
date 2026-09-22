@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.data.universe import (Candidate, ScreenConfig, UniverseScreener, rank, screen_bars)
+from src.data.universe import (Candidate, ScreenConfig, UniverseScreener, delivery_filter, rank, screen_bars)
 from src.engine.risk_engine import Portfolio
 
 CFG = ScreenConfig(max_candidates=10)
@@ -153,3 +153,56 @@ def test_screen_needs_a_full_year_of_bars_for_12_1_momentum():
     bars = pd.DataFrame({"Close": np.linspace(100, 200, 252), "Volume": 5_000_000.0},
                         index=pd.MultiIndex.from_product([["SHORT"], days]))
     assert screen_bars(bars, CFG) == []
+
+
+# ---------------------------------------------------------------- delivery filter
+def delivery_frame(dates, values):
+    """dates x symbols delivery percent, as src.research.delivery.load_delivery returns."""
+    return pd.DataFrame(values, index=pd.DatetimeIndex(dates))
+
+
+def test_delivery_filter_keeps_only_symbols_above_the_days_median():
+    dates = pd.bdate_range("2026-08-01", periods=20)
+    deliv = delivery_frame(dates, {"HIGH": [80.0] * 20, "LOW": [20.0] * 20, "MID": [50.0] * 20})
+    ok = delivery_filter(date(2026, 8, 28), load_delivery=lambda years: deliv)
+    assert ok == {"HIGH"}  # only above the median of {80, 20, 50} = 50
+
+
+def test_delivery_filter_returns_none_when_unavailable_or_empty():
+    assert delivery_filter(date(2026, 8, 28), load_delivery=lambda years: (_ for _ in ()).throw(RuntimeError("down"))) is None
+    assert delivery_filter(date(2026, 8, 28), load_delivery=lambda years: pd.DataFrame()) is None
+
+
+def test_delivery_filter_uses_the_latest_available_day_on_or_before_as_of():
+    dates = pd.bdate_range("2026-08-01", periods=15)  # >= min_days (10) so the rolling average is defined
+    deliv = delivery_frame(dates, {"HIGH": [80.0] * 15, "LOW": [20.0] * 15})
+    ok = delivery_filter(date(2026, 12, 1), load_delivery=lambda years: deliv)  # far after the data ends
+    assert ok == {"HIGH"}
+
+
+def test_screener_applies_the_delivery_filter_when_enabled():
+    def listing():
+        return ["GOOD", "GOOD2", "PENNY"]
+
+    def fetch(symbols):
+        df = pd.concat([market(), frame("GOOD2", series([1.012, 0.995], 60))])
+        return df[df.index.get_level_values(0).isin(symbols)]
+
+    # GOOD2 passes the trend/liquidity screen too, but only GOOD clears the delivery filter (above the day's median).
+    dates = pd.bdate_range("2026-08-01", periods=20)
+    deliv = delivery_frame(dates, {"GOOD": [80.0] * 20, "GOOD2": [20.0] * 20})
+    s = UniverseScreener(listing, fetch, CFG, today=lambda: date(2026, 9, 21), use_delivery_filter=True,
+                         delivery_loader=lambda years: deliv)
+    assert [c.symbol for c in s.candidates()] == ["GOOD"]
+
+
+def test_screener_ignores_the_delivery_filter_by_default_and_when_data_is_unavailable():
+    s, _ = make_screener([date(2026, 9, 21)])  # use_delivery_filter defaults to False
+    assert [c.symbol for c in s.candidates()] == ["GOOD"]
+
+    def boom(years):
+        raise RuntimeError("NSE unreachable")
+
+    s2 = UniverseScreener(lambda: ["GOOD"], lambda syms: market()[market().index.get_level_values(0).isin(syms)],
+                          CFG, today=lambda: date(2026, 9, 21), use_delivery_filter=True, delivery_loader=boom)
+    assert [c.symbol for c in s2.candidates()] == ["GOOD"]  # fails open: screening still works

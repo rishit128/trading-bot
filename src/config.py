@@ -27,6 +27,11 @@ def _float(name: str, default: float) -> float:
 @dataclass(frozen=True)
 class RiskLimits:
     """Hard risk limits; validated so a typo (for example 5 instead of 0.05) refuses to start."""
+    # Position size scales linearly with signal confidence: min_position_pct at min_confidence, max_position_pct at
+    # confidence 1.0. A flat size treated a 0.61 and a 0.95 signal alike; this puts more capital behind stronger signals.
+    # Defaults are equal (flat 5% regardless of confidence) so existing configs are unaffected; set MIN_POSITION_PCT
+    # below MAX_POSITION_PCT to enable confidence-scaled sizing.
+    min_position_pct: float = 0.05
     max_position_pct: float = 0.05
     max_portfolio_exposure_pct: float = 0.80
     max_daily_loss_pct: float = 0.02
@@ -42,7 +47,7 @@ class RiskLimits:
         if self.max_open_positions < 1:
             raise ValueError(f"max_open_positions must be >= 1, got {self.max_open_positions}")
         # Percent limits are fractions; a typo like MAX_POSITION_PCT=5 must fail loudly, not allow 500% positions.
-        for name in ("max_position_pct", "max_portfolio_exposure_pct", "max_daily_loss_pct",
+        for name in ("max_position_pct", "min_position_pct", "max_portfolio_exposure_pct", "max_daily_loss_pct",
                      "max_drawdown_pct", "stop_loss_pct"):
             if not 0 < getattr(self, name) <= 1:
                 raise ValueError(f"{name} must be a fraction in (0, 1], got {getattr(self, name)}")
@@ -50,6 +55,8 @@ class RiskLimits:
             raise ValueError(f"min_confidence must be in [0, 1], got {self.min_confidence}")
         if self.take_profit_pct <= 0:
             raise ValueError(f"take_profit_pct must be > 0, got {self.take_profit_pct}")
+        if self.min_position_pct > self.max_position_pct:
+            raise ValueError("min_position_pct cannot exceed max_position_pct")
         if self.max_position_pct > self.max_portfolio_exposure_pct:
             raise ValueError("max_position_pct cannot exceed max_portfolio_exposure_pct")
 
@@ -72,6 +79,9 @@ class Settings:
     max_daily_volatility: float = 0.04
     auto_protect: bool = True  # place a protective stop on any position found without one (live orders only)
     trend_exit: bool = True  # sell a held stock when its last completed close is below its 200-day average
+    # Only above the day's cross-sectional median 20-day NSE delivery %. Combined with 12-1 momentum ranking, a
+    # single 3-year test added ~14%/yr over the same-window basket (STRATEGY.md, 2026-09-22) -- promising, unproven.
+    delivery_filter: bool = True
     analysis_workers: int = 3  # stocks analysed concurrently (LLM calls are latency-bound; keep modest for free tiers)
     llm_cache_hours: float = 12.0
     risk: RiskLimits = field(default_factory=RiskLimits)
@@ -101,6 +111,7 @@ def load_settings() -> Settings:
         s.strip().upper() for s in os.getenv("WATCHLIST", ",".join(defaults["watchlist"])).split(",") if s.strip()
     )
     risk = RiskLimits(
+        min_position_pct=_float("MIN_POSITION_PCT", _float("MAX_POSITION_PCT", 0.05)),
         max_position_pct=_float("MAX_POSITION_PCT", 0.05),
         max_portfolio_exposure_pct=_float("MAX_PORTFOLIO_EXPOSURE_PCT", 0.80),
         max_daily_loss_pct=_float("MAX_DAILY_LOSS_PCT", 0.02),
@@ -125,6 +136,7 @@ def load_settings() -> Settings:
         min_traded_value=_float("MIN_TRADED_VALUE", defaults["min_traded_value"]),
         max_daily_volatility=_float("MAX_DAILY_VOLATILITY", 0.04),
         trend_exit=os.getenv("TREND_EXIT", "true").strip().lower() != "false",
+        delivery_filter=os.getenv("DELIVERY_FILTER", "true").strip().lower() != "false",
         auto_protect=os.getenv("AUTO_PROTECT", "true").strip().lower() != "false",
         analysis_workers=int(_float("ANALYSIS_WORKERS", 3)),
         llm_cache_hours=_float("LLM_CACHE_HOURS", 12.0),

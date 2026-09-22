@@ -103,3 +103,40 @@ Filter: 20-day average delivery % above the day's cross-sectional median. Compar
 Rule (`src/intraday/strategy.py`, parameters fixed in advance, not tuned): long only; opening range = first 15 minutes; buy when a 5-minute bar closes above the range high, above VWAP, with volume >= 1.5x average, 09:30-14:00; stop = range low; target = 2x risk; everything closed by 15:15 IST; one trade per stock per day; risk 0.5% of equity per trade, at most 5 positions, 2% daily loss halt. Runs in its own paper account (`intraday.db`).
 - **Backtest** (`scripts/backtest_intraday.py`, Nifty 100, Yahoo's last 58 trading days, costs + 0.05% slippage): 290 trades, win rate 36%, **-11.2%**, Sharpe -6.3, 28% profitable days, negative in both halves. Stops lost ₹189k, targets made ₹75k, fees ₹33k.
 - Sample is one ~3-month regime, so this is not final, but there is no evidence of an edge. Not tuned afterwards on purpose (tuning on 58 days would just fit noise). The engine is paper-only to gather live evidence.
+
+## Intraday: confidence-scaled sizing and shared budget (2026-09-22)
+Same idea as the swing risk engine: the ORB rule has no AI confidence, so `Setup.strength` stands in for it (0.0 at the
+minimum required volume surge of 1.5x average, 1.0 at 2x that or more). Position size scales linearly from
+`MIN_POSITION_PCT` to `MAX_POSITION_PCT` of equity by that strength (`src/intraday/strategy.position_size`), replacing
+the old fixed risk-per-share sizing. `IntradayEngine` now reads `max_open_positions`, `min_position_pct` and
+`max_position_pct` from the same `.env` settings as the swing bot, so both accounts share the Rs 20,000 budget, 5-position
+cap and 10%-25% sizing range set on 2026-09-22. Its own account (`intraday.db`) is separate and never mixed with swing.
+
+## AI agent backtested on Indian history for the first time (2026-09-22)
+Every prior result in this file used the plain mechanical rule as a stand-in for the AI. `scripts/backtest_ai_agent.py`
+instead replays the REAL `TechnicalAgent` + `LLMClient` (real OpenRouter calls, the exact production prompt) against
+point-in-time Indian daily data, monthly rebalance (not daily, to keep API calls bounded), no lookahead. Single runs,
+not pre-registered like `scripts/research_signals.py`; today's Nifty 50/100 membership (survivorship bias applies).
+
+| Run | AI-filtered CAGR | Mechanical-only CAGR | Hold-everything CAGR | AI vs mechanical | AI approval rate |
+|---|---|---|---|---|---|
+| Nifty 50, 1y, 163 calls | -5.4% (Sharpe -0.58) | -6.0% | **+9.3%** (Sharpe 0.73) | +0.6%/yr | 96% |
+| Nifty 100, 2y, 251 calls | -8.0% (Sharpe -0.55) | -7.1% | **+20.4%** (Sharpe 1.36) | -0.9%/yr | 97% |
+
+**Findings:**
+1. The AI adds no value over the mechanical filter it sits on top of -- it approved 96-97% of everything shown to it,
+   effectively rubber-stamping the rule rather than exercising independent judgment.
+2. Both the AI-filtered and mechanical-only portfolios badly lagged simply holding every liquid stock equally, by
+   ~15-28 points/yr in both runs. This is a materially worse result than the 10-year study's "roughly zero edge" (this
+   file, above): over the last 1-2 years specifically, the entry filter (trend-consistency + 12-1 momentum, the current
+   live combination) actively hurt versus doing nothing clever.
+3. Caveat: this tests the CURRENT live filter combination, not pure 12-1 momentum alone (which showed a real edge over
+   10 years in the Round 2 research above). The trend-consistency filter (price > MA50 > MA200, RSI < 70) may be the
+   part hurting recent results, not the momentum ranking itself -- not yet isolated.
+
+Reusable, cached results: `research_cache/ai_backtest_signals.json` (re-running the script does not re-spend API calls
+on symbol/date pairs already scored). Raw logs: `logs/ai_backtest_full.log`.
+
+**Decision:** the AI stays -- this project is an AI trading bot, not a rule-based one. The fix under consideration is a
+richer prompt (inputs the mechanical filter doesn't already see, so the AI has a genuine reason to disagree) and/or
+testing pure 12-1 momentum as the candidate list instead of the current trend+momentum combination.

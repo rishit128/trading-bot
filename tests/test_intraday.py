@@ -30,6 +30,12 @@ def test_breakout_bar_above_range_vwap_and_volume_is_a_setup():
     s = st.find_setup("AAA", make_bars(BREAKOUT, volumes=VOLS))
     assert s and s.signal_price == 101.5 and s.stop == pytest.approx(99.9) and s.range_high == pytest.approx(100.5)
     assert s.target == pytest.approx(101.5 + 2 * (101.5 - 99.9))
+    assert s.strength == pytest.approx(1.0)  # 3x average volume = double the 1.5x minimum -> full strength
+
+
+def test_a_breakout_that_barely_clears_the_volume_bar_has_zero_strength():
+    s = st.find_setup("AAA", make_bars(BREAKOUT, volumes=[1000, 1000, 1000, 1000, 1500]))  # exactly 1.5x average
+    assert s and s.strength == pytest.approx(0.0)
 
 
 def test_no_setup_without_a_volume_surge_or_with_a_too_narrow_range():
@@ -38,10 +44,12 @@ def test_no_setup_without_a_volume_surge_or_with_a_too_narrow_range():
     assert st.find_setup("AAA", flat) is None  # opening range far below 0.3%
 
 
-def test_position_size_risks_half_a_percent_and_caps_notional():
-    assert st.position_size(1_000_000, 100.0, 99.0) == 2000  # risk 5,000 / 1 per share, notional 200,000 = the 20% cap
-    assert st.position_size(1_000_000, 100.0, 90.0) == 500   # risk 5,000 / 10 per share
-    assert st.position_size(1_000_000, 100.0, 100.0) == 0
+def test_position_size_scales_with_breakout_strength_between_the_floor_and_ceiling():
+    assert st.position_size(1_000_000, 100.0, 99.0, strength=0.0, min_pct=0.02, max_pct=0.05) == 200   # floor: 2%
+    assert st.position_size(1_000_000, 100.0, 99.0, strength=1.0, min_pct=0.02, max_pct=0.05) == 500   # ceiling: 5%
+    assert st.position_size(1_000_000, 100.0, 99.0, strength=0.5, min_pct=0.02, max_pct=0.05) == 350   # halfway: 3.5%
+    assert st.position_size(1_000_000, 100.0, 100.0) == 0   # no risk (stop == entry) is refused
+    assert st.position_size(1_000_000, 100.0, 105.0) == 0   # stop above entry is refused
 
 
 def test_intraday_fees_have_stt_on_sells_only_and_flat_brokerage():
@@ -69,6 +77,17 @@ def test_engine_buys_a_fresh_breakout_once_with_stop_and_target(tmp_path):
     assert "entered 1" in eng.step() and "entered 0" in eng.step()  # second cycle: one trade per stock per day
     [h] = broker.holdings()
     assert h["symbol"] == "AAA" and h["stop"] == pytest.approx(99.9) and any("BUY AAA" in m and "[INTRADAY]" in m for m in messages)
+    assert any("volume strength 100%" in m for m in messages)
+    # 1,000,000 equity, full strength -> the engine's default max_position_pct (5%) at 101.5/share
+    assert h["qty"] == int(1_000_000 * 0.05 / 101.5)
+
+
+def test_engine_uses_its_own_configured_min_and_max_position_pct(tmp_path):
+    eng, broker, *_ = engine(tmp_path, {"AAA": make_bars(BREAKOUT, volumes=VOLS)}, at(9, 45))
+    eng.min_position_pct, eng.max_position_pct = 0.10, 0.10  # flat 10%, easy to check
+    eng.step()
+    [h] = broker.holdings()
+    assert h["qty"] == int(1_000_000 * 0.10 / 101.5)
 
 
 def test_dry_run_only_reports_the_signal(tmp_path):

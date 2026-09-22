@@ -1,7 +1,11 @@
+import pytest
+
 from src.config import RiskLimits
 from src.engine.risk_engine import Portfolio, RiskEngine
 
-LIM = RiskLimits(max_position_pct=0.05, max_portfolio_exposure_pct=0.80, max_daily_loss_pct=0.02,
+# min_position_pct == max_position_pct here: a flat 5% regardless of confidence, so the existing quantity assertions
+# below (written before confidence-scaled sizing existed) still hold. Scaling itself is tested separately below.
+LIM = RiskLimits(min_position_pct=0.05, max_position_pct=0.05, max_portfolio_exposure_pct=0.80, max_daily_loss_pct=0.02,
                  max_drawdown_pct=0.20, min_confidence=0.6)
 ENGINE = RiskEngine(LIM)
 
@@ -106,3 +110,36 @@ def test_sells_are_never_blocked_by_max_open_positions():
     limits = RiskLimits(max_open_positions=1)
     p = pf(positions={"A": 1000.0, "B": 1000.0}, position_qty={"A": 10, "B": 10})
     assert RiskEngine(limits).evaluate("SELL", 0.9, "A", 100.0, p).approved
+
+
+# ---------------------------------------------------------------- confidence-scaled position size
+SCALED = RiskEngine(RiskLimits(min_position_pct=0.10, max_position_pct=0.25, max_portfolio_exposure_pct=0.80,
+                               max_daily_loss_pct=0.02, max_drawdown_pct=0.20, min_confidence=0.60))
+
+
+def test_position_pct_is_the_floor_at_the_minimum_confidence():
+    assert SCALED.position_pct(0.60) == 0.10
+
+
+def test_position_pct_is_the_ceiling_at_full_confidence():
+    assert SCALED.position_pct(1.0) == 0.25
+
+
+def test_position_pct_scales_linearly_in_between():
+    assert SCALED.position_pct(0.80) == pytest.approx(0.175)  # halfway from 0.60 to 1.0 -> halfway from 10% to 25%
+
+
+def test_a_higher_confidence_signal_gets_a_bigger_position_than_a_lower_one():
+    weak = SCALED.evaluate("BUY", 0.61, "AAA", 100.0, pf())
+    strong = SCALED.evaluate("BUY", 0.99, "AAA", 100.0, pf())
+    assert weak.approved and strong.approved and strong.quantity > weak.quantity
+
+
+def test_approval_reason_reports_the_sizing_percent_and_confidence_used():
+    d = SCALED.evaluate("BUY", 1.0, "AAA", 100.0, pf())
+    assert "sized at 25.0% for confidence 1.00" in d.reason
+
+
+def test_scaling_never_exceeds_the_exposure_or_cash_limits():
+    d = SCALED.evaluate("BUY", 1.0, "AAA", 100.0, pf(cash=1_000.0))  # 25% of equity would be 25,000, cash caps it
+    assert d.approved and d.quantity == 10
