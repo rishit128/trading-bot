@@ -8,7 +8,7 @@ can answer "why did behaviour change on that date" by comparing stamps instead o
 FEATURE_VERSION = "indicators-v3"  # Enriched indicators: MACD, Bollinger (levels+position), ATR, ADX, 14d momentum, volume trend
 PROMPT_VERSION = "technical-v9"  # v8 + the decision-memory prompt describes market-wide labelled outcomes (scope "market")
 SCHEMA_VERSION = "signal-v1"  # the llm.SIGNAL_SCHEMA output contract, frozen for replay compatibility
-STRATEGY_VERSION = "swing-v1"  # mechanical BUY filter + trend exit + 8% stop, sized and gated by the risk engine, paper broker
+STRATEGY_VERSION = "swing-v1"  # mechanical BUY filter + trend exit + 15% protective stop, sized and gated by the risk engine, paper broker
 
 VERSIONS = {
     "feature": FEATURE_VERSION,
