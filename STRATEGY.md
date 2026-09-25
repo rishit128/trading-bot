@@ -242,3 +242,11 @@ ADX above ~35 (+0.5% / +0.6% per 20 sessions, t 3.6 / 4.2) and 6-month momentum 
 RSI, volume ratio, distance from the 50-day average and ATR% do not pass. Caveats: today's index members only (survivorship
 flatters momentum), and the effects are small next to the 15% stop. Momentum is already what the scanner ranks by; ADX is a
 lead worth a proper backtest, not a rule change. Nothing was adopted.
+
+### Intraday ORB: can it be fixed? (`scripts/research_intraday.py`, 2026-09-25)
+Six pre-declared one-idea variants (entries only until 11:00, 1R target, narrow range, 3x volume, market-breadth gate, no
+extended breakouts) on the cached last 59 days of Nifty 100 5-minute bars. Candidate bar: >= 100 trades, positive in BOTH
+halves, expectancy > +0.10% per trade, still positive with slippage doubled. **None passed; every variant lost in both
+halves** (about -0.25% per trade, -0.35% with doubled slippage). Before slippage the rule's gross edge is about -0.05% per
+trade: there is nothing to filter, and costs (~0.11% fees + 0.10% slippage per round trip) turn zero into a steady loss.
+Live paper so far agrees (19 trades, -1.7%). Conclusion: tuning this rule is not the answer.
