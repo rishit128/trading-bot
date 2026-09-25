@@ -1,6 +1,6 @@
 
 import main
-from src.app import kit as app_kit, reports
+from src.app import wiring as app_kit, reports
 from src.config import Settings
 from src.database import make_session_factory
 from src.engine.paper_broker import PaperBroker
@@ -11,13 +11,13 @@ def sessions(tmp_path):
 
 
 def test_india_kit_uses_paper_broker_and_disables_unreliable_news(tmp_path):
-    kit = app_kit.build_kit(Settings(market="india", universe="market"), sessions(tmp_path))
+    kit = app_kit.build_market_wiring(Settings(market="india", universe="market"), sessions(tmp_path))
     assert isinstance(kit.broker, PaperBroker) and kit.screener is not None
     assert kit.headlines_fn("RELIANCE") == [] and "simulator" in kit.broker_label
 
 
 def test_india_watchlist_mode_has_no_screener(tmp_path):
-    kit = app_kit.build_kit(Settings(market="india", universe="watchlist"), sessions(tmp_path))
+    kit = app_kit.build_market_wiring(Settings(market="india", universe="watchlist"), sessions(tmp_path))
     assert kit.screener is None
 
 
@@ -46,7 +46,7 @@ def test_report_prints_paper_account_summary(tmp_path, capsys):
 
 
 def test_india_kit_analyses_completed_sessions_and_quotes_live(tmp_path):
-    kit = app_kit.build_kit(Settings(market="india"), sessions(tmp_path))
+    kit = app_kit.build_market_wiring(Settings(market="india"), sessions(tmp_path))
     assert kit.use_news is False and kit.quote_fn is not None
 
 
@@ -91,7 +91,7 @@ def test_holdout_flag_returns_a_callable_hook():
 def test_the_live_kit_downloads_a_stock_once_per_session_not_every_cycle(monkeypatch, tmp_path):
     """Regression: every 30-minute cycle re-downloaded two years of daily bars per stock."""
     import dataclasses
-    from src.app import kit as kit_module
+    from src.app import wiring as kit_module
     from src.config import Settings
     from src.data.indicators import Snapshot
     from src.database import make_session_factory
@@ -100,8 +100,18 @@ def test_the_live_kit_downloads_a_stock_once_per_session_not_every_cycle(monkeyp
     monkeypatch.setattr(kit_module, "fetch_snapshot",
                         lambda symbol, **kw: calls.append(symbol) or Snapshot(symbol, 1.0, 1.0, 1.0, 50.0, 1))
     settings = dataclasses.replace(Settings(), universe="watchlist")
-    built = kit_module.build_kit(settings, make_session_factory(f"sqlite:///{tmp_path / 'k.db'}"))
+    built = kit_module.build_market_wiring(settings, make_session_factory(f"sqlite:///{tmp_path / 'k.db'}"))
     built.snapshot_fn("RELIANCE")
     built.snapshot_fn("RELIANCE")
     built.snapshot_fn("TCS")
     assert calls == ["RELIANCE", "TCS"]
+
+
+def test_the_bot_labels_its_decisions_with_outcomes_using_the_live_stop(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("UNIVERSE", "watchlist")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'w.db'}")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
+    pipeline = main.build_pipeline(live=False)
+    labeller = main.build_outcome_labeller(pipeline)
+    assert labeller.stop_pct == pipeline.settings.risk.stop_loss_pct and labeller.control is pipeline.control

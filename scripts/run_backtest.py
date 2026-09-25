@@ -16,9 +16,9 @@ import yfinance as yf
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.agents.agents import TechnicalAgent  # noqa: E402
+from src.agents.technical import TechnicalAgent  # noqa: E402
 from src.agents.base import AgentContext  # noqa: E402
-from src.backtest import START_EQUITY, buy_and_hold_curve, curve_metrics, rule_signals, simulate, trade_metrics  # noqa: E402
+from src.research.backtest import START_EQUITY, TIME_LIMITED, buy_and_hold_curve, curve_metrics, rule_signals, simulate, trade_metrics  # noqa: E402
 from src.config import load_settings  # noqa: E402
 from src.data.indicators import Snapshot, build_snapshot  # noqa: E402
 from src.llm import SIGNAL_SCHEMA, LLMClient  # noqa: E402
@@ -128,8 +128,8 @@ def main():
     print("\nLLM signal mix:", {a: sum(1 for s in signals.values() for v in s.values() if v[0] == a) for a in ("BUY", "SELL", "HOLD")})
 
     window = {s: df.loc[dates[0]:] for s, df in bars.items()}
-    llm = simulate(window, signals, settings.risk)
-    rule = simulate(window, rule_signals(bars, dates), settings.risk)
+    llm = simulate(window, signals, settings.risk, exits=TIME_LIMITED)  # this study compares against the original 10-day style
+    rule = simulate(window, rule_signals(bars, dates), settings.risk, exits=TIME_LIMITED)
     hold = buy_and_hold_curve(window)
 
     print("\n=== RESULTS (same risk engine, stops, sizing for LLM and rule) ===")

@@ -1,4 +1,4 @@
-"""Phase 2 effectiveness: does the historical-pattern adjustment actually predict outcomes?
+"""Decision-memory effectiveness: does the historical-pattern adjustment actually predict outcomes?
 
 For each stored BUY decision that named a pattern, this matches the eventual closed paper trade(s)
 it opened and tallies them per pattern, then reports the realised win rate per pattern together with

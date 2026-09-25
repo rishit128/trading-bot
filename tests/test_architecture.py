@@ -11,14 +11,14 @@ from src.data.india import IndiaClock, IntradayFeed
 from src.data.market_data import fetch_snapshot
 from src.database import DecisionRecord, make_session_factory
 from src.engine.strategy import combine_signals
-from src.llm import LLMClient, LLMUnavailable, Signal
+from src.llm import LLMClient, LLMUnavailable, AgentSignal
 from tests.test_llm_and_pipeline import GOOD, FakeOpenAI, api_error
 
 UTC = timezone.utc
 
 
 def sig(action, conf=0.8, reasoning="r"):
-    return Signal(action=action, confidence=conf, reasoning=reasoning)
+    return AgentSignal(action=action, confidence=conf, reasoning=reasoning)
 
 
 ROLES = {"technical": LEAD, "trend": LEAD, "sentiment": ADVISOR, "macro": ADVISOR, "fundamentals": ADVISOR}

@@ -12,7 +12,7 @@ answers one question — "did the recorded decisions themselves make money?"**
 
 A re-run of the stored **approved** `decisions` (BUY, risk-approved, `final_confidence` ≥
 `MIN_CONFIDENCE`) through the same deterministic simulator every backtest uses
-(`src.backtest.simulate`), in the exact D1/D2 conventions: signal on day T, fill at T+1 open with
+(`src.research.backtest.simulate`), in the exact D1/D2 conventions: signal on day T, fill at T+1 open with
 adversarial slippage, bracket exit levels off the signal-day close, `india_delivery_fees` on both
 sides. It seeds from the paper account's own starting cash so returns are directly comparable. The
 decision list is point-in-time (each decision was made before the bars it trades); nothing is fitted

@@ -1,4 +1,4 @@
-"""Phase 3 effectiveness: is the market/sector context phase acting, and does it help?
+"""Market-context effectiveness: is the market/sector context phase acting, and does it help?
 
 Reports what the context phase has actually judged (regime, macro/sector support, earnings risk,
 diversification score), and how often a risk-off or euphoric regime made the bot stand down or cut

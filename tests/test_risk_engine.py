@@ -176,7 +176,7 @@ def test_risk_limits_reject_a_negative_pause():
 
 
 # ---------------------------------------------------------------- fee drag: tiny positions are not worth their fixed charges
-from src.engine.paper_broker import india_delivery_fees  # noqa: E402
+from src.engine.costs import india_delivery_fees  # noqa: E402
 
 
 def _engine(fee_drag=0.04, fees=india_delivery_fees):

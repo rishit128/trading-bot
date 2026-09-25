@@ -1,4 +1,4 @@
-"""P0, prod-DB: schema migrations are explicit, idempotent, and never invent NOT NULL columns.
+"""schema migrations are explicit, idempotent, and never invent NOT NULL columns.
 
 An older database (a subset of today's `decisions`) must be *reported* out of date before anything
 touches it, dry-run must not write, becoming-current-only-via-apply must converge, and a brand-new
@@ -7,11 +7,11 @@ import sqlite3
 
 import pytest
 
-from src.schema import apply_migrations, is_current, schema_status
+from src.database.migrations import apply_migrations, is_current, schema_status
 
 
 def _old_decisions_db(path):
-    """The decisions table as it looked before the P0 feature columns existed."""
+    """The decisions table as it looked before the feature columns existed."""
     conn = sqlite3.connect(str(path))
     conn.executescript("""
         CREATE TABLE decisions (
@@ -35,7 +35,7 @@ def test_old_database_is_reported_out_of_date_without_any_change(old_db):
     status = schema_status(old_db)
     assert "decisions" in status
     missing = status["decisions"]["missing"]
-    assert "universe_size" in missing and "prompt_version" in missing  # the P0 feature columns
+    assert "universe_size" in missing and "prompt_version" in missing  # the feature columns
     assert is_current(old_db) is False
 
 

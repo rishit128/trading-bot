@@ -7,12 +7,13 @@ import openai
 import pytest
 from sqlalchemy import select
 
-from src.agents.agents import SentimentAgent, TechnicalAgent
+from src.agents.sentiment import SentimentAgent
+from src.agents.technical import TechnicalAgent
 from src.agents.base import ADVISOR, LEAD, AgentContext
 from src.config import RiskLimits, Settings
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord, OrderRecord, make_session_factory
-from src.engine.paper_broker import Fill
+from src.engine.ports import Fill
 from src.engine.risk_engine import Portfolio
 from src.llm import LLMClient, LLMUnavailable
 from src.pipeline import TradingPipeline
@@ -137,7 +138,7 @@ class FakeBroker:
 
 def make_pipeline(tmp_path, technical_action="BUY", dry_run=True, broker=None, snapshot_fn=None, watchlist=("AAPL",),
                   analysis_workers=3, risk=None, trend_exit=True):
-    from src.llm import Signal
+    from src.llm import AgentSignal
 
     settings = Settings(watchlist=watchlist, dry_run=dry_run, risk=risk or RiskLimits(), analysis_workers=analysis_workers,
                         trend_exit=trend_exit)
@@ -145,7 +146,7 @@ def make_pipeline(tmp_path, technical_action="BUY", dry_run=True, broker=None, s
     sessions = make_session_factory(f"sqlite:///{tmp_path / 't.db'}")
     pipe = TradingPipeline(
         settings,
-        [StubAgent(lambda s: Signal(action=technical_action, confidence=0.9, reasoning="t"), "technical", LEAD),
+        [StubAgent(lambda s: AgentSignal(action=technical_action, confidence=0.9, reasoning="t"), "technical", LEAD),
          StubAgent(lambda sym, heads: None, "sentiment", ADVISOR)],
         broker,
         sessions,
@@ -284,9 +285,9 @@ def test_llm_client_uses_bounded_timeout_and_no_hidden_sdk_retries(monkeypatch):
 
 
 def signal_for(action, degraded=False):
-    from src.llm import Signal
+    from src.llm import AgentSignal
 
-    return Signal(action=action, confidence=0.9, reasoning="t", degraded=degraded)
+    return AgentSignal(action=action, confidence=0.9, reasoning="t", degraded=degraded)
 
 
 def test_second_buy_within_cooldown_is_skipped(tmp_path):

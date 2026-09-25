@@ -1,4 +1,4 @@
-"""P0 B1: run the phase ablation over one historical window for one symbol.
+"""Run the capability ablation over one historical window for one symbol.
 
     DET / +LLM / +LEARNING / +CONTEXT / +REFLECTION / FULL
 
@@ -6,7 +6,7 @@ Usage:
   python scripts/ablate_phases.py RELIANCE --start 2023-01-01 --end 2024-06-30
   python scripts/ablate_phases.py RELIANCE --offline          # mechanical-only, requires no API key
 
-Phase 2 (learning) reads the closed paper trades of `--database-url` (default sqlite:///trading.db),
+The learning step reads the closed paper trades of `--database-url` (default sqlite:///trading.db),
 point-in-time, so an ablation on live history has no look-ahead. Without a configured model the LLM
 phases are skipped and the report says so; the mechanical-only answer is still a valid baseline the
 review can use."""
@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import load_settings  # noqa: E402
 from src.database import make_session_factory  # noqa: E402
-from src.engine.paper_broker import india_delivery_fees  # noqa: E402
+from src.engine.costs import india_delivery_fees  # noqa: E402
 from src.llm import LLMClient  # noqa: E402
 from src.research.ablation import run_ablation  # noqa: E402
 

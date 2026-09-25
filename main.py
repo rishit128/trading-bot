@@ -5,21 +5,25 @@ import logging
 import os
 import sys
 
-from src.agents.agents import SentimentAgent, TechnicalAgent
-from src.agents.history import history_stats
+from src.agents.sentiment import SentimentAgent
+from src.agents.technical import TechnicalAgent
+from src.learning.jobs import DailyOutcomeLabelling
+from src.learning.setups import SetupMemory
 from src.app.intraday_cli import run_intraday
-from src.app.kit import build_kit, intraday_db_url, make_paper_broker
+from src.app.wiring import build_market_wiring, intraday_db_url, make_paper_broker
 from src.app.reports import print_candidates, print_graphs, print_positions, print_report
 from src.config import load_settings
 from src.control import Control
+from src.data.india import SUFFIX
 from src.data.market_context import MarketContextProvider
+from src.data.market_data import fetch_daily_bars
 from src.database import make_session_factory
 from src.intraday.strategy import intraday_fees
 from src.llm import LLMClient
 from src.logging_setup import configure_logging
 from src.monitoring.telegram import CommandListener, Notifier, handle_command
 from src.pipeline import TradingPipeline
-from src.preflight import build_checks, critical_failures, format_results, run_checks
+from src.ops.preflight import build_checks, critical_failures, format_results, run_checks
 from src.runner import run_cycle, run_loop
 
 log = logging.getLogger(__name__)
@@ -41,7 +45,7 @@ def build_pipeline(live: bool) -> TradingPipeline:
     llm = LLMClient.from_settings(settings)
     sessions = make_session_factory(settings.database_url)
     control = Control(sessions)
-    kit = build_kit(settings, sessions)
+    kit = build_market_wiring(settings, sessions)
     intraday_broker = None
     try:
         intraday_broker = make_paper_broker(settings, intraday_db_url(), fees=intraday_fees)
@@ -55,11 +59,13 @@ def build_pipeline(live: bool) -> TradingPipeline:
     else:
         print("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID); alerts and /pause disabled")
     def make_history_fn(sessions):
-        """Phase 2 hook: closed paper-trade stats for setups similar to the snapshot; failures mean no adjustment."""
+        """Decision-memory hook: how setups like this one turned out across every analysed stock (labelled outcomes). It
+        stays silent until enough observations exist; a failure means no adjustment."""
+        memory = SetupMemory(sessions, horizon=settings.learning_horizon, min_samples=settings.learning_min_samples)
 
         def history(snapshot):
             try:
-                return history_stats(sessions, snapshot)
+                return memory.stats(snapshot)
             except Exception as e:
                 log.warning("history lookup failed for %s: %s: %s", snapshot.symbol, type(e).__name__, e)
                 return None
@@ -69,7 +75,7 @@ def build_pipeline(live: bool) -> TradingPipeline:
     market_provider = MarketContextProvider()
 
     def market_context(snapshot):
-        """Phase 3 hook: index regime / VIX for the stock; a failure means no context adjustment."""
+        """Market-context hook: index regime / VIX for the stock; a failure means no context adjustment."""
         try:
             return market_provider.context(snapshot.symbol, snapshot)
         except Exception as e:
@@ -84,9 +90,8 @@ def build_pipeline(live: bool) -> TradingPipeline:
     pipeline = TradingPipeline(
         settings, agents, kit.broker, sessions, kit.snapshot_fn, kit.headlines_fn, control=control, notify=notify,
         universe_fn=kit.screener.symbols_for if kit.screener else None, quote_fn=kit.quote_fn,
-        market_context_fn=market_context,
+        market_context_fn=market_context, broker_label=kit.broker_label,
     )
-    pipeline.broker_label = kit.broker_label
     return pipeline
 
 
@@ -96,16 +101,22 @@ def preflight(pipeline) -> list:
         settings = pipeline.settings if pipeline is not None else load_settings()
     except ValueError as e:
         sys.exit(f"Invalid configuration: {e}")
-    broker = pipeline.broker if pipeline is not None else build_kit(settings, make_session_factory(settings.database_url)).broker
+    broker = pipeline.broker if pipeline is not None else build_market_wiring(settings, make_session_factory(settings.database_url)).broker
     results = run_checks(build_checks(settings, broker, os.environ))
     print("Startup checks:\n" + format_results(results))
     return critical_failures(results)
 
 
+def build_outcome_labeller(pipeline) -> DailyOutcomeLabelling:
+    """The once-a-day job that attaches real outcomes to the decisions the bot has made, so it can learn from all of them."""
+    return DailyOutcomeLabelling(pipeline.sessions, pipeline.control, lambda symbol: fetch_daily_bars(symbol, suffix=SUFFIX),
+                                 stop_pct=pipeline.settings.risk.stop_loss_pct, notify=pipeline.notify)
+
+
 def build_holdout_callback(pipeline):
     """The per-cycle hook for --holdout: replays the approved decisions into the independent reserve and prints a mark."""
-    from src.engine.convention import SLIPPAGE
-    from src.holdout import HoldoutReserve
+    from src.engine.costs import SLIPPAGE
+    from src.ops.holdout import HoldoutReserve
 
     import yfinance as yf
 
@@ -134,7 +145,8 @@ def build_holdout_callback(pipeline):
 
 def main() -> None:
     """Parse arguments and run the requested command."""
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stdout, "reconfigure"):  # not on a redirected or replaced stream
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="AI trading bot (Indian NSE stocks, paper trading).")
     parser.add_argument("--loop", type=int, metavar="MINUTES", help="repeat every N minutes while the market is open (N >= 1)")
     parser.add_argument("--screen", action="store_true", help="only scan the whole market and print the candidates")
@@ -187,14 +199,20 @@ def main() -> None:
     print("note: news sentiment is disabled (no reliable free Indian news source)")
 
     reserve_callback = build_holdout_callback(pipeline) if args.holdout else None
+    labeller = build_outcome_labeller(pipeline)
+
+    def after_cycle() -> None:
+        """Chores after each cycle: mark the holdout reserve (if enabled) and label matured outcomes (once a day)."""
+        if reserve_callback is not None:
+            reserve_callback()
+        labeller()
 
     if args.loop:
         pipeline.notify(f"Trading bot started: {st.market.upper()} {mode}, every {args.loop} min while the market is open.")
-        run_loop(pipeline, args.loop, after_cycle=reserve_callback)
+        run_loop(pipeline, args.loop, after_cycle=after_cycle)
     else:
         run_cycle(pipeline)
-        if reserve_callback is not None:
-            reserve_callback()
+        after_cycle()
 
 
 if __name__ == "__main__":

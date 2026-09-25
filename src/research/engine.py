@@ -59,7 +59,7 @@ def max_drawdown(returns: pd.Series) -> float:
 
 def yearly_returns(returns: pd.Series) -> pd.Series:
     """Return for each calendar year."""
-    return (1.0 + returns).groupby(returns.index.year).prod() - 1.0
+    return (1.0 + returns).groupby(pd.DatetimeIndex(returns.index).year).prod() - 1.0
 
 
 def summarize(result: pd.DataFrame, column: str = "net") -> Dict[str, float]:

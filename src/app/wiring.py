@@ -1,17 +1,18 @@
-"""Wiring shared by the command-line entry point and the reports: the market kit and the paper-broker factory."""
+"""Wiring shared by the command-line entry point and the reports: the market wiring and the paper-broker factory."""
 import os
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
 from src.config import Settings
+from src.engine.ports import Broker
 from src.data.market_data import cached_per_session, fetch_snapshot
 from src.data.universe import ScreenConfig, UniverseScreener
 
 
 @dataclass
-class MarketKit:
+class MarketWiring:
     """Everything that differs per market: broker, data functions, universe scanner, and whether news sentiment is available."""
-    broker: object
+    broker: Broker
     snapshot_fn: Callable
     headlines_fn: Callable[[str], Sequence[str]]
     screener: Optional[UniverseScreener]
@@ -43,13 +44,14 @@ def make_paper_broker(settings: Settings, database_url: Optional[str] = None, fe
     """A PaperBroker on the given database (default: the swing account) with live NSE prices and the IST market clock."""
     from src.data.india import IndiaClock, IntradayFeed
     from src.database import make_session_factory
-    from src.engine.paper_broker import PaperBroker, india_delivery_fees
+    from src.engine.paper_broker import PaperBroker
+    from src.engine.costs import india_delivery_fees
 
     return PaperBroker(make_session_factory(database_url or settings.database_url), IntradayFeed(), IndiaClock(),
                        initial_cash=settings.paper_initial_cash, fees=fees or india_delivery_fees)
 
 
-def build_kit(settings: Settings, sessions) -> MarketKit:
+def build_market_wiring(settings: Settings, sessions) -> MarketWiring:
     """Assemble the broker and data functions for the configured market."""
     from src.data.india import SUFFIX, IndiaClock, IntradayFeed
     from src.engine.paper_broker import PaperBroker
@@ -59,7 +61,7 @@ def build_kit(settings: Settings, sessions) -> MarketKit:
     screener = build_india_screener(settings) if settings.universe == "market" else None
     # Analyse the last COMPLETED session only (stable prompts all day -> cacheable, and matches the backtest), then
     # size/bracket the order off the live price. No reliable free Indian news source, so no sentiment agent.
-    return MarketKit(
+    return MarketWiring(
         broker, cached_per_session(lambda s: fetch_snapshot(s, suffix=SUFFIX, as_of=clock.last_completed_session),
                                    clock.last_completed_session),
         lambda s: [], screener,

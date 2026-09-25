@@ -10,7 +10,7 @@ from src.config import RiskLimits, Settings
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord, OrderRecord, make_session_factory
 from src.engine.risk_engine import Portfolio
-from src.llm import Signal
+from src.llm import AgentSignal
 from src.pipeline import TradingPipeline
 from tests.test_llm_and_pipeline import FakeBroker, StubAgent, make_pipeline, signal_for
 
@@ -63,7 +63,7 @@ def test_any_number_of_agents_run_in_parallel(tmp_path):
 def test_a_new_agent_is_picked_up_by_rebuilding_and_is_audited(tmp_path):
     pipe, _, sessions = make_pipeline(tmp_path)
     assert "agent_macro" not in pipe.analysis_graph.get_graph().nodes
-    pipe.agents["macro"] = stub("macro", lambda s: Signal(action="BUY", confidence=0.7, reasoning="tailwind"), ADVISOR)
+    pipe.agents["macro"] = stub("macro", lambda s: AgentSignal(action="BUY", confidence=0.7, reasoning="tailwind"), ADVISOR)
     pipe.rebuild_graphs()
     assert "agent_macro" in pipe.analysis_graph.get_graph().nodes
     pipe.run_once()
@@ -218,7 +218,7 @@ def test_no_quote_is_fetched_for_hold_decisions(tmp_path):
 
 def test_sentiment_veto_flows_through_the_graph_and_is_audited(tmp_path):
     pipe, _, sessions = make_pipeline(tmp_path)
-    pipe.agents["sentiment"] = stub("sentiment", lambda sym, heads: Signal(action="SELL", confidence=0.9, reasoning="bad news"), ADVISOR)
+    pipe.agents["sentiment"] = stub("sentiment", lambda sym, heads: AgentSignal(action="SELL", confidence=0.9, reasoning="bad news"), ADVISOR)
     [r] = pipe.run_once()
     assert r.action == "HOLD"
     with sessions() as s:

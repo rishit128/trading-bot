@@ -5,7 +5,8 @@ import pytest
 from sqlalchemy import select
 
 from src.database import PaperPositionRecord, PaperTradeRecord, make_session_factory
-from src.engine.paper_broker import PaperBroker, india_delivery_fees
+from src.engine.paper_broker import PaperBroker
+from src.engine.costs import india_delivery_fees
 
 T0 = datetime(2026, 9, 21, 4, 0, tzinfo=timezone.utc)  # 09:30 IST, a Monday
 
@@ -242,14 +243,14 @@ def test_summary_with_no_trades(tmp_path):
 def test_works_end_to_end_inside_the_trading_pipeline(tmp_path):
     from src.config import RiskLimits, Settings
     from src.data.indicators import Snapshot
-    from src.llm import Signal
+    from src.llm import AgentSignal
     from src.pipeline import TradingPipeline
     from tests.test_llm_and_pipeline import StubAgent
 
     broker, feed, _, _, sessions = make(tmp_path, prices={"AAA": 100.0})
     pipe = TradingPipeline(
         Settings(watchlist=("AAA",), dry_run=False, risk=RiskLimits()),
-        [StubAgent(lambda s: Signal(action="BUY", confidence=0.9, reasoning="t"))], broker, sessions,
+        [StubAgent(lambda s: AgentSignal(action="BUY", confidence=0.9, reasoning="t"))], broker, sessions,
         lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000), lambda sym: [],
     )
     [r] = pipe.run_once()

@@ -16,20 +16,23 @@ Each failure is classified, because each needs a different response:
 A model that fails several calls in a row is benched for a cool-off so healthy models answer first; if every model is
 benched the least recently benched is still tried, so the client can never wedge itself."""
 import hashlib
-import json
 import logging
 import os
 import random
-import re
 import threading
 import time
 from collections import Counter
 from contextlib import contextmanager
-from typing import Callable, Dict, Literal, Optional, Tuple, Type, TypeVar
+from typing import Any, Callable, Dict, Optional, Tuple, Type, TypeVar, cast
 
 import openai
 from openai import OpenAI
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
+
+from src.engine.enums import ACTION_VALUES
+from src.engine.agent_signal import AgentSignal
+from src.llm.errors import FORMAT, PERMANENT, TRANSIENT, TRUNCATED, Failure, LLMUnavailable
+from src.llm.parsing import extract_json_object, retry_after, upstream_message
 
 log = logging.getLogger(__name__)
 
@@ -39,29 +42,13 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1"
 RETRY_HINT = ("Your previous response was not a valid JSON object for the required schema. Respond with ONLY a single "
               "raw JSON object matching the schema, with no prose, no markdown fences, and no trailing text.")
 
-TRANSIENT, TRUNCATED, FORMAT, PERMANENT = "transient", "truncated", "format", "permanent"
-
-
-class Signal(BaseModel):
-    """One agent's opinion: BUY/SELL/HOLD, confidence 0-1 and one-sentence reasoning; `degraded` marks a fail-safe HOLD.
-
-    `details` holds the richer reasoning (chain-of-thought steps, risks, edge confidence) some agents return. It is
-    populated by the agent code, never read from the model's JSON, and is persisted with the decision for audit/replay."""
-    action: Literal["BUY", "SELL", "HOLD"]
-    confidence: float = Field(ge=0.0, le=1.0)
-    reasoning: str = Field(min_length=1)
-    degraded: bool = False  # set only by our fail-safe HOLD, never by a model
-    details: Optional[dict] = None  # optional richer reasoning, for audit and replay; never from the model
-    raw_model: Optional[str] = None  # which configured model actually answered, stamped client-side by the LLM client
-
-
 SIGNAL_SCHEMA = {
     "name": "trading_signal",
     "strict": True,
     "schema": {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["BUY", "SELL", "HOLD"]},
+            "action": {"type": "string", "enum": ACTION_VALUES},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "reasoning": {"type": "string"},
         },
@@ -73,63 +60,10 @@ SIGNAL_SCHEMA = {
 _T = TypeVar("_T", bound=BaseModel)
 
 
-class LLMUnavailable(Exception):
-    """Raised when every configured model failed."""
-    pass
-
-
-class _Failure(Exception):
-    """One classified failed attempt (internal)."""
-
-    def __init__(self, kind: str, detail: str, retry_after: Optional[float] = None):
-        super().__init__(f"{kind}: {detail}")
-        self.kind, self.detail, self.retry_after = kind, detail, retry_after
-
-
-def extract_json_object(text: str) -> dict:
-    """The JSON object in a model's answer. Tolerates a markdown fence, prose around the object, a doubled opening brace
-    and trailing commas; raises ValueError when there is no object (a list, a bare string or number is not one)."""
-    s = text.strip()
-    fence = re.search(r"```(?:json)?\s*(.*?)```", s, re.S)
-    if fence:
-        s = fence.group(1).strip()
-    candidates = [s]
-    first, last = s.find("{"), s.rfind("}")
-    if first != -1 and last > first and (first, last) != (0, len(s) - 1):
-        candidates.append(s[first:last + 1])
-    for candidate in candidates:
-        for variant in (candidate, re.sub(r"^\{\s*\{", "{", candidate), re.sub(r",\s*([}\]])", r"\1", candidate)):
-            try:
-                obj = json.loads(variant)
-            except ValueError:
-                continue
-            if isinstance(obj, dict):
-                return obj
-            raise ValueError(f"expected a JSON object, got {type(obj).__name__}")
-    raise ValueError(f"no valid JSON object in the answer ({s[:60]!r})")
-
-
-def _upstream_message(response) -> str:
-    """The provider's own explanation when a 200 response carries no choices (OpenRouter puts it in `error`)."""
-    error = getattr(response, "error", None)
-    if isinstance(error, dict):
-        return str(error.get("message") or error)[:100]
-    return str(error)[:100] if error else "no detail"
-
-
-def _retry_after(exc) -> Optional[float]:
-    """Seconds the provider asked us to wait (Retry-After header), if any."""
-    try:
-        value = exc.response.headers.get("retry-after")
-        return float(value) if value is not None else None
-    except Exception:
-        return None
-
-
 class LLMClient:
     """Asks OpenRouter models for a schema-enforced JSON object, surviving flaky free models (see the module docstring).
 
-    `signal()` is the classic one-sentence Signal; `structured_call()` is the same machinery for any pydantic model,
+    `signal()` is the classic one-sentence AgentSignal; `structured_call()` is the same machinery for any pydantic model,
     which is what the chain-of-thought agents use. The defaults do no waiting and no pacing so unit tests stay fast;
     `from_settings` wires the production values."""
 
@@ -160,7 +94,8 @@ class LLMClient:
         self._state_lock = threading.Lock()
         self._benched_until: Dict[str, float] = {}
         self._consecutive_failures: Counter = Counter()
-        self._window: Dict[str, Counter] = {}  # per-model counters since the last drain_stats()
+        self._window: Dict[str, Counter[str]] = {}  # per-model counts since the last drain_stats()
+        self._seconds: Dict[str, float] = {}  # ... and the seconds the successful calls took
         self._slots = threading.BoundedSemaphore(max_concurrency) if max_concurrency > 0 else None
         self._rate_lock, self._next_slot = threading.Lock(), 0.0
         # The SDK's own retry is off: it would hide rate limits from, and multiply, our own accounted retries.
@@ -196,10 +131,10 @@ class LLMClient:
             self._cache[key] = (self.clock(), value)
 
     # ------------------------------------------------------------------ public calls
-    def signal(self, prompt: str) -> Signal:
-        """Ask the models in order for a Signal; identical prompts are answered from cache."""
-        return self.structured_call(prompt, Signal, SIGNAL_SCHEMA,
-                                    parse=lambda raw: Signal.model_validate(
+    def signal(self, prompt: str) -> AgentSignal:
+        """Ask the models in order for a AgentSignal; identical prompts are answered from cache."""
+        return self.structured_call(prompt, AgentSignal, SIGNAL_SCHEMA,
+                                    parse=lambda raw: AgentSignal.model_validate(
                                         {k: raw[k] for k in ("action", "confidence", "reasoning") if k in raw}))
 
     def structured_call(self, prompt: str, model_class: Type[_T], schema: dict,
@@ -214,7 +149,7 @@ class LLMClient:
         if cached is not None:
             self.last_model = getattr(cached, "raw_model", None)
             return cached
-        instance = self._ask(prompt, schema, parse or model_class.model_validate, max_tokens)
+        instance = cast(_T, self._ask(prompt, schema, parse or model_class.model_validate, max_tokens))  # `parse` builds a model_class
         self._remember(key, instance)
         return instance
 
@@ -229,7 +164,7 @@ class LLMClient:
             benched = sorted((m for m in live if m not in ready), key=lambda m: self._benched_until[m])
         return ready if ready else benched[:1]
 
-    def _bump(self, model: str, key: str, n: float = 1) -> None:
+    def _bump(self, model: str, key: str, n: int = 1) -> None:
         with self._state_lock:
             self._window.setdefault(model, Counter())[key] += n
 
@@ -238,7 +173,7 @@ class LLMClient:
             self._consecutive_failures[model] = 0
             self._benched_until.pop(model, None)
             self._window.setdefault(model, Counter())["ok"] += 1
-            self._window[model]["seconds"] += seconds
+            self._seconds[model] = self._seconds.get(model, 0.0) + seconds
 
     def _gave_up_on(self, model: str) -> None:
         """A whole call to this model failed: after enough in a row, bench it so others answer first."""
@@ -253,8 +188,9 @@ class LLMClient:
     def drain_stats(self) -> Dict[str, dict]:
         """Per-model counters since the last drain (ok, failures by kind, benched), for the cycle's health line."""
         with self._state_lock:
-            out = {m: dict(c) for m, c in self._window.items() if c}
-            self._window = {}
+            out: Dict[str, dict] = {m: {**c, **({"seconds": self._seconds[m]} if m in self._seconds else {})}
+                                    for m, c in self._window.items() if c}
+            self._window, self._seconds = {}, {}
         return out
 
     def health_line(self) -> Optional[str]:
@@ -283,14 +219,14 @@ class LLMClient:
                 break
             try:
                 return self._try_model(model, prompt, schema, parse, max_tokens or self.max_tokens, deadline)
-            except _Failure as f:
+            except Failure as f:
                 errors.append(f"{model}: {f.kind}: {f.detail}")
         raise LLMUnavailable("; ".join(errors))
 
     def _try_model(self, model, prompt, schema, parse, tokens, deadline) -> BaseModel:
         """Up to a bounded number of attempts on one model, reacting to each failure kind as the module docstring says."""
         base = [{"role": "user", "content": prompt}]
-        messages, spent = base, Counter()
+        messages, spent = base, Counter[str]()
         while True:
             started = self.clock()
             try:
@@ -298,7 +234,7 @@ class LLMClient:
                 self._succeeded(model, self.clock() - started)
                 self.last_model = model
                 return instance
-            except _Failure as f:
+            except Failure as f:
                 self._bump(model, f.kind)
                 log.warning("model %s %s (attempt %d): %s", model, f.kind, sum(spent.values()) + 1, f.detail)
                 spent[f.kind] += 1
@@ -338,8 +274,8 @@ class LLMClient:
 
     def _create(self, model: str, messages: list, tokens: int, schema: dict):
         """The API call, with the reasoning switch that is dropped for any model that rejects it."""
-        kwargs = dict(model=model, max_tokens=tokens, messages=messages,
-                      response_format={"type": "json_schema", "json_schema": schema})
+        kwargs: Dict[str, Any] = dict(model=model, max_tokens=tokens, messages=messages,
+                                      response_format={"type": "json_schema", "json_schema": schema})
         if self.reasoning_off and model not in self._no_reasoning_control:
             kwargs["extra_body"] = {"reasoning": {"enabled": False}}
         try:
@@ -355,32 +291,32 @@ class LLMClient:
             raise
 
     def _request(self, model: str, messages: list, tokens: int, schema: dict, parse) -> BaseModel:
-        """One API call, classified: returns the validated instance or raises _Failure."""
+        """One API call, classified: returns the validated instance or raises Failure."""
         try:
             response = self._create(model, messages, tokens, schema)
         except openai.NotFoundError as e:
             self.dead.add(model)
-            raise _Failure(PERMANENT, f"model no longer exists ({str(e)[:60]})")
+            raise Failure(PERMANENT, f"model no longer exists ({str(e)[:60]})")
         except (openai.AuthenticationError, openai.PermissionDeniedError, openai.BadRequestError) as e:
-            raise _Failure(PERMANENT, f"{type(e).__name__}: {str(e)[:100]}")
+            raise Failure(PERMANENT, f"{type(e).__name__}: {str(e)[:100]}")
         except openai.RateLimitError as e:
-            raise _Failure(TRANSIENT, "rate limited", retry_after=_retry_after(e))
+            raise Failure(TRANSIENT, "rate limited", retry_after=retry_after(e))
         except openai.APIError as e:  # timeouts, connection errors, 5xx: all worth another go
-            raise _Failure(TRANSIENT, f"{type(e).__name__}: {str(e)[:80]}")
+            raise Failure(TRANSIENT, f"{type(e).__name__}: {str(e)[:80]}")
         choices = getattr(response, "choices", None)
         if not choices:
-            raise _Failure(TRANSIENT, f"no choices in response ({_upstream_message(response)})")
+            raise Failure(TRANSIENT, f"no choices in response ({upstream_message(response)})")
         choice = choices[0]
         finish = getattr(choice, "finish_reason", None)
         text = getattr(choice.message, "content", None)
         if not text or not text.strip():
-            raise _Failure(TRUNCATED if finish == "length" else TRANSIENT,
+            raise Failure(TRUNCATED if finish == "length" else TRANSIENT,
                            f"empty content (finish_reason={finish})")
         try:
             instance = parse(extract_json_object(text))
         except (ValueError, ValidationError) as e:
             kind = TRUNCATED if finish == "length" else FORMAT
-            raise _Failure(kind, f"{type(e).__name__}: {str(e)[:100]} (finish_reason={finish}, head={text[:60]!r})")
+            raise Failure(kind, f"{type(e).__name__}: {str(e)[:100]} (finish_reason={finish}, head={text[:60]!r})")
         if hasattr(instance, "raw_model"):
             instance.raw_model = model  # tag the answer with who produced it, for per-model accountability
         return instance

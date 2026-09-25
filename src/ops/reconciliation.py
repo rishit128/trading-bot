@@ -1,14 +1,15 @@
-"""Paper-level broker reconciliation (P0): the database ledger must tie back to the paper account line by line.
+"""Paper-level broker reconciliation: the database ledger must tie back to the paper account line by line.
 
 Every decision that was approved must have an order record, every filled order must have landed in a position or a
 closed trade, and the cash the account reports must be rebuildable from the recorded fills. The script
 scripts/reconcile_paper.py prints the report and exits nonzero on any finding; tests pin the catch-the-drift case."""
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from sqlalchemy import select
 
 from src.database import DecisionRecord, OrderRecord, PaperAccountRecord, PaperPositionRecord, PaperTradeRecord
-from src.engine.paper_broker import india_delivery_fees
+from src.engine.enums import Action, OrderStatus
+from src.engine.costs import india_delivery_fees
 
 TOLERANCE = 0.01  # rupees; fees and STT round into sub-paisa noise
 
@@ -17,7 +18,7 @@ def _filled_qty(order) -> int:
     """Quantity the broker actually filled, from the order's own fill fields."""
     if order.filled_qty is not None:
         return int(order.filled_qty)
-    return int(order.quantity) if order.status in ("filled", "confirmed") else 0
+    return int(order.quantity) if order.status in (OrderStatus.FILLED, OrderStatus.CONFIRMED) else 0
 
 
 def reconcile_paper(sessions, fees=None, cash: Optional[float] = None) -> dict:
@@ -38,7 +39,7 @@ def reconcile_paper(sessions, fees=None, cash: Optional[float] = None) -> dict:
 
     # ---- 1. cash: rebuild what the account should hold from the fills, position by position -------------------
     spent = sum(t.qty * t.entry_price + t.fees for t in trades) + sum(
-        p.qty * p.avg_price + fees("BUY", p.qty * p.avg_price) for p in positions)
+        p.qty * p.avg_price + fees(Action.BUY, p.qty * p.avg_price) for p in positions)
     received = sum(t.qty * t.exit_price for t in trades)
     expected = acct.initial_cash - spent + received
     recorded = cash if cash is not None else acct.cash
@@ -46,16 +47,18 @@ def reconcile_paper(sessions, fees=None, cash: Optional[float] = None) -> dict:
         findings.append(f"cash does not tie: rebuilt {expected:,.2f} vs recorded {recorded:,.2f}")
 
     # ---- 2. orders: every approved trade decision must have produced an order, and every filled order a fill ---- 
-    buy_orders, sell_orders = {}, {}
+    buy_orders: Dict[str, int] = {}
+    sell_orders: Dict[str, int] = {}
     for o in orders:
         n = _filled_qty(o)
-        if not n or o.side not in ("BUY", "SELL"):
+        if not n or o.side not in (Action.BUY, Action.SELL):
             continue
-        if o.side == "BUY":
+        if o.side == Action.BUY:
             buy_orders[o.symbol] = buy_orders.get(o.symbol, 0) + n
         else:
             sell_orders[o.symbol] = sell_orders.get(o.symbol, 0) + n
-    buy_fills, sell_fills = {}, {}
+    buy_fills: Dict[str, int] = {}
+    sell_fills: Dict[str, int] = {}
     for t in trades:
         buy_fills[t.symbol] = buy_fills.get(t.symbol, 0) + t.qty
         sell_fills[t.symbol] = sell_fills.get(t.symbol, 0) + t.qty
@@ -68,7 +71,7 @@ def reconcile_paper(sessions, fees=None, cash: Optional[float] = None) -> dict:
         if buy_fills.get(sym, 0) != n:
             findings.append(f"{sym}: filled BUY orders total {n} but positions+trades only show {buy_fills.get(sym, 0)}")
 
-    traded = sum(1 for d in decisions if d.risk_approved and d.final_action in ("BUY", "SELL"))
+    traded = sum(1 for d in decisions if d.risk_approved and d.final_action in (Action.BUY, Action.SELL))
     ordered_ids = {o.decision_id for o in orders if o.status not in ("rejected", "cancelled")}
     ordered = sum(1 for d in decisions if d.id in ordered_ids)
     if ordered != traded:

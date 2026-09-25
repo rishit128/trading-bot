@@ -1,17 +1,9 @@
-"""SQLAlchemy tables: the audit log (decisions, orders, equity), control flags and the paper-trading account."""
+"""The tables: the audit log (decisions, orders, equity), control flags and the paper-trading account and reserve."""
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, create_engine, inspect, text
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
-
-# Extra indexes for the review-doc queries ("decisions with a strong confluence", "pattern x's track record") are
-# created for every database, including ones that predate the columns, in `_ensure_indexes`.
-EXTRA_INDEXES = {
-    "ix_decisions_confluence": "CREATE INDEX IF NOT EXISTS ix_decisions_confluence ON decisions (confluence_score)",
-    "ix_decisions_pattern": "CREATE INDEX IF NOT EXISTS ix_decisions_pattern ON decisions (pattern_id)",
-    "ix_decisions_raw_model": "CREATE INDEX IF NOT EXISTS ix_decisions_raw_model ON decisions (raw_model)",
-}
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 def _now() -> datetime:
@@ -44,7 +36,7 @@ class DecisionRecord(Base):
     snapshot_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # the indicator inputs, for replay
     # Every agent's signal as JSON {name: {action, confidence, reasoning, degraded}}, so any number of agents is auditable.
     signals_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # Phase 1 chain-of-thought extras, denormalised for SQL queries; the full chain lives in signals_json.details.
+    # Chain-of-thought extras, denormalised for SQL queries; the full chain lives in signals_json.details.
     confluence_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 1-10, how aligned the signals are
     edge_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-1, how repeatable the pattern is
     risks_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON list of the identified risks
@@ -52,7 +44,7 @@ class DecisionRecord(Base):
     # Phases 2-4 extras, taken from the lead agent's details (None when a phase did not run or was not enabled).
     base_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # confidence before any refinement
     context_regime: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)  # bull / bear / risk_off / None
-    historical_win_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # similar closed trades, phase 2
+    historical_win_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # similar closed trades (decision memory)
     historical_sample_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # and how many backed it
     # Review doc 2: the pattern the decision belongs to and what the learning/refinement phases did to the base call.
     pattern_id: Mapped[Optional[str]] = mapped_column(String(48), nullable=True, index=True)  # e.g. P>MA50+MA50>MA200|RSI60
@@ -69,7 +61,7 @@ class DecisionRecord(Base):
     what_proves_us_wrong: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     bias_check: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON list of biases the critic flagged
     conviction_adjustments: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON of step-by-step conviction
-    # AI accountability (phase 1): which configured model answered, and whether it agreed with or overrode the
+    # AI accountability : which configured model answered, and whether it agreed with or overrode the
     # deterministic mechanical filter - the inputs to the rubber-stamp / approval-rate measurement.
     raw_model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     rule_alignment: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)  # agree / deviate / None
@@ -78,7 +70,13 @@ class DecisionRecord(Base):
     prompt_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     feature_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     strategy_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
-    # Per-decision universe snapshot (P0, A1b): how many symbols were in the scanned universe when this call was made.
+    # Who made the call: the AI agents, or a deterministic rule that overrode them (engine.enums.DecisionSource). None on
+    # rows written before this column existed; replay then falls back to reading the reasoning text.
+    decision_source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    # The session whose completed bar the analysis used (`snapshot.bar_date`): with the symbol it identifies WHICH market
+    # situation this decision was about, so outcomes can be attached to it however many times it was re-decided that day.
+    bar_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, index=True)
+    # Per-decision universe snapshot: how many symbols were in the scanned universe when this call was made.
     universe_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
@@ -158,7 +156,7 @@ class PaperTradeRecord(Base):
 
 
 class HoldoutMark(Base):
-    """An independent, decision-only valuation of the reserve account (P0, holdout).
+    """An independent, decision-only valuation of the reserve account (holdout).
 
     Written by HoldoutReserve.mark() and untouched by the live account: the reserve replays the stored
     approved decisions through the deterministic simulator so that any tuning or learning against the
@@ -175,45 +173,22 @@ class HoldoutMark(Base):
     open_positions: Mapped[int] = mapped_column(Integer)
 
 
-def _add_missing_columns(engine) -> None:
-    """create_all never alters existing tables; add any new nullable columns so an older database keeps working."""
-    inspector = inspect(engine)
-    with engine.begin() as conn:
-        for table in Base.metadata.sorted_tables:
-            if not inspector.has_table(table.name):
-                continue
-            existing = {c["name"] for c in inspector.get_columns(table.name)}
-            for column in table.columns:
-                if column.name not in existing:
-                    if not column.nullable:
-                        raise RuntimeError(f"{table.name}.{column.name} is new and NOT NULL; migrate the database manually")
-                    ddl = column.type.compile(engine.dialect)
-                    conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {column.name} {ddl}'))
+class OutcomeRecord(Base):
+    """What a stock actually did after the bot analysed it: the forward result of entering at the next session's open and
+    holding `horizon` sessions. One row per (stock, analysed session, horizon), whether or not the bot traded it; this is
+    what turns hundreds of decisions a week into lessons, instead of the ~20 closed trades a year a trend strategy makes."""
+    __tablename__ = "decision_outcomes"
 
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    bar_date: Mapped[str] = mapped_column(String(10), primary_key=True)  # the analysed session (YYYY-MM-DD)
+    horizon: Mapped[int] = mapped_column(Integer, primary_key=True)  # sessions held after entry
+    entry_date: Mapped[str] = mapped_column(String(10))  # the session whose open is the assumed entry
+    exit_date: Mapped[str] = mapped_column(String(10), default="")  # the session whose close ends the hold ("" only on legacy rows)
+    entry_price: Mapped[float] = mapped_column(Float)
+    exit_price: Mapped[float] = mapped_column(Float)  # the close `horizon` sessions after the analysed one
+    gross_return: Mapped[float] = mapped_column(Float)  # exit / entry - 1, before costs
+    worst_return: Mapped[float] = mapped_column(Float)  # the deepest intraday low over the hold, vs entry
+    hit_stop: Mapped[bool] = mapped_column(Boolean)  # whether a stop `stop_pct` below entry would have been touched
+    stop_pct: Mapped[float] = mapped_column(Float)
+    labelled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
-def _ensure_indexes(engine) -> None:
-    """create_all does not add an index to a column that already exists; create the review-doc query indexes for
-    databases that predate the columns."""
-    with engine.begin() as conn:
-        for statement in EXTRA_INDEXES.values():
-            conn.execute(text(statement))
-
-
-def make_session_factory(database_url: str) -> sessionmaker[Session]:
-    """Create the engine and tables, add any missing columns to an older database, and return a session factory."""
-    kwargs = {"pool_pre_ping": True}  # a dropped connection is replaced instead of failing the cycle
-    is_sqlite = database_url.startswith("sqlite")
-    if is_sqlite:
-        kwargs["connect_args"] = {"timeout": 30}  # wait for a lock instead of failing with "database is locked"
-    engine = create_engine(database_url, **kwargs)
-    if is_sqlite and ":memory:" not in database_url:
-        # WAL: a reader (e.g. the swing bot's /intraday Telegram command) never blocks or is blocked by the writer
-        # (the intraday engine's own process saving every 5 minutes) sharing the same file. The default journal mode
-        # occasionally surfaced "attempt to write a readonly database" under that two-process access pattern.
-        with engine.connect() as conn:
-            conn.execute(text("PRAGMA journal_mode=WAL"))
-            conn.execute(text("PRAGMA synchronous=NORMAL"))
-    Base.metadata.create_all(engine)
-    _add_missing_columns(engine)
-    _ensure_indexes(engine)
-    return sessionmaker(bind=engine, expire_on_commit=False)

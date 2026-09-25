@@ -1,4 +1,4 @@
-"""P0 D1/D2: the backtest and the paper broker must express ONE execution convention.
+"""the backtest and the paper broker must express ONE execution convention.
 
     signal at day T's close -> fills at the next open, +slippage, +delivery fees; stop/target exits hit at their exact
     level. The tests pin that equality on the same inputs and make the one admitted divergence (paper prices at the
@@ -8,10 +8,10 @@ from datetime import datetime, timezone
 import pandas as pd
 import pytest
 
-from src.backtest import Result, simulate
+from src.research.backtest import Result, simulate
 from src.config import RiskLimits
-from src.engine.convention import SLIPPAGE
-from src.engine.paper_broker import india_delivery_fees
+from src.engine.costs import SLIPPAGE
+from src.engine.costs import india_delivery_fees
 
 def apply_slippage(price, side, slippage=SLIPPAGE):
     """The convention as a spec: a buy fills higher, a sell fills lower. The oracle the broker and simulator are held to."""

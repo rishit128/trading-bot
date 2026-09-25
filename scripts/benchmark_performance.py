@@ -15,12 +15,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.agents.agents import TechnicalAgent, ReflectionChain, ReflectionStage  # noqa: E402
+from src.agents.technical import TechnicalAgent, ReflectionChain, ReflectionStage  # noqa: E402
 from src.agents.history import PatternStats, history_stats  # noqa: E402
 from src.config import load_settings  # noqa: E402
 from src.data.indicators import Snapshot  # noqa: E402
 from src.database import make_session_factory  # noqa: E402
-from src.llm import Signal  # noqa: E402
+from src.llm import AgentSignal  # noqa: E402
 
 SNAP = Snapshot("RELIANCE", 2500.0, 2400.0, 2300.0, 62.0, 1_200_000, avg_volume=900_000, momentum_6m=0.08)
 MKT = None
@@ -32,7 +32,7 @@ try:
 except Exception:
     pass
 
-BASE = Signal(action="BUY", confidence=0.75, reasoning="Clear uptrend, volume confirms, not overbought.",
+BASE = AgentSignal(action="BUY", confidence=0.75, reasoning="Clear uptrend, volume confirms, not overbought.",
               details={"base_confidence": 0.75, "confluence_score": 8, "edge_confidence": 0.6,
                        "risks": ["a", "b", "c"]})
 STATS = PatternStats(sample_size=12, win_rate=0.55, avg_win_pct=8.0, avg_loss_pct=-4.0, profit_factor=2.0,
@@ -85,7 +85,7 @@ def main():
     bench("build context prompt", lambda: TechnicalAgent.build_context_prompt(BASE, "RELIANCE", MKT), n)
     bench("build reflection prompt", lambda: TechnicalAgent.build_reflection_prompt(BASE, "RELIANCE", "s"), n)
     chain = reflect_chain()
-    base = Signal(action="BUY", confidence=0.75, reasoning="r")
+    base = AgentSignal(action="BUY", confidence=0.75, reasoning="r")
     agent = TechnicalAgent(llm=None)  # _apply_reflection is instance-only; none of the LLM path is touched here
     bench("reflect chain monotonic+humility", lambda: agent._apply_reflection(base, chain), n)
     avg_prompt_len = sum(len(p) for p in prompts) / len(prompts)

@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from src.backtest import buy_and_hold_curve, curve_metrics, simulate, trade_metrics
+from src.research.backtest import TIME_LIMITED, ExitPolicy, LIVE_EXITS, buy_and_hold_curve, curve_metrics, simulate, trade_metrics
 from src.config import RiskLimits
 
 LIM = RiskLimits(max_position_pct=0.05, stop_loss_pct=0.02, take_profit_pct=0.05, min_confidence=0.6)
@@ -55,8 +55,26 @@ def test_stop_wins_when_stop_and_target_both_touched_same_day():
 
 
 def test_time_exit_after_max_hold_days_at_close():
-    [t] = run(make_bars({10: dict(Close=101.0)}), buy_on(0)).trades
+    bars = make_bars({10: dict(Close=101.0)})
+    [t] = simulate({"X": bars}, buy_on(0), LIM, exits=TIME_LIMITED).trades
     assert t.reason == "TIME" and t.exit_date == DAYS[10] and t.exit_price == 101.0
+
+
+def test_the_default_exit_policy_is_the_live_one_so_a_backtest_tests_the_running_strategy():
+    """Regression: simulate() used to default to a 10-day time exit, so holdout, walk-forward and ablation silently tested a
+    strategy that is not the one running. The live policy is now the default and any other must be requested by name."""
+    bars = make_bars({10: dict(Close=101.0)}, n=15)
+    default = simulate({"X": bars}, buy_on(0), LIM)
+    assert default.trades == [] and default.open_at_end == 1  # no time limit: still holding at the end of the data
+    assert simulate({"X": bars}, buy_on(0), LIM, exits=LIVE_EXITS).equity.equals(default.equity)
+    assert LIVE_EXITS == ExitPolicy(max_hold_days=None, trend_exit=True)
+    assert TIME_LIMITED == ExitPolicy(max_hold_days=10, trend_exit=False)
+
+
+def test_exit_policy_rejects_a_nonsensical_hold_limit():
+    with pytest.raises(ValueError, match="max_hold_days"):
+        ExitPolicy(max_hold_days=0)
+    assert ExitPolicy(max_hold_days=None).max_hold_days is None
 
 
 def test_sell_signal_exits_next_open():
@@ -125,7 +143,7 @@ def test_fees_never_let_cash_go_negative():
 
 
 def test_trade_analysis_breaks_pnl_down_by_reason_holding_period_year_and_symbol():
-    from src.backtest import Trade, analyze_trades
+    from src.research.backtest import Trade, analyze_trades
 
     def trade(sym, entry, exit_, ep, xp, reason, qty=10, fees=0.0):
         return Trade(sym, pd.Timestamp(entry), ep, pd.Timestamp(exit_), xp, qty, reason, fees)
@@ -147,7 +165,7 @@ def test_trade_analysis_breaks_pnl_down_by_reason_holding_period_year_and_symbol
 
 
 def test_trade_analysis_of_no_trades_is_empty():
-    from src.backtest import analyze_trades
+    from src.research.backtest import analyze_trades
 
     assert analyze_trades([]) == {}
 
@@ -155,7 +173,6 @@ def test_trade_analysis_of_no_trades_is_empty():
 def test_trend_exit_sells_at_the_next_open_after_a_close_below_the_200_day_average():
     import numpy as np
     import pandas as pd
-    from src.backtest import LIVE_PARITY, simulate
     from src.config import RiskLimits
 
     idx = pd.bdate_range("2020-01-01", periods=320)
@@ -163,9 +180,9 @@ def test_trend_exit_sells_at_the_next_open_after_a_close_below_the_200_day_avera
     df = pd.DataFrame({"Open": close, "High": close * 1.001, "Low": close * 0.999, "Close": close, "Volume": 1e6}, index=idx)
     signals = {"A": {idx[250]: ("BUY", 0.9)}}
     limits = RiskLimits(stop_loss_pct=0.99)  # keep the protective stop out of the way
-    held = simulate({"A": df}, signals, limits, **{**LIVE_PARITY, "trend_exit": False})
+    held = simulate({"A": df}, signals, limits, exits=ExitPolicy(max_hold_days=None, trend_exit=False))
     assert held.open_at_end == 1  # no time exit, no trend exit: still holding at the end
-    out = simulate({"A": df}, signals, limits, **LIVE_PARITY)
+    out = simulate({"A": df}, signals, limits, exits=LIVE_EXITS)
     assert out.open_at_end == 0 and out.trades[0].reason == "SIGNAL"
     ma200 = df["Close"].rolling(200).mean()
     broke = df.index[(df["Close"] < ma200) & (df.index > idx[250])][0]
@@ -190,7 +207,51 @@ def test_simulator_resumes_buying_after_the_drawdown_pause_but_not_when_permanen
     base = RiskLimits(max_position_pct=0.5, min_position_pct=0.5, max_portfolio_exposure_pct=1.0, stop_loss_pct=0.99,
                       max_drawdown_pct=0.20, max_open_positions=5)
     # X at 50% of equity falling 40% is a 20%+ drawdown, so the halt starts around day 20
-    permanent = simulate(bars, sig, dataclasses.replace(base, drawdown_pause_days=0), max_hold_days=1000)
-    paused = simulate(bars, sig, dataclasses.replace(base, drawdown_pause_days=30), max_hold_days=1000)
+    permanent = simulate(bars, sig, dataclasses.replace(base, drawdown_pause_days=0))
+    paused = simulate(bars, sig, dataclasses.replace(base, drawdown_pause_days=30))
     assert permanent.open_at_end == 1  # the day-80 BUY of Y was refused by the standing halt
     assert paused.open_at_end == 2     # 30 days later the peak was rebased and Y was bought
+
+
+def test_every_research_entry_point_simulates_with_the_live_exit_policy(monkeypatch, tmp_path):
+    """holdout, walk-forward, ablation and the live-config backtest must not quietly pick their own exits."""
+    import numpy as np
+    from src.research import backtest as backtest_module
+    from src.config import RiskLimits
+    from src.ops.holdout import HoldoutReserve
+    from src.research import ablation, live_backtest, walk_forward
+    from src.data.universe import ScreenConfig
+    from src.database import make_session_factory
+
+    seen = []
+    real = backtest_module.simulate
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("exits", LIVE_EXITS))  # absent means "the default", which is the live policy
+        return real(*args, **kwargs)
+
+    for module in (walk_forward, ablation, live_backtest):
+        monkeypatch.setattr(module, "simulate", spy)
+    import src.ops.holdout as holdout_module
+    monkeypatch.setattr(holdout_module, "simulate", spy)
+
+    idx = pd.bdate_range("2023-01-02", periods=320)
+    close = pd.Series(np.linspace(100, 160, 320) + np.sin(np.arange(320)), index=idx)
+    bars = pd.DataFrame({"Open": close, "High": close * 1.01, "Low": close * 0.99, "Close": close, "Volume": 1e6}, index=idx)
+    walk_forward.run_walk_forward("A", {"A": bars}, list(idx[250:]), n_windows=2)
+    ablation.run_ablation("A", {"A": bars}, list(idx[250:]))
+    live_backtest.run_live_config({"A": bars}, RiskLimits(), ScreenConfig(min_price=1, min_traded_value=1), 20_000.0,
+                                  dates=list(idx[250:]))
+    from datetime import datetime, timezone
+    from src.database import DecisionRecord
+
+    sessions = make_session_factory(f"sqlite:///{tmp_path / 'h.db'}")
+    with sessions() as s:  # one approved BUY on a day the bars cover, so the reserve really replays something
+        s.add(DecisionRecord(symbol="A", price=100.0, final_action="BUY", final_confidence=0.8, reasoning="r",
+                             risk_approved=True, risk_quantity=10, risk_reason="ok",
+                             created_at=datetime(2023, 9, 14, 5, 30, tzinfo=timezone.utc)))
+        s.commit()
+    before = len(seen)
+    HoldoutReserve(sessions, lambda symbol: bars, initial_cash=100_000.0).mark()
+    assert len(seen) == before + 1, "the holdout reserve never reached the simulator, so this test would prove nothing about it"
+    assert len(seen) >= 4 and all(policy == LIVE_EXITS for policy in seen)

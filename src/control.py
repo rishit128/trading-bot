@@ -17,6 +17,18 @@ class Control:
     def __init__(self, session_factory: sessionmaker):
         self.sessions = session_factory
 
+    def get_flag(self, key: str) -> Optional[str]:
+        """A stored text flag, or None. For small per-job facts like "labelled outcomes on 2026-09-25"."""
+        with self.sessions() as s:
+            flag = s.get(ControlFlag, key)
+            return flag.value if flag is not None else None
+
+    def set_flag(self, key: str, value: str) -> None:
+        """Store a text flag (keys up to 32 characters)."""
+        with self.sessions() as s:
+            s.merge(ControlFlag(key=key, value=value))
+            s.commit()
+
     def is_paused(self) -> bool:
         """True when trading is paused (Telegram /pause)."""
         with self.sessions() as s:

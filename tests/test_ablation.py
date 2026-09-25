@@ -1,8 +1,8 @@
-"""P0 B1: the phase ablation over one window (DET / +LLM / +LEARNING / +CONTEXT / +REFLECTION / FULL).
+"""The capability ablation over one window (DET / +LLM / +LEARNING / +CONTEXT / +REFLECTION / FULL).
 
 The hole being closed: the review asked for a single-window comparison of each incremental capability end to end.
 Tests here pin that the framework exists, that every phase feeds the *same* simulator, and that the one source of
-leakage phase 2 could have - closed trades from after the analysis date - is filtered out of the lookups."""
+leakage decision memory could have - closed trades from after the analysis date - is filtered out of the lookups."""
 import json
 from dataclasses import asdict, dataclass
 from datetime import timedelta
@@ -226,8 +226,8 @@ def test_learning_phase_gets_the_history_hook_when_only_sessions_is_given(monkey
             seen["history_fn"] = history_fn
 
         def analyze(self, ctx):
-            from src.llm import Signal
-            return Signal(action="HOLD", confidence=0.5, reasoning="x")
+            from src.llm import AgentSignal
+            return AgentSignal(action="HOLD", confidence=0.5, reasoning="x")
 
     monkeypatch.setattr(ablation, "TechnicalAgent", Spy)
     ablation._agent_signals("A", BARS, [DATES[0]], {"use_learning": True, "use_context": False, "use_reflect": False},

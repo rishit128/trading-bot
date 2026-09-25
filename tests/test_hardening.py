@@ -10,7 +10,7 @@ from src.data.indicators import StaleDataError, build_snapshot
 from src.data.market_data import fetch_snapshot
 from src.data.universe import ScreenConfig, screen_bars
 from src.database import DecisionRecord, OrderRecord, make_session_factory
-from src.engine.paper_broker import Fill
+from src.engine.ports import Fill
 from src.engine.risk_engine import Portfolio
 from tests.test_llm_and_pipeline import FakeBroker, make_pipeline
 

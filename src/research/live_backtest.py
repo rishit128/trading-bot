@@ -9,7 +9,7 @@ inability to buy a Rs 9,000 stock all matter. This module runs the actual pipeli
     with the affordability rule the live scanner applies (`select_candidates`);
   * sizing / limits:   `RiskEngine` with the live `RiskLimits` (confidence-scaled size, position and exposure caps,
     daily-loss and drawdown halts);
-  * exits:             8% protective stop + the MA200 trend exit, no time limit (`LIVE_PARITY`);
+  * exits:             8% protective stop + the MA200 trend exit, no time limit (`LIVE_EXITS`, simulate's default);
   * costs:             the paper broker's delivery fee schedule and slippage.
 
 The one stand-in is the AI: it is replaced by a constant approval confidence (`confidence`), because a backtest cannot
@@ -22,13 +22,13 @@ from typing import Callable, Dict, List, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from src.backtest import LIVE_PARITY, Result, curve_metrics, simulate
+from src.research.backtest import Result, curve_metrics, simulate
 from src.config import RiskLimits
 from src.data.indicators import MIN_BARS
 from src.data.universe import (MOMENTUM_BARS, Candidate, ScreenConfig, above_median_delivery, rank, screen_arrays,
                                select_candidates)
-from src.engine.convention import SLIPPAGE
-from src.engine.paper_broker import india_delivery_fees
+from src.engine.costs import SLIPPAGE
+from src.engine.costs import india_delivery_fees
 
 LIVE_LOOKBACK_DAYS = 400  # calendar days of bars the live scanner downloads (`yf_bar_fetcher`); RSI depends on the window
 DEFAULT_CONFIDENCE = 0.75  # stand-in for the AI: about the mean confidence of the live approved BUYs
@@ -46,7 +46,9 @@ def ranked_candidates(close: pd.DataFrame, volume: pd.DataFrame, dates: Sequence
     C, V = close.to_numpy(dtype=float), volume.reindex(index=index, columns=close.columns).to_numpy(dtype=float)
     min_bars = max(MIN_BARS, MOMENTUM_BARS)
     for d in dates:
-        end = index.get_loc(d) + 1
+        end = int(index.get_indexer(pd.Index([d]))[0]) + 1
+        if end == 0:
+            raise KeyError(d)  # a decision date must be a trading day of the table
         start = index.searchsorted(d - pd.Timedelta(days=LIVE_LOOKBACK_DAYS))
         c_win, v_win, idx_win = C[start:end], V[start:end], index[start:end]
         valid = ~np.isnan(c_win)
@@ -98,7 +100,7 @@ def run_live_config(bars: Dict[str, pd.DataFrame], limits: RiskLimits, cfg: Scre
         dates = list(close.index if dates is None else dates)
         ranked = ranked_candidates(close, volume, dates, cfg, delivery_avg)
     result = simulate(bars, {}, limits, start_equity=capital, fees=fees, slippage=slippage,
-                      buy_source=make_buy_source(ranked, cfg, confidence), **LIVE_PARITY)
+                      buy_source=make_buy_source(ranked, cfg, confidence))
     if start is not None:
         result = Result(result.equity.loc[start:], [t for t in result.trades if t.entry_date >= start], result.open_at_end)
     return LiveRun(result, capital, limits)

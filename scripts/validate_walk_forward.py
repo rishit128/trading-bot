@@ -1,4 +1,4 @@
-"""P0 C1: walk-forward validation of one phase over one symbol.
+"""Walk-forward validation of one phase over one symbol.
 
     python scripts/validate_walk_forward.py RELIANCE --n-windows 4
     python scripts/validate_walk_forward.py RELIANCE --phase +LLM     # requires a configured model
@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import load_settings  # noqa: E402
 from src.database import make_session_factory  # noqa: E402
-from src.engine.paper_broker import india_delivery_fees  # noqa: E402
+from src.engine.costs import india_delivery_fees  # noqa: E402
 from src.llm import LLMClient  # noqa: E402
 from src.research.ablation import DET  # noqa: E402
 from src.research.walk_forward import run_walk_forward  # noqa: E402

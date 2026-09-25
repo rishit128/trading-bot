@@ -1,11 +1,11 @@
-"""P0: the holdout reserve account - one independent ruler that live tuning can never contaminate.
+"""The holdout reserve account - one independent ruler that live tuning can never contaminate.
 
 The paper account measures the bot, but every learning/tuning decision in this repo is made *against*
 that account's outcomes (learning phase, calibration, reconciliation). If those decisions are then
 graded on the same data, the validation is self-referential. The reserve is the escape: it holds no
 orders and is never tuned; it is a *re-run* of the stored approved decisions through the deterministic
 simulator, so whatever the model or the process changes next, the reserve only ever answers "did the
-decisions themselves make money?" - in the exact D1/D2 conventions used by every backtest, sealed as of
+decisions themselves make money?" - in the execution convention every backtest uses (src/engine/costs.py), sealed as of
 each mark.
 
     HoldoutReserve(sessions, fetch_bars).mark()      # replay decisions -> append a HoldoutMark
@@ -17,15 +17,16 @@ paper account's own starting cash so returns are directly comparable."""
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional
 
 import pandas as pd
 from sqlalchemy import select
 
-from src.backtest import LIVE_PARITY, RiskLimits, Signals, simulate
+from src.research.backtest import RiskLimits, SignalTable, simulate
 from src.database import DecisionRecord, HoldoutMark, PaperAccountRecord
-from src.engine.paper_broker import india_delivery_fees
+from src.engine.enums import Action
+from src.engine.costs import SLIPPAGE, india_delivery_fees
 from datetime import timezone
 
 log = logging.getLogger(__name__)
@@ -48,20 +49,22 @@ class HoldoutReserve:
     fetch_bars: Callable[[str], Optional[pd.DataFrame]]  # symbol -> daily OHLCV or None
     initial_cash: Optional[float] = None  # None -> seed from the paper account's own starting cash
     min_confidence: float = DEFAULT_MIN_CONFIDENCE
-    slippage: float = 0.0005  # D1 convention: only market fills pay it (buy high, sell low)
+    slippage: float = SLIPPAGE  # only market fills pay it (buy high, sell low); see engine/costs.py
     fees: Callable[[str, float], float] = india_delivery_fees
+    starting_cash: float = field(init=False, default=0.0)  # the resolved starting balance (initial_cash, or the paper account's)
 
     def __post_init__(self):
         if self.initial_cash is None:
             with self.sessions() as s:
                 paper = s.get(PaperAccountRecord, 1)
             self.initial_cash = float(paper.initial_cash) if paper else 100_000.0
+        self.starting_cash = float(self.initial_cash)
 
     def _approved_buys(self) -> list:
         with self.sessions() as s:
             decisions = s.scalars(select(DecisionRecord).order_by(DecisionRecord.id)).all()
         return [d for d in decisions
-                if d.final_action == "BUY" and d.risk_approved and d.final_confidence >= self.min_confidence]
+                if d.final_action == Action.BUY and d.risk_approved and d.final_confidence >= self.min_confidence]
 
     def mark(self) -> dict:
         """Replay every stored approved BUY through the simulator and append one HoldoutMark.
@@ -70,7 +73,7 @@ class HoldoutReserve:
         timestamped ledger rows accumulate). Never reads or writes the paper account's orders/positions."""
         buys = self._approved_buys()
         bars: Dict[str, pd.DataFrame] = {}
-        signals: Signals = {}
+        signals: SignalTable = {}
         for sym in sorted({d.symbol for d in buys}):
             try:
                 df = self.fetch_bars(sym)
@@ -83,18 +86,18 @@ class HoldoutReserve:
             day = _bar_date(d.created_at)
             if day is None or d.symbol not in bars or day not in bars[d.symbol].index:
                 continue
-            signals.setdefault(d.symbol, {})[day] = ("BUY", d.final_confidence)
+            signals.setdefault(d.symbol, {})[day] = (Action.BUY, d.final_confidence)
 
-        equity = float(self.initial_cash)
+        equity = self.starting_cash
         trades, open_positions = 0, 0
         if bars:
             result = simulate(bars, signals, RiskLimits(min_confidence=self.min_confidence),
-                              start_equity=self.initial_cash, fees=self.fees, slippage=self.slippage, **LIVE_PARITY)
+                              start_equity=self.starting_cash, fees=self.fees, slippage=self.slippage)
             if len(result.equity):
                 equity = float(result.equity.iloc[-1])
             trades, open_positions = len(result.trades), result.open_at_end
 
-        return_pct = equity / self.initial_cash - 1
+        return_pct = equity / self.starting_cash - 1
         with self.sessions() as s:
             s.add(HoldoutMark(equity=equity, return_pct=return_pct, decisions=len(signals),
                               closed_trades=trades, open_positions=open_positions))

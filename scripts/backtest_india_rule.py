@@ -21,11 +21,11 @@ import yfinance as yf
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.backtest import (analyze_trades, buy_and_hold_curve, curve_metrics, rule_signals, simulate,  # noqa: E402
+from src.research.backtest import (TIME_LIMITED, ExitPolicy, analyze_trades, buy_and_hold_curve, curve_metrics, rule_signals, simulate,  # noqa: E402
                           trade_metrics)
 from src.config import load_settings  # noqa: E402
 from src.data.india import NIFTY_LISTS, _HEADERS  # noqa: E402
-from src.engine.paper_broker import india_delivery_fees  # noqa: E402
+from src.engine.costs import india_delivery_fees  # noqa: E402
 
 
 def download(tickers, years):
@@ -107,7 +107,8 @@ def main():
                 w = {s: df.loc[start or dates[0]:end] for s, df in bars.items()}
                 sg = {s: {d: v for d, v in sig.items() if (start is None or d >= start) and (end is None or d <= end)}
                       for s, sig in signals.items()}
-                r = simulate(w, sg, limits, start_equity=capital, max_hold_days=hold, fees=india_delivery_fees)
+                r = simulate(w, sg, limits, start_equity=capital, exits=ExitPolicy(max_hold_days=None if hold >= 10 ** 6 else hold),
+                             fees=india_delivery_fees)
                 if name == "full":
                     results[label] = r
                 m = curve_metrics(r.equity, capital)
@@ -117,7 +118,7 @@ def main():
         print(f"{'':40s} {'return':>8} {'maxDD':>8} {'sharpe':>7}  trades  win   avg/trade  exits  (full period)")
         for label, r in results.items():
             line(label, r, capital)
-        line("bot default, zero costs", simulate(window, signals, settings.risk, start_equity=capital), capital)
+        line("bot default, zero costs", simulate(window, signals, settings.risk, start_equity=capital, exits=TIME_LIMITED), capital)
         print()
         print("Failure analysis of the bot's current exits:")
         print_analysis(results[runs[0][0]].trades)
@@ -125,7 +126,7 @@ def main():
     else:
         print(f"{'':40s} {'return':>8} {'maxDD':>8} {'sharpe':>7}  trades  win   avg/trade  exits")
         for label, fees in (("trend rule, with Indian costs", india_delivery_fees), ("trend rule, zero costs", None)):
-            line(label, simulate(window, signals, settings.risk, start_equity=capital, fees=fees), capital)
+            line(label, simulate(window, signals, settings.risk, start_equity=capital, fees=fees, exits=TIME_LIMITED), capital)
     bh = curve_metrics(buy_and_hold_curve(window, capital), capital)
     idx = curve_metrics(buy_and_hold_curve({"NIFTY": nifty.loc[dates[0]:]}, capital), capital)
     print(f"{'buy & hold, same stocks (100% in)':40s} {bh['total_return']:+8.2%} {bh['max_drawdown']:8.2%} {bh['sharpe']:7.2f}")

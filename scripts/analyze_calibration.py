@@ -1,4 +1,4 @@
-"""Phase 0 baseline: how calibrated are the bot's stored decisions so far?
+"""Calibration baseline: how calibrated are the bot's stored decisions so far?
 
 Reads the live database (decisions + orders + closed paper trades) and reports:
   * decision volume and action mix
@@ -9,7 +9,7 @@ Reads the live database (decisions + orders + closed paper trades) and reports:
 
 Roughly half the roadmap's success criteria ("does confidence predict outcome?") can only be answered
 from accumulated decisions, never from a unit test. This script is the honest before/after ruler:
-Phase 1 adds the reasoning chain to the record but should NOT move these numbers; a later phase claims
+the chain-of-thought step adds the reasoning chain to the record but should NOT move these numbers; a later phase claims
 to. Re-run it after each phase.
 
     python scripts/analyze_calibration.py"""
@@ -96,7 +96,7 @@ def main():
         print("  All sites answer 'does confidence predict outcome?', but act only when every bucket has n >= 5.")
     else:
         print("  no matched trades yet: keep paper-trading, or backtest, before judging calibration.")
-    print("\nread this as: a before/after ruler. Phase 1 changes the decision record only; later phases claim to move")
+    print("\nread this as: a before/after ruler. the chain-of-thought step changes the decision record only; later phases claim to move")
     print("these numbers. Re-run after each phase and act only on samples big enough to mean anything.")
 
 

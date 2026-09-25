@@ -24,7 +24,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.research import engine, signals  # noqa: E402
-from src.research.data import load_index_close, load_universe  # noqa: E402
+from src.data.price_history import load_index_close, load_universe  # noqa: E402
 
 CRITERIA = ("CAGR>10%", "Sharpe>0.5", "held-out ok", "beats Nifty Sharpe", ">=60% yrs +", "maxDD>-30%", "2x costs +")
 

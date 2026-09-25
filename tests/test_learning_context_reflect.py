@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from sqlalchemy import select
 
-from src.agents.agents import TechnicalAgent
+from src.agents.technical import TechnicalAgent
 from src.agents.base import ADVISOR, LEAD
 from src.agents.history import PatternStats, history_stats, pattern_stats
 from src.config import Settings, load_settings
@@ -16,7 +16,8 @@ from src.data.indicators import Snapshot, build_snapshot
 from src.data.market_context import MarketContext, MarketContextProvider
 from src.database import DecisionRecord, PaperTradeRecord, make_session_factory
 from src.engine.risk_engine import Portfolio
-from src.llm import LLMClient, Signal
+from src.engine.agent_signal import ContextDetails, LearningDetails, ReasoningChain, SignalDetails
+from src.llm import LLMClient, AgentSignal
 from src.pipeline import TradingPipeline
 from tests.test_llm_and_pipeline import FakeBroker, StubAgent
 
@@ -238,26 +239,26 @@ def test_learning_phase_adjusts_and_records():
     s = agent.analyze(agent_context())
     assert s.action == "HOLD" and s.confidence == pytest.approx(0.6, abs=1e-4)  # 0.3 request capped at -0.15
     assert s.degraded is False and s.reasoning.startswith("Clear uptrend")
-    assert s.details["base_confidence"] == pytest.approx(0.75)
-    learning = s.details["learning"]
-    assert learning["sample_size"] == 12 and learning["win_rate"] == pytest.approx(0.4)
-    assert learning["adjusted_action"] == "HOLD" and learning["adjusted_confidence"] == pytest.approx(0.6, abs=1e-4)
-    assert learning["pattern_reliability"] == "no" and "lost money" in learning["reason"]
-    assert s.details.get("context") is None
-    assert s.details["pattern_id"].startswith("P>MA50+MA50>MA200|RSI")  # stamped from the snapshot
-    assert s.details["adjusted_signal_confidence"] == pytest.approx(0.6, abs=1e-4)
-    assert "lost money" in s.details["adjustment_reason"]
+    assert s.details.base_confidence == pytest.approx(0.75)
+    learning = s.details.learning
+    assert learning.sample_size == 12 and learning.win_rate == pytest.approx(0.4)
+    assert learning.adjusted_action == "HOLD" and learning.adjusted_confidence == pytest.approx(0.6, abs=1e-4)
+    assert learning.pattern_reliability == "no" and "lost money" in learning.reason
+    assert s.details.context is None
+    assert s.details.pattern_id.startswith("P>MA50+MA50>MA200|RSI")  # stamped from the snapshot
+    assert s.details.adjusted_signal_confidence == pytest.approx(0.6, abs=1e-4)
+    assert "lost money" in s.details.adjustment_reason
 
 
 def test_learning_skipped_without_history_or_sample(tmp_path):
     agent = TechnicalAgent(llm([COT_GOOD]), use_learning=True, use_context=False, use_reflect=False,
                            history_fn=lambda s: None)
     s = agent.analyze(agent_context())
-    assert s.action == "BUY" and s.details["base_confidence"] == pytest.approx(0.75)
+    assert s.action == "BUY" and s.details.base_confidence == pytest.approx(0.75)
     agent2 = TechnicalAgent(llm([COT_GOOD]), use_learning=True, use_context=False, use_reflect=False,
                             history_fn=lambda s: make_stats(2, 0.0), min_pattern_sample=3)
     s2 = agent2.analyze(agent_context())
-    assert s2.action == "BUY" and s2.details.get("learning") is None
+    assert s2.action == "BUY" and s2.details.learning is None
     assert len(agent2.llm.client.calls) == 1  # a 2-trade record is not evidence, so no second call
 
 
@@ -266,7 +267,7 @@ def test_learning_failure_keeps_the_base_call():
                            history_fn=lambda s: make_stats(40, 0.2))
     s = agent.analyze(agent_context())
     assert s.action == "BUY" and s.confidence == pytest.approx(0.75) and s.degraded is False
-    assert s.details.get("learning") is None and s.details["base_confidence"] == pytest.approx(0.75)
+    assert s.details.learning is None and s.details.base_confidence == pytest.approx(0.75)
 
 
 def test_context_phase_fires_only_on_a_notable_regime():
@@ -279,26 +280,26 @@ def test_context_phase_fires_only_on_a_notable_regime():
     agent2 = TechnicalAgent(llm([COT_GOOD, CONTEXT_OK]), use_learning=False, use_context=True, use_reflect=False)
     s2 = agent2.analyze(agent_context(market=stressed))
     assert s2.action == "BUY" and s2.confidence == pytest.approx(0.6)
-    assert s2.details["context"]["regime"] == "risk_off"
-    assert s2.details["context"]["macro_support"] == "neutral"
+    assert s2.details.context.regime == "risk_off"
+    assert s2.details.context.macro_support == "neutral"
 
 
 def test_reflection_is_a_veto_only_and_skips_holds():
     agent = TechnicalAgent(llm([COT_GOOD, REFLECT_OK]), use_learning=False, use_context=False, use_reflect=True)
     s = agent.analyze(agent_context())
     assert s.action == "BUY" and s.confidence == pytest.approx(0.75)  # upheld: confidence untouched
-    reflection = s.details["reflection"]
-    assert reflection["final_action"] == "BUY" and reflection["biggest_risk"] == "a gap-down on earnings"
-    assert reflection["what_proves_us_wrong"] == "a weekly close below the 200-day average"
-    assert reflection["bias_check"] == ["confirmation bias", "anchoring to the trend"]
-    adjustments = reflection["conviction_adjustments"]
+    reflection = s.details.reflection
+    assert reflection.final_action == "BUY" and reflection.biggest_risk == "a gap-down on earnings"
+    assert reflection.what_proves_us_wrong == "a weekly close below the 200-day average"
+    assert reflection.bias_check == ["confirmation bias", "anchoring to the trend"]
+    adjustments = reflection.conviction_adjustments
     # Review doc 4.2: conviction only ever stays put or falls across the six stages, then humility applies.
-    assert [a["stage"] for a in adjustments] == ["step1_technical", "step2_reflection", "step3_fundamental",
+    assert [a.stage for a in adjustments] == ["step1_technical", "step2_reflection", "step3_fundamental",
                                                  "step4_macro", "step5_integration", "step6_risk"]
-    assert [a["conviction"] for a in adjustments] == pytest.approx([0.75, 0.7, 0.7, 0.65, 0.6, 0.6])
-    assert reflection["critic_confidence"] == pytest.approx(0.5)  # 0.6 (step6) minus the 0.10 humility, audit only
-    assert reflection["final_confidence"] == pytest.approx(0.75) and reflection["upheld"] is True
-    assert reflection["humility_reduction"] == pytest.approx(0.10)
+    assert [a.conviction for a in adjustments] == pytest.approx([0.75, 0.7, 0.7, 0.65, 0.6, 0.6])
+    assert reflection.critic_confidence == pytest.approx(0.5)  # 0.6 (step6) minus the 0.10 humility, audit only
+    assert reflection.final_confidence == pytest.approx(0.75) and reflection.upheld is True
+    assert reflection.humility_reduction == pytest.approx(0.10)
     assert s.reasoning.endswith("(critic conviction 0.50)]")
 
     agent2 = TechnicalAgent(llm([COT_GOOD, LEARN_HOLD]), use_learning=True, use_context=False, use_reflect=True,
@@ -313,10 +314,10 @@ def test_all_phases_chain_into_details_and_final():
                            history_fn=lambda s: make_stats(12, 0.6))
     s = agent.analyze(agent_context(market=stressed))
     assert s.action == "BUY" and s.confidence == pytest.approx(0.6)  # context cut 0.75 to 0.60; reflection upheld it
-    assert s.details["base_confidence"] == pytest.approx(0.75)
-    assert s.details["learning"]["adjusted_action"] == "BUY"
-    assert s.details["context"]["regime"] == "risk_off"
-    assert s.details["reflection"]["final_confidence"] == pytest.approx(0.6)
+    assert s.details.base_confidence == pytest.approx(0.75)
+    assert s.details.learning.adjusted_action == "BUY"
+    assert s.details.context.regime == "risk_off"
+    assert s.details.reflection.final_confidence == pytest.approx(0.6)
     assert len(agent.llm.client.calls) == 4  # CoT + learning + context + reflection
 
 
@@ -338,12 +339,14 @@ def test_simple_mode_signal_stays_without_details_when_phases_disabled():
 
 # ------------------------------------------------------------------ pipeline persistence + context wiring
 def detailed_signal():
-    return Signal(action="BUY", confidence=0.5, reasoning="r", details={
-        "base_confidence": 0.75, "edge_confidence": 0.6, "confluence_score": 8,
-        "risks": ["earnings"], "reasoning_chain": {"trend": "uptrend", "overbought": "no", "volume": "yes"},
-        "learning": {"win_rate": 0.45, "sample_size": 11, "adjusted_action": "BUY"},
-        "context": {"regime": "risk_off", "macro_support": "no"},
-    })
+    return AgentSignal(action="BUY", confidence=0.5, reasoning="r", details=SignalDetails(
+        base_confidence=0.75, edge_confidence=0.6, confluence_score=8, risks=["earnings"],
+        reasoning_chain=ReasoningChain(trend="uptrend", overbought="no", volume="yes"),
+        learning=LearningDetails(adjusted_action="BUY", adjusted_confidence=0.5, pattern_reliability="yes", sample_size=11,
+                                 win_rate=0.45, avg_win_pct=6.0, avg_loss_pct=-3.0, profit_factor=2.0, best_holding_days=30,
+                                 worst_holding_days=3, confidence_in_pattern=0.4, reason="held up", what_could_break="a gap"),
+        context=ContextDetails(regime="risk_off", macro_support="no", sector_support="neutral", earnings_risk=False,
+                               diversification_score=5, reasoning="index below its 200-day", risks=["broad sell-off"])))
 
 
 def test_pipeline_persists_phase_columns(tmp_path):
@@ -371,7 +374,7 @@ def test_pipeline_feeds_market_context_to_agents(tmp_path):
 
         def analyze(self, ctx):
             seen.append(ctx.market())
-            return Signal(action="HOLD", confidence=0.5, reasoning="r")
+            return AgentSignal(action="HOLD", confidence=0.5, reasoning="r")
 
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'p.db'}")
     ag = MarketAwareAgent()

@@ -1,8 +1,8 @@
 """Focused tests for the LLM-upgrade gaps called out in the review doc that earlier tests do not cover:
 
-  * phase 1: the one-shot LLM retry on parse/validation failure (and that transport/dead-model failures are not retried)
-  * phase 2: the confidence cap helper, the pattern label, `find_similar_patterns` [] + limit, `analyze_pattern` mapping
-  * phase 4: the client-side clamp that stops a stage from raising conviction, and the fixed humility tail
+  * first call: the one-shot LLM retry on parse/validation failure (and that transport/dead-model failures are not retried)
+  * decision memory: the confidence cap helper, the pattern label, `find_similar_patterns` [] + limit, `analyze_pattern` mapping
+  * reflection: the client-side clamp that stops a stage from raising conviction, and the fixed humility tail
   * cross: the `LLM_MAX_ADJUST` setting, and that both new indexes exist on fresh and pre-existing databases"""
 import json
 import sqlite3
@@ -12,17 +12,17 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from src.agents.agents import (AdvancedSignal, COT_SCHEMA, ReflectionChain, ReflectionStage, TechnicalAgent,
-                               mechanical_action, mechanical_baseline)
+from src.agents.technical import (AdvancedSignal, COT_SCHEMA, ReflectionChain, ReflectionStage, TechnicalAgent,
+                                  mechanical_action, mechanical_baseline)
 from src.agents.base import LEAD
-from src.agents.history import MAX_MATCHES, PatternMatch, _pattern_id, analyze_pattern, find_similar_patterns
+from src.agents.history import MAX_MATCHES, PatternMatch, pattern_id, analyze_pattern, find_similar_patterns
 from src.config import Settings, load_settings
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord, make_session_factory
 from src.engine.risk_engine import Portfolio
-from src.llm import LLMClient, LLMUnavailable, RETRY_HINT, Signal
+from src.llm import LLMClient, LLMUnavailable, RETRY_HINT, AgentSignal
 from src.pipeline import TradingPipeline
-from src.replay import replay
+from src.ops.replay import replay
 from src.versions import VERSIONS
 from tests.test_cot import COT_GOOD
 from tests.test_learning_context_reflect import SNAP, _add_decision, _add_trade
@@ -57,7 +57,7 @@ def _ask_one(fail_content, retry_content, model="a"):
     return sig, client.calls
 
 
-# ------------------------------------------------------------------ phase 1: retry-once, and where retry does NOT apply
+# ------------------------------------------------------------------ chain-of-thought: retry-once, and where retry does NOT apply
 def test_unparseable_json_is_retried_once_then_used():
     sig, calls = _ask_one("not json", json.dumps({"action": "BUY", "confidence": 0.8, "reasoning": "ok"}))
     assert sig.action == "BUY" and len(calls) == 2  # one retry, never more
@@ -65,7 +65,7 @@ def test_unparseable_json_is_retried_once_then_used():
 
 
 def test_validation_failure_is_retried_once_then_used():
-    # Valid JSON that fails the Signal schema (action outside the enum): also a retry, not a model skip.
+    # Valid JSON that fails the AgentSignal schema (action outside the enum): also a retry, not a model skip.
     sig, calls = _ask_one(json.dumps({"action": "TO THE MOON", "confidence": 0.8, "reasoning": "r"}),
                           json.dumps({"action": "SELL", "confidence": 0.4, "reasoning": "down"}))
     assert sig.action == "SELL" and len(calls) == 2
@@ -106,7 +106,7 @@ def test_transient_errors_are_retried_then_the_next_model_and_missing_models_are
     assert "a" in llm.dead  # and skipped for the rest of this session
 
 
-# ------------------------------------------------------------------ phase 2: cap, label, pattern lookup
+# ------------------------------------------------------------------ decision-memory: cap, label, pattern lookup
 def test_clamp_adjustment_bounds_and_cap():
     clamp = TechnicalAgent._clamp_adjustment
     assert clamp(0.75, 0.7, 0.15) == pytest.approx(0.7)  # inside the cap: applied as-is
@@ -116,10 +116,10 @@ def test_clamp_adjustment_bounds_and_cap():
     assert clamp(0.95, 1.0, 0.15) == pytest.approx(1.0)  # the [0,1] ceiling still applies
 
 
-def test_pattern_id_label_is_stable_and_shape_keyed():
-    assert _pattern_id(SNAP) == "P>MA50+MA50>MA200|RSI60"
-    assert _pattern_id(SNAP_RSI45) == "P>MA50+MA50>MA200|RSI40"  # RSI decade bucket, not the raw value
-    assert _pattern_id(DOWN) == "P<=MA50+MA50<=MA200|RSI50"
+def testpattern_id_label_is_stable_and_shape_keyed():
+    assert pattern_id(SNAP) == "P>MA50+MA50>MA200|RSI60"
+    assert pattern_id(SNAP_RSI45) == "P>MA50+MA50>MA200|RSI40"  # RSI decade bucket, not the raw value
+    assert pattern_id(DOWN) == "P<=MA50+MA50<=MA200|RSI50"
 
 
 def test_find_similar_patterns_returns_empty_without_closed_trades(tmp_path):
@@ -155,7 +155,7 @@ def test_analyze_pattern_maps_matches_into_stats():
     assert st.profit_factor == pytest.approx(2.0) and st.best_holding_days == 6 and st.worst_holding_days == 4
 
 
-# ------------------------------------------------------------------ phase 4: monotonic clamp + humility
+# ------------------------------------------------------------------ reflection: monotonic clamp + humility
 def test_reflection_never_lets_a_stage_raise_conviction():
     agent = TechnicalAgent(llm=None)
     base = SimpleNamespace(confidence=0.75)
@@ -254,9 +254,9 @@ def test_advanced_signal_carries_alignment_falsification_and_answering_model():
     assert advanced.rule_alignment == "deviate"
     assert advanced.raw_model == "a" and llm.last_model == "a"
     sig = advanced.to_signal()
-    assert sig.details["rule_alignment"] == "deviate"
-    assert sig.details["falsification"].startswith("a close below")
-    assert sig.details["raw_model"] == "a"
+    assert sig.details.rule_alignment == "deviate"
+    assert sig.details.falsification.startswith("a close below")
+    assert sig.details.raw_model == "a"
 
 
 def test_old_payloads_without_the_new_fields_still_parse_and_are_stamped():
@@ -277,7 +277,7 @@ def test_raw_model_survives_the_cache_hit():
 
 def test_pipeline_persists_raw_model_rule_alignment_and_falsification(tmp_path):
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'a.db'}")
-    sig = Signal(action="BUY", confidence=0.6, reasoning="r", details={
+    sig = AgentSignal(action="BUY", confidence=0.6, reasoning="r", details={
         "raw_model": "deepseek/deepseek-r1", "rule_alignment": "deviate",
         "falsification": "a close below 98 breaks MA50 support",
         "edge_confidence": 0.5, "confluence_score": 7, "risks": ["x"],
@@ -297,7 +297,7 @@ def test_pipeline_persists_raw_model_rule_alignment_and_falsification(tmp_path):
     assert row.falsification == "a close below 98 breaks MA50 support"
 
 
-# ------------------------------------------------------------------ version stamps (P0: attribution without guessing)
+# ------------------------------------------------------------------ version stamps (attribution without guessing)
 def test_version_columns_are_added_to_pre_existing_databases(tmp_path):
     old = tmp_path / "versioned.db"
     con = sqlite3.connect(old)
@@ -315,7 +315,7 @@ def test_version_columns_are_added_to_pre_existing_databases(tmp_path):
 
 def test_pipeline_stamps_versions_and_replay_exposes_them(tmp_path):
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'v.db'}")
-    sig = Signal(action="HOLD", confidence=0.6, reasoning="r")
+    sig = AgentSignal(action="HOLD", confidence=0.6, reasoning="r")
     pipe = TradingPipeline(
         Settings(watchlist=("AAPL",), dry_run=True),
         [StubAgent(lambda s: sig, "technical", LEAD)],
@@ -334,7 +334,7 @@ def test_pipeline_stamps_versions_and_replay_exposes_them(tmp_path):
 
 def test_pipeline_stamps_the_per_decision_universe_size(tmp_path):
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'u.db'}")
-    sig = Signal(action="HOLD", confidence=0.6, reasoning="r")
+    sig = AgentSignal(action="HOLD", confidence=0.6, reasoning="r")
     pipe = TradingPipeline(
         Settings(watchlist=("AAPL", "MSFT"), dry_run=True),
         [StubAgent(lambda s: sig, "technical", LEAD)],
@@ -347,11 +347,11 @@ def test_pipeline_stamps_the_per_decision_universe_size(tmp_path):
     assert [r.universe_size for r in rows] == [2, 2]  # one snapshot per decision, taken at decision time
 
 
-# ------------------------------------------------------------------ P0: the survivorship-free research universe (A1c)
+# ------------------------------------------------------------------ the survivorship-free research universe (A1c)
 def test_point_in_time_masks_a_dropped_member_even_while_its_price_data_continues():
     import pandas as pd
 
-    from src.research.data import point_in_time
+    from src.data.price_history import point_in_time
 
     dates = pd.date_range("2024-01-01", periods=8, freq="B")
     close = pd.DataFrame({"A": [100 + i for i in range(8)],
@@ -368,7 +368,7 @@ def test_point_in_time_earns_nothing_for_a_dropped_member_after_the_drop():
     import pandas as pd
 
     from src.research import engine
-    from src.research.data import point_in_time
+    from src.data.price_history import point_in_time
 
     dates = pd.date_range("2024-01-01", periods=8, freq="B")
     close = pd.DataFrame({"A": [100 + i for i in range(8)],

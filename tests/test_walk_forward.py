@@ -1,4 +1,4 @@
-"""P0 C1: walk-forward validation - rolling non-overlapping hold-out blocks forming one continuous OOS curve.
+"""Walk-forward validation - rolling non-overlapping hold-out blocks forming one continuous OOS curve.
 
 The strategy tunes nothing, so the honest out-of-sample discipline is structural: blocks never overlap, a block's
 decisions never see a later block's data, and every decision date appears in exactly one hold-out block (the OOS

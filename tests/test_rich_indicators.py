@@ -5,7 +5,7 @@ them (with an n/a fallback when data is missing).
 import pandas as pd
 import pytest
 
-from src.agents.agents import TechnicalAgent
+from src.agents.technical import TechnicalAgent
 from src.data.indicators import (Snapshot, _bollinger, _volume_trend,
                                  build_snapshot, compute_adx, compute_atr)
 

@@ -1,4 +1,4 @@
-"""Phase-5 pattern analysis: which entry conditions actually won?
+"""Pattern analysis: which entry conditions actually won?
 
 Joins each closed paper trade to the decision that opened it (matched on symbol + the
 decision's snapshot within ~1 day of the entry), then reports win rate and average
@@ -9,7 +9,7 @@ Honest gates, like the other scripts: a bucket with fewer than MIN_SAMPLE trades
 reported as insufficient, not as a number; the correlation coefficients are printed
 only once there is enough closed history to mean anything.
 
-    python scripts/analyze_phase5_patterns.py"""
+    python scripts/analyze_patterns.py"""
 import json
 import sys
 from dataclasses import dataclass
@@ -72,7 +72,7 @@ def main():
         decisions = list(s.scalars(select(DecisionRecord)))
         trades = list(s.scalars(select(PaperTradeRecord)))
 
-    print("=== Phase-5 entry-condition analysis ===")
+    print("=== Entry-condition analysis ===")
     print(f"decisions: {len(decisions)} | closed trades: {len(trades)}")
     if len(trades) < MIN_SAMPLE:
         print(f"  fewer than {MIN_SAMPLE} closed trades - the win rate is not")

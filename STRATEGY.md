@@ -24,14 +24,14 @@ Defaults chosen by the builder, NOT by the account owner: review them, then chan
 - New buys halt at -2% on the day or -20% from peak equity. The -20% halt now lapses by itself after 30 calendar days (`DRAWDOWN_PAUSE_DAYS`; the peak is rebased to current equity), or at once with `/rebase`; 0 keeps the old permanent halt. `/pause` blocks all orders.
 
 ## Acceptance criteria (set before testing)
-Signal research (`scripts/research_signals.py`), all seven required: net CAGR > 10%; Sharpe > 0.5; held-out final 3 years
+AgentSignal research (`scripts/research_signals.py`), all seven required: net CAGR > 10%; Sharpe > 0.5; held-out final 3 years
 Sharpe > 0.5 and CAGR > 0; Sharpe above Nifty 50 buy-and-hold; profitable in >= 60% of calendar years; max drawdown better
 than -30% (relaxed from the plan's -20% up front, since no long-only Indian equity strategy avoids that through 2020);
 still profitable with costs doubled.
 
 ## Evidence
 
-### 1. Signal research: 10 years, Nifty 500, Indian costs (0.12%/side), trade one day after signal
+### 1. AgentSignal research: 10 years, Nifty 500, Indian costs (0.12%/side), trade one day after signal
 Sep 2016 - Sep 2026, today's Nifty 500 members (498 stocks), parameters fixed from the literature, last 3 years held out.
 
 | | CAGR | Sharpe | max DD | held-out 3y CAGR / Sharpe | vs equal-weight basket (CAGR/yr, info ratio) |
@@ -213,3 +213,32 @@ Rs 15.93 charge per sale its round trip costs ~4.6%. The risk engine now refuses
 account (10 x 5%, 15% stop): no cap +158%, 5% cap +158%, **4% cap +158% (identical trades)**, 3% cap +142%, 2% cap -19%
 (it starves the account of trades). So 4% costs nothing in the tested history and only blocks the degenerate case;
 tighter caps do measurable harm.
+
+## Learning from history and mistakes
+
+The bot learns from **every** decision it analyses, not only the trades it took (a HOLD that then rallied is as informative as
+a BUY that failed):
+
+1. **Label outcomes** (`src/learning/outcomes.py`, once a day after a cycle, or `scripts/label_outcomes.py`). For each analysed
+   stock-session: entry at the next open, exit `LEARNING_HORIZON` (20) sessions later, plus the worst dip and whether the
+   protective stop would have been hit. Only matured sessions are labelled; nothing looks ahead.
+2. **Setup memory** (`src/learning/setups.py`, fed to the agent's learning step when `LLM_LEARNING=true`). "How did setups like
+   this one (trend shape, RSI, ADX, volume) turn out, across all stocks?" Guardrails: silent below `LEARNING_MIN_SAMPLES`
+   (30) independent observations; one observation per stock per week; results net of a 0.35% round-trip cost; it always
+   shows the win rate of all comparable setups beside the matched one, so the market drifting up is not mistaken for an edge;
+   it backs off from fine to coarse labels until enough data exists. The learning step can only nudge confidence by
+   `LLM_MAX_ADJUST`; the risk engine is untouched.
+3. **Mistake report** (`scripts/analyze_mistakes.py`): read-only. BUY vs HOLD forward returns with 95% intervals, confidence
+   calibration, worst BUYs, biggest missed gains; groups too small to judge are marked insufficient.
+
+Nothing here retunes settings automatically: that would fit noise. The memory stays silent until the first 20-session
+outcomes mature and enough of them accumulate; whether it helps is then measurable with `scripts/ablate_phases.py`.
+
+### Feature study on 10 years of Nifty 500 (`scripts/research_features.py`, report only)
+
+Six indicators, five quintile buckets each, 20-session net excess return over the same-date universe average, edges from
+2017-2021, tested on 2022-2026, pre-declared bar |t| >= 3 in both periods (30 buckets examined). Result: **2 of 30 pass**:
+ADX above ~35 (+0.5% / +0.6% per 20 sessions, t 3.6 / 4.2) and 6-month momentum above ~37% (+0.9% / +0.7%, t 7.3 / 5.8).
+RSI, volume ratio, distance from the 50-day average and ATR% do not pass. Caveats: today's index members only (survivorship
+flatters momentum), and the effects are small next to the 15% stop. Momentum is already what the scanner ranks by; ADX is a
+lead worth a proper backtest, not a rule change. Nothing was adopted.

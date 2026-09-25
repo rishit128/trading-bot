@@ -1,4 +1,4 @@
-"""P0 broker reconciliation: the paper account's cash must be rebuildable from its recorded fills, every filled order
+"""Broker reconciliation: the paper account's cash must be rebuildable from its recorded fills, every filled order
 must land in a position or a trade, and an approved trade decision must have an order record. A ledger that drifts
 (cash edited, a fill lost) fails the check instead of silently compounding."""
 from datetime import datetime, timezone
@@ -8,7 +8,7 @@ import pytest
 
 from src.database import DecisionRecord, OrderRecord, make_session_factory
 from src.engine.paper_broker import PaperBroker
-from src.reconciliation import reconcile_paper
+from src.ops.reconciliation import reconcile_paper
 
 
 class Feed:

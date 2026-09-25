@@ -2,7 +2,7 @@
 import os
 import sys
 
-from src.app.kit import intraday_db_url, make_paper_broker
+from src.app.wiring import intraday_db_url, make_paper_broker
 from src.config import load_settings
 from src.data.india import fetch_index_symbols
 from src.intraday.engine import IntradayEngine

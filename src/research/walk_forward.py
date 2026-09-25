@@ -1,4 +1,4 @@
-"""P0 C1: walk-forward (rolling block) out-of-sample validation harness.
+"""Walk-forward (rolling block) out-of-sample validation harness.
 
 The strategy has no tunable hyperparameters - every indicator keeps its literature default and the
 review forbids fitting on data - so training cannot sneak in through parameter selection. The
@@ -21,9 +21,9 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from src.backtest import LIVE_PARITY, RiskLimits, START_EQUITY, Signals, simulate, curve_metrics, trade_metrics
-from src.engine.convention import SLIPPAGE
-from src.engine.paper_broker import india_delivery_fees
+from src.research.backtest import RiskLimits, START_EQUITY, SignalTable, simulate, curve_metrics, trade_metrics
+from src.engine.costs import SLIPPAGE
+from src.engine.costs import india_delivery_fees
 from src.research.ablation import DET, PHASES, signals_for_phase
 
 log = logging.getLogger(__name__)
@@ -81,9 +81,9 @@ def walk_forward_folds(dates: Sequence, n_windows: int, min_train: int = 0) -> L
     return folds
 
 
-def _measure(symbol: str, bars: Dict[str, pd.DataFrame], dates, signals: Signals, limits,
+def _measure(symbol: str, bars: Dict[str, pd.DataFrame], dates, signals: SignalTable, limits,
              start_equity: float, slippage: float, fees) -> dict:
-    result = simulate(bars, signals, limits, start_equity=start_equity, fees=fees, slippage=slippage, **LIVE_PARITY)
+    result = simulate(bars, signals, limits, start_equity=start_equity, fees=fees, slippage=slippage)
     metrics = dict(curve_metrics(result.equity, start_equity))
     metrics.update(trade_metrics(result.trades))
     metrics["open_positions"] = result.open_at_end  # live exits have no time limit, so entries may still be open
@@ -119,18 +119,17 @@ def run_walk_forward(
     folds = walk_forward_folds(dates, n_windows, min_train)
 
     built: List[Fold] = []
-    oos_signals: Signals = {symbol: {}}
+    oos_signals: SignalTable = {symbol: {}}
     oos_decisions = oos_degraded = 0
     phase_llm = None if phase == DET else llm
     for i, (train_dates, val_dates) in enumerate(folds):
-        sig_train, _, _ = ((None, 0, 0)
-                           if not train_dates else
-                           signals_for_phase(symbol, bars, train_dates, phase, phase_llm,
-                                             sessions, history_fn_factory, market_fn))
+        train_metrics: dict = {}
+        if train_dates:
+            sig_train, _, _ = signals_for_phase(symbol, bars, train_dates, phase, phase_llm, sessions, history_fn_factory,
+                                                market_fn)
+            train_metrics = _measure(symbol, bars, train_dates, sig_train, norms, start_equity, slippage, fees)
         sig_val, dec_val, deg_val = signals_for_phase(
             symbol, bars, val_dates, phase, phase_llm, sessions, history_fn_factory, market_fn)
-        train_metrics = _measure(symbol, bars, train_dates, sig_train, norms, start_equity, slippage, fees) \
-            if train_dates else {}
         val_metrics = _measure(symbol, bars, val_dates, sig_val, norms, start_equity, slippage, fees)
         oos_signals[symbol].update(dict(sig_val[symbol]))
         oos_decisions += dec_val

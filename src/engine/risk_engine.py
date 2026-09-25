@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
 from src.config import RiskLimits
+from src.engine.enums import Action
 
 
 @dataclass(frozen=True)
@@ -59,16 +60,16 @@ class RiskEngine:
 
     def evaluate(self, action: str, confidence: float, symbol: str, price: float, portfolio: Portfolio) -> RiskDecision:
         """Decide whether, and how much, to trade for a BUY or SELL signal."""
-        if action == "HOLD":
+        if action == Action.HOLD:
             return _reject("HOLD: nothing to do")
-        if action not in ("BUY", "SELL"):
+        if action not in (Action.BUY, Action.SELL):
             return _reject(f"unknown action {action!r}")
         if price <= 0 or portfolio.equity <= 0:
             return _reject("invalid price or equity")
         if confidence < self.limits.min_confidence:
             return _reject(f"confidence {confidence:.2f} below minimum {self.limits.min_confidence:.2f}")
 
-        if action == "SELL":
+        if action == Action.SELL:
             held = portfolio.position_qty.get(symbol, 0)
             if held <= 0:
                 return _reject(f"no {symbol} position to sell (shorting disabled)")
@@ -122,7 +123,7 @@ class RiskEngine:
         qty = int(budget // price)
         if self.fees is not None and lim.max_fee_drag_pct > 0:
             value = qty * price
-            drag = (self.fees("BUY", value) + self.fees("SELL", value)) / value
+            drag = (self.fees(Action.BUY, value) + self.fees(Action.SELL, value)) / value
             if drag > lim.max_fee_drag_pct:
                 return _reject(f"fees would cost {drag:.1%} of a {value:,.0f} position (limit {lim.max_fee_drag_pct:.1%}): too small to be worth trading")
         return RiskDecision(True, qty, f"approved {qty} shares (value {qty * price:,.0f}, sized at {pct:.1%} for confidence {confidence:.2f})")

@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.database import make_session_factory  # noqa: E402
-from src.reconciliation import reconcile_report  # noqa: E402
+from src.ops.reconciliation import reconcile_report  # noqa: E402
 
 
 def main():

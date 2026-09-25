@@ -5,9 +5,9 @@ stack is measured alone and then combined, all under identical execution rules:
 
   DET        mechanical filter only, no AI call
   +LLM       the raw AI call on top of the filter
-  +LEARNING  ... plus the closed-trade-history adjustment (phase 2)
-  +CONTEXT   ... plus the market-regime adjustment (phase 3)
-  +REFLECTION... plus the six-step self-critique (phase 4)
+  +LEARNING  ... plus the closed-trade-history adjustment (decision memory)
+  +CONTEXT   ... plus the market-regime adjustment (market context)
+  +REFLECTION... plus the six-step self-critique (reflection)
   FULL       everything enabled
 
 Every phase produces signals that feed the same backtest simulator, so phases differ only in
@@ -16,22 +16,22 @@ LLM-dependent phases degrade to a flagged HOLD whenever the model cannot be reac
 exposes that share (`degraded_share`) instead of hiding it.
 
 Historical learning lookups are point-in-time: the history hook only ever sees trades that
-closed before the decision date, so phase 2 never attributes future results to a past setup."""
+closed before the decision date, so decision memory never attributes future results to a past setup."""
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional, Union
+from typing import Callable, Dict, Optional, Tuple, Union
 
 import pandas as pd
 
-from src.backtest import LIVE_PARITY, RiskLimits, START_EQUITY, Signals, rule_signals, simulate, curve_metrics, trade_metrics
-from src.agents.agents import TechnicalAgent
+from src.research.backtest import RiskLimits, START_EQUITY, SignalTable, rule_signals, simulate, curve_metrics, trade_metrics
+from src.agents.technical import TechnicalAgent
 from src.agents.base import AgentContext
 from src.agents.history import history_stats
 from src.data.indicators import build_snapshot
-from src.engine.convention import SLIPPAGE
-from src.engine.paper_broker import india_delivery_fees
+from src.engine.costs import SLIPPAGE
+from src.engine.costs import india_delivery_fees
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ PHASES = [DET, "+LLM", "+LEARNING", "+CONTEXT", "+REFLECTION", "FULL"]
 # always present as the prompt's baseline); FULL turns everything on. The other phases are set
 # explicitly FALSE - TechnicalAgent defaults them all to True, so omitting one would silently run
 # reflection (or learning/context) in a phase that claims to isolate just one capability.
-_PHASE_FLAGS: Dict[str, Dict[str, bool]] = {
+_PHASE_FLAGS: Dict[str, Optional[Dict[str, bool]]] = {
     DET: None,
     "+LLM": {"use_learning": False, "use_context": False, "use_reflect": False},
     "+LEARNING": {"use_learning": True, "use_context": False, "use_reflect": False},
@@ -96,7 +96,7 @@ def _eod_utc(d) -> "pd.Timestamp":
     return ts.tz_convert("UTC").ceil("D")
 
 
-def _action_summary(signals: Signals, symbol: str) -> Dict[str, dict]:
+def _action_summary(signals: SignalTable, symbol: str) -> dict:
     """Signals fingerprint: what the phase actually decided, useful when two phases size identically."""
     rows = signals.get(symbol, {})
     counts: Dict[str, int] = {}
@@ -109,7 +109,7 @@ def _action_summary(signals: Signals, symbol: str) -> Dict[str, dict]:
 
 
 def _agent_signals(symbol: str, bars: Dict[str, pd.DataFrame], dates, flags: Dict[str, bool],
-                   llm, sessions, history_fn_factory, market_fn) -> Dict[str, Dict]:
+                   llm, sessions, history_fn_factory, market_fn) -> Tuple[SignalTable, int, int]:
     """Run the TechnicalAgent with `flags` over every decision date. Returns signals plus a degraded count."""
     out: Dict[str, Dict] = {symbol: {}}
     decisions, degraded = 0, 0
@@ -133,10 +133,10 @@ def _agent_signals(symbol: str, bars: Dict[str, pd.DataFrame], dates, flags: Dic
                         return None
 
                 history_fn = history
-        ctx = AgentContext(
-            symbol, snap,
-            market=(lambda _now=now: market_fn(_now) if market_fn is not None else None),
-        )
+        def market(_now=now):
+            return market_fn(_now) if market_fn is not None else None
+
+        ctx = AgentContext(symbol, snap, market=market)
         signal = TechnicalAgent(llm, use_cot=True, history_fn=history_fn, **flags).analyze(ctx)
         out[symbol][d] = (signal.action, signal.confidence)
         degraded += int(bool(signal.degraded))
@@ -155,6 +155,7 @@ def signals_for_phase(symbol: str, bars: Dict[str, pd.DataFrame], dates, phase: 
     if phase == DET:
         return rule_signals(bars, dates), len(dates), 0
     flags = _PHASE_FLAGS[phase]
+    assert flags is not None  # only DET has no flags, and it returned above
     return _agent_signals(symbol, bars, dates, flags, llm, sessions, history_fn_factory, market_fn)
 
 
@@ -185,8 +186,7 @@ def run_ablation(
         phase_llm = None if phase == DET else (llm(phase) if callable(llm) else llm)
         signals, decisions, degraded = signals_for_phase(
             symbol, bars, decision_dates, phase, phase_llm, sessions, history_fn_factory, market_fn)
-        result = simulate(bars, signals, norms, start_equity=start_equity, fees=fees, slippage=slippage,
-                          **LIVE_PARITY)
+        result = simulate(bars, signals, norms, start_equity=start_equity, fees=fees, slippage=slippage)
         summary = _action_summary(signals, symbol)
         reports[phase] = PhaseReport(
             phase=phase,

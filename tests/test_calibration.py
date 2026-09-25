@@ -1,4 +1,4 @@
-"""P0 C2: confidence calibration buckets and reliability analysis are pure functions of outcome pairs.
+"""Confidence calibration buckets and reliability analysis are pure functions of outcome pairs.
 
 The strategy claims its confidence predicts outcomes; these tests pin the aggregator so the live
 before/after ruler measures the model, not the statistician. Perfect calibration must yield ECE~0 and

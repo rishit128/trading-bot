@@ -72,7 +72,7 @@ must agree) or `advisor` (can only confirm or veto). Register it and the graph g
 class FundamentalsAgent:
     name, role = "fundamentals", "advisor"
     def analyze(self, ctx):                 # ctx.symbol, ctx.snapshot, ctx.headlines()
-        return Signal(action="BUY", confidence=0.7, reasoning="...")   # or None to abstain
+        return AgentSignal(action="BUY", confidence=0.7, reasoning="...")   # or None to abstain
 
 pipeline.agents["fundamentals"] = FundamentalsAgent()
 pipeline.rebuild_graphs()
@@ -95,7 +95,7 @@ In `main.py`, add it to the `agents` list in `build_pipeline`. No graph or strat
 
 ## Working with free AI models
 The free OpenRouter models are reasoning models: hidden "thinking" eats the token budget, upstreams are often overloaded, and
-answers can arrive empty, cut off or wrapped in prose. `src/llm.py` handles this instead of hoping:
+answers can arrive empty, cut off or wrapped in prose. `src/llm/` handles this instead of hoping:
 - **Reasoning is switched off** (`LLM_REASONING_OFF=true`): valid answers 3-10x faster; the prompt already reasons step by step in the JSON.
 - **Every failure is classified**: overloaded/rate-limited/empty -> backoff and retry (honouring Retry-After); cut off at the
   token limit -> retry with double the budget; malformed or blank JSON -> retry once telling the model what was wrong;
@@ -188,7 +188,7 @@ erDiagram
 
 ```mermaid
 flowchart TD
-    A[Signal for a stock] --> T{Held and last close below its 200-day average?}
+    A[AgentSignal for a stock] --> T{Held and last close below its 200-day average?}
     T -- yes --> S[SELL the whole position, confidence 1.0]
     T -- no --> C[Combine agents: leads must agree, advisors confirm or veto]
     S --> R
@@ -231,6 +231,18 @@ flowchart TD
 | Start the paper account over | `docker compose down -v` deletes the database volume (and all paper history). |
 | Old database after an update | Missing columns are added automatically; to start clean delete `trading.db`. |
 
+## Development
+```
+python -m pytest            # ~650 offline tests (no network, no keys)
+python -m pyflakes main.py src scripts tests
+python -m mypy              # the application type-checks cleanly; CI runs all three
+```
+The structure is enforced by `tests/test_layering.py`: production code never imports `research` or `ops`, the engine stays a
+leaf (no agents, LLM or data imports), the `src/` root holds only the application core, and there are no import cycles or
+cross-module private imports. Prompt text is versioned: change a prompt and `tests/test_prompt_versions.py` fails until
+`PROMPT_VERSION` is bumped. The workflow graphs talk to the application only through the `CycleServices` interface
+(`src/workflow.py`), so a node can be tested with a small fake.
+
 ## Known limitations
 
 - **No demonstrated entry edge** (see status). Every historical test uses today's index members, which inflates results
@@ -255,13 +267,20 @@ flowchart TD
 
 ```
 main.py                 argument parsing and the swing bot's wiring (build_pipeline, preflight)
-src/app/                kit.py (market kit, paper-broker factory), reports.py (--report/--positions/--screen/--graph), intraday_cli.py
-src/agents/, llm.py     AI agents and the OpenRouter client (cached, with model fallback)
-src/data/               NSE list, Yahoo data, indicators, universe scanner, market clock
-src/engine/             risk engine, strategy (agent combination), paper broker
+src/                    the application core: config, pipeline (the cycle's services), workflow (the LangGraph graphs),
+                        runner, control, results, versions, logging_setup
+src/agents/             AI agents: technical/ (agent, prompts, schemas, phases), sentiment.py, history.py (decision
+                        memory), base.py (the agent protocol)
+src/llm/                the OpenRouter client for unreliable free models: client, parsing, errors
+src/engine/             the domain, with no I/O of its own: rules (entry filter, trend exit), risk_engine, strategy,
+                        enums, agent_signal (the typed audit trail), costs (fees + slippage), ports (broker / price feed /
+                        clock interfaces), paper_broker
+src/data/               NSE list, Yahoo data, indicators, universe scanner, market context, price history, delivery %, retry
+src/database/           models, session (open + upgrade a file), migrations
+src/ops/                operational tools: holdout reserve, decision replay, ledger reconciliation, start-up checks
+src/research/           the simulator (backtest.py), live-configuration backtest, ablation, walk-forward, calibration
 src/intraday/           opening-range-breakout strategy (pure functions) and the 5-minute engine
 src/monitoring/         Telegram alerts and commands
-src/research/           research engine, candidate signals, NSE delivery-% data
-scripts/                backtests, research, start_bots.sh (idempotent starter, also run at reboot by cron)
-logs/                   bot.log, intraday.log (git-ignored)
+src/app/                wiring.py (market wiring, paper-broker factory), reports.py (--report/--positions/--screen/--graph),
+                        intraday_cli.py
 ```

@@ -1,12 +1,11 @@
-"""Phase 2 (decision memory): what actually happened on setups similar to the current one.
+"""Decision memory: what actually happened on setups similar to the current one.
 
-The bot's edge hypothesis is that certain setups repeat. Phase 1 records the reasoning chain for every decision so a
-phase-2 step can look back: for the symbol being analysed, find closed paper trades whose opening BUY decision had the
+The bot's edge hypothesis is that certain setups repeat. The chain-of-thought step records the reasoning chain for every decision so this step can look back: for the symbol being analysed, find closed paper trades whose opening BUY decision had the
 same trend shape, a price within 5% and an RSI(14) within 5 points, and summarise their win rate, average win/loss,
 profit factor and holding period. The agent then adjusts its confidence (or flips the call) from that record.
 
 API (used by the agent and by the metrics scripts):
-  * `_pattern_id(snapshot)` - a stable label for a setup, keyed to the trend shape + RSI bucket.
+  * `pattern_id(snapshot)` - a stable label for a setup, keyed to the trend shape + RSI bucket.
   * `find_similar_patterns(...)` - the prior closed trades (and their opening decisions) that match a pattern; [] when
     there is nothing to learn from yet.
   * `analyze_pattern(trades)` - turns those matches into a PatternStats summary.
@@ -27,6 +26,8 @@ from sqlalchemy import select
 
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord, PaperTradeRecord
+from src.engine.enums import Action
+from src.engine.rules import above_ma50, ma_stack_bullish
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ RSI_TOLERANCE = 5.0  # points of RSI(14) a past setup may differ from the curren
 PRICE_TOL_FRAC = 0.05  # a past setup's opening price must be within ±5% of the current price to count as "similar"
 MAX_MATCHES = 25  # cap the pattern sample so one symbol's boom period can never dominate
 MIN_OPEN_GAP = timedelta(days=2)  # an opening decision and its paper fill land within the same day
-HUMILITY = 0.10  # phase-4 deterministic humility discount (review doc 4.2)
+HUMILITY = 0.10  # reflection's deterministic humility discount (review doc 4.2)
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,9 @@ class PatternStats:
     best_holding_days: int
     worst_holding_days: int
     confidence_in_pattern: float  # 0-1, how much data the estimate is based on (n/30, capped)
+    scope: str = "symbol"  # "symbol": this stock's own closed trades; "market": labelled outcomes across every analysed stock
+    matched_on: Optional[str] = None  # what "similar" meant for a market-scope result (the setup label that had enough samples)
+    baseline_win_rate: Optional[float] = None  # market scope: the win rate of ALL comparable setups, to tell an edge from the market's drift
 
 
 @dataclass(frozen=True)
@@ -68,11 +72,11 @@ def _aware(dt):
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
-def _pattern_id(snap: Snapshot, rsi_bucket: int = 10) -> str:
+def pattern_id(snap: Snapshot, rsi_bucket: int = 10) -> str:
     """A stable, human-readable pattern label: the trend shape + the RSI(14) decade, e.g. 'P>MA50+MA50>MA200|RSI60'."""
     shape = "+".join((
-        "P>MA50" if snap.price > snap.ma50 else "P<=MA50",
-        "MA50>MA200" if snap.ma50 > snap.ma200 else "MA50<=MA200",
+        "P>MA50" if above_ma50(snap.price, snap.ma50) else "P<=MA50",
+        "MA50>MA200" if ma_stack_bullish(snap.ma50, snap.ma200) else "MA50<=MA200",
     ))
     rungs = int(snap.rsi // rsi_bucket) * rsi_bucket
     return f"{shape}|RSI{rungs}"
@@ -103,7 +107,7 @@ def pattern_stats(outcomes: Iterable[Tuple[float, int]]) -> Optional[PatternStat
 
 
 def _trend_shape(snap: Snapshot) -> Tuple[bool, bool]:
-    return snap.price > snap.ma50, snap.ma50 > snap.ma200
+    return above_ma50(snap.price, snap.ma50), ma_stack_bullish(snap.ma50, snap.ma200)
 
 
 def _past_setups(decisions) -> List[Tuple[datetime, Snapshot, Tuple[bool, bool]]]:
@@ -135,7 +139,7 @@ def find_similar_patterns(sessions, symbol: str, price_range: Tuple[float, float
             PaperTradeRecord.symbol == symbol, PaperTradeRecord.opened_at >= cutoff)))
         # Ordered so the "closest in time" match is deterministic instead of database row order.
         decisions = list(s.scalars(select(DecisionRecord).where(
-            DecisionRecord.symbol == symbol, DecisionRecord.final_action == "BUY",
+            DecisionRecord.symbol == symbol, DecisionRecord.final_action == Action.BUY,
             DecisionRecord.created_at >= cutoff - MIN_OPEN_GAP)
             .order_by(DecisionRecord.created_at.asc(), DecisionRecord.id.asc())))
     setups = _past_setups(decisions)
@@ -163,7 +167,7 @@ def find_similar_patterns(sessions, symbol: str, price_range: Tuple[float, float
         held = max(1, (_aware(t.closed_at) - opened).days)
         quality = abs(past.rsi - r_mid) + abs(past.price - p_mid) / max(p_mid, 1e-9)
         matches.append((quality, -opened.timestamp(), PatternMatch(
-            pattern_id=_pattern_id(past), symbol=symbol, opened_at=opened, entry_price=t.entry_price,
+            pattern_id=pattern_id(past), symbol=symbol, opened_at=opened, entry_price=t.entry_price,
             exit_price=t.exit_price, held_days=held, return_pct=return_pct, quality_score=quality)))
     matches.sort()
     return [m for _, _, m in matches[:limit]]

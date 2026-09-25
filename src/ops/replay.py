@@ -6,12 +6,14 @@ import json
 from dataclasses import dataclass
 from typing import Dict, Mapping, Optional
 
-from src.agents.agents import TechnicalAgent
+from src.agents.technical import TechnicalAgent
 from src.agents.base import ADVISOR, LEAD
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord
-from src.engine.strategy import combine_signals
-from src.llm import Signal
+from src.engine.enums import Action, DecisionSource
+from src.engine.rules import trend_broken
+from src.engine.strategy import TREND_EXIT_PREFIX, combine_signals
+from src.llm import AgentSignal
 
 DEFAULT_ROLES = {"technical": LEAD, "sentiment": ADVISOR}
 
@@ -23,7 +25,7 @@ class Replay:
     symbol: str
     inputs: Optional[Snapshot]
     prompt: Optional[str]
-    signals: Dict[str, Optional[Signal]]
+    signals: Dict[str, Optional[AgentSignal]]
     stored_action: str
     stored_confidence: float
     recomputed_action: Optional[str]
@@ -35,10 +37,13 @@ class Replay:
 def replay(record: DecisionRecord, roles: Mapping[str, str] = DEFAULT_ROLES) -> Replay:
     """`reproduced` is True/False when the stored inputs allow a check, None when they were not recorded (older rows)."""
     snap = Snapshot(**json.loads(record.snapshot_json)) if record.snapshot_json else None
-    signals = {n: Signal(**s) if s else None for n, s in json.loads(record.signals_json or "{}").items()}
-    rule_based = record.reasoning.startswith("trend exit:")
+    signals = {n: AgentSignal(**s) if s else None for n, s in json.loads(record.signals_json or "{}").items()}
+    if record.decision_source:  # recorded explicitly: no need to guess from the wording
+        rule_based = record.decision_source == DecisionSource.TREND_EXIT
+    else:  # a row from before the column existed
+        rule_based = record.reasoning.startswith(TREND_EXIT_PREFIX)
     if rule_based:
-        recomputed = "SELL" if snap is not None and snap.price < snap.ma200 else None  # a deterministic override, not an AI call
+        recomputed = Action.SELL if snap is not None and trend_broken(snap.price, snap.ma200) else None  # a deterministic override, not an AI call
     else:
         recomputed = combine_signals(signals, roles).action if signals else None
     versions = None

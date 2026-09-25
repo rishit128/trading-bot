@@ -14,8 +14,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.research import engine, signals  # noqa: E402
-from src.research.data import load_universe  # noqa: E402
-from src.research.delivery import load_delivery  # noqa: E402
+from src.data.price_history import load_universe  # noqa: E402
+from src.data.delivery import load_delivery  # noqa: E402
 
 
 def main():

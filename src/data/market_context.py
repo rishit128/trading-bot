@@ -1,7 +1,7 @@
-"""Phase 3 (market context): the regime the single-stock analysis sits inside, for the agent's context check.
+"""Market context: the regime the single-stock analysis sits inside, for the agent's context check.
 
 The bot's own research (STRATEGY.md) found that on a decade of Nifty 50 data almost all of the edge lived in holding
-stocks while the index was above its 200-day average. Phase 3 gives the AI that same lens per decision: Nifty 50
+stocks while the index was above its 200-day average. This gives the AI that same lens per decision: Nifty 50
 above/below its 200-day MA, index momentum and RSI, the VIX and where today's level sits in the past year, and the
 stock's return relative to the index over the last 6 months.
 
@@ -21,6 +21,7 @@ from typing import Callable, Optional
 import pandas as pd
 
 from src.data.indicators import Snapshot, compute_rsi
+from src.data.price_history import load_index_close
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class MarketContext:
     vix: Optional[float] = None
     vix_percentile: Optional[float] = None  # 0-1, where today's VIX sits in the last year's range
     vs_index_6m: Optional[float] = None  # the stock's 6-month return minus the index's (stock price data available)
-    # Phase-3 extras (review doc): each defaults to None, meaning "no data source - treat as neutral". The provider
+    # Extras from the review: each defaults to None, meaning "no data source - treat as neutral". The provider
     # fills what it can honestly (the beta proxy from real return data); sector/earnings/correlation need feeds the
     # bot does not have yet, so they stay None and the prompt tells the model to answer neutrally.
     beta_6m: Optional[float] = None  # crude 6-month momentum ratio (stock 6m return / index 6m return); NOT a regression beta
@@ -80,8 +81,6 @@ class MarketContextProvider:
         self._memo: dict = {}  # ticker -> (monotonic load time, series or None)
 
     def _load(self, ticker: str) -> Optional[pd.Series]:
-        from src.research.data import load_index_close
-
         return load_index_close(ticker, years=self._years, cache_dir=self._cache_dir, download=self._download,
                                 today=self._today,
                                 max_age_hours=CACHE_MAX_AGE_HOURS)
@@ -112,12 +111,12 @@ class MarketContextProvider:
         if nifty is None or len(nifty) < 200:
             return None
         last, ma200 = float(nifty.iloc[-1]), float(nifty.tail(200).mean())
-        years_ended = nifty[nifty.index.year == self._today().year]
+        years_ended = nifty[pd.DatetimeIndex(nifty.index).year == self._today().year]
         ytd = last / float(years_ended.iloc[0]) - 1 if len(years_ended) >= 2 else None
         vix = self._series(self._vix_ticker)
         vix_last = float(vix.iloc[-1]) if vix is not None and len(vix) else None
         vix_pct = None
-        if vix_last is not None and len(vix) >= 30:
+        if vix is not None and len(vix) >= 30:
             vix_pct = float(vix.tail(252).rank(pct=True).iloc[-1])  # the last year, as the prompt says
         stock_mom = snapshot.momentum_6m
         index_mom = float(nifty.iloc[-1] / nifty.iloc[-127] - 1) if len(nifty) > 126 else None

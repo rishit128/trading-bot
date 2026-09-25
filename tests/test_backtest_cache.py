@@ -1,7 +1,7 @@
 import json
 
 from scripts import run_backtest as rb
-from src.agents.agents import TechnicalAgent
+from src.agents.technical import TechnicalAgent
 
 
 def test_roundtrip(tmp_path):

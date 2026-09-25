@@ -1,4 +1,4 @@
-"""P0, prod-DB: the one sanctioned way to touch a database schema.
+"""The one sanctioned way to touch a database schema.
 
     python scripts/migrate_db.py                       # dry run: print what is out of date
     python scripts/migrate_db.py --check               # exit 0 only if the database is current
@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.schema import apply_migrations, is_current, schema_status  # noqa: E402
+from src.database.migrations import apply_migrations, is_current, schema_status  # noqa: E402
 
 
 def main():

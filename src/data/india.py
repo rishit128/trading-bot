@@ -4,12 +4,13 @@ import logging
 import threading
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import httpx
 import pandas as pd
 
+from .retry import retry_call
 from .data_honesty import ZERO_VOLUME, check_bars_honesty
 
 log = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit
 
 def _parse_symbols(csv_text: str) -> List[str]:
     df = pd.read_csv(io.StringIO(csv_text))
-    df.columns = [c.strip().upper() for c in df.columns]
+    df.columns = pd.Index([c.strip().upper() for c in df.columns])
     if "SERIES" in df.columns:
         df = df[df["SERIES"].astype(str).str.strip() == "EQ"]  # skips trade-to-trade (BE/BZ) segments
     return sorted(df["SYMBOL"].astype(str).str.strip().unique())
@@ -147,9 +148,11 @@ class IntradayFeed:
     """5-minute Yahoo bars: latest price for paper fills and high/low history for simulated stop/target checks."""
 
     def __init__(self, download: Optional[Callable] = None, ttl_seconds: float = 30.0,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic, retry_sleep: Callable[[float], None] = time.sleep):
         # Settling exits, valuing positions and filling an order all need the same bars within seconds of each other.
-        self._cache, self._lock, self._ttl, self._clock = {}, threading.Lock(), ttl_seconds, clock
+        self._cache: Dict[str, Tuple[float, pd.DataFrame]] = {}
+        self._lock, self._ttl, self._clock = threading.Lock(), ttl_seconds, clock
+        self._retry_sleep = retry_sleep
         if download is None:
             import yfinance as yf
 
@@ -167,7 +170,8 @@ class IntradayFeed:
             hit = self._cache.get(symbol)
             if hit and self._clock() - hit[0] < self._ttl:
                 return hit[1]
-        df = self._download(symbol + SUFFIX, period="5d", interval="5m")
+        df = retry_call(lambda: self._download(symbol + SUFFIX, period="5d", interval="5m"), attempts=2, delay=1.0,
+                        sleep=self._retry_sleep, what=f"5-minute bars for {symbol}")
         bars = df.dropna(subset=["Close"]) if df is not None and not df.empty else pd.DataFrame()
         with self._lock:
             self._cache[symbol] = (self._clock(), bars)
@@ -185,7 +189,8 @@ class IntradayFeed:
         bars = self._bars(symbol)
         if bars.empty:
             return bars
-        idx = bars.index.tz_convert("UTC") if bars.index.tz else bars.index.tz_localize(IST).tz_convert("UTC")
+        index = pd.DatetimeIndex(bars.index)
+        idx = index.tz_convert("UTC") if index.tz else index.tz_localize(IST).tz_convert("UTC")
         cutoff = pd.Timestamp(since)
         cutoff = cutoff.tz_localize("UTC") if cutoff.tzinfo is None else cutoff.tz_convert("UTC")
         return bars[idx > cutoff]

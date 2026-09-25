@@ -8,16 +8,34 @@ import pandas as pd
 
 from src.config import RiskLimits
 from src.data.indicators import build_snapshot
+from src.engine.enums import Action
 from src.engine.risk_engine import Portfolio, RiskEngine, drawdown_pause
+from src.engine.rules import entry_filter, trend_broken
 
 START_EQUITY = 100_000.0
 
-Signals = Dict[str, Dict[pd.Timestamp, Tuple[str, float]]]  # symbol -> date -> (action, confidence)
+SignalTable = Dict[str, Dict[pd.Timestamp, Tuple[str, float]]]  # symbol -> date -> (action, confidence)
 # (signal day, account state at the fill day's open) -> ordered (symbol, confidence) BUY picks, best first
 BuySource = Callable[[pd.Timestamp, Portfolio], Sequence[Tuple[str, float]]]
 
-# Keyword arguments that make `simulate` follow the live exits (8% stop from the limits + MA200 trend exit, no time exit).
-LIVE_PARITY = dict(max_hold_days=10 ** 9, trend_exit=True)
+
+
+@dataclass(frozen=True)
+class ExitPolicy:
+    """How a simulated position closes besides its protective stop/target and an explicit SELL signal.
+
+    `max_hold_days`: sell at the close after this many held sessions (None = never; the live bot has no time exit).
+    `trend_exit`: sell at the next open when the previous close is below the 200-day average (the live deterministic exit)."""
+    max_hold_days: Optional[int] = None
+    trend_exit: bool = False
+
+    def __post_init__(self):
+        if self.max_hold_days is not None and self.max_hold_days < 1:
+            raise ValueError(f"max_hold_days must be >= 1 or None, got {self.max_hold_days}")
+
+
+LIVE_EXITS = ExitPolicy(max_hold_days=None, trend_exit=True)  # what the running bot does; simulate() uses it unless told otherwise
+TIME_LIMITED = ExitPolicy(max_hold_days=10)  # the original 2%/5%/10-day bracket style, kept for comparisons against it
 
 
 @dataclass(frozen=True)
@@ -49,18 +67,17 @@ class Result:
     open_at_end: int
 
 
-def simulate(bars: Dict[str, pd.DataFrame], signals: Signals, limits: RiskLimits,
-             start_equity: float = START_EQUITY, max_hold_days: int = 10,
+def simulate(bars: Dict[str, pd.DataFrame], signals: SignalTable, limits: RiskLimits,
+             start_equity: float = START_EQUITY, exits: ExitPolicy = LIVE_EXITS,
              fees: Optional[Callable[[str, float], float]] = None, slippage: float = 0.0,
-             trend_exit: bool = False, buy_source: Optional[BuySource] = None) -> Result:
+             buy_source: Optional[BuySource] = None) -> Result:
     """Replay signals through the real risk engine: next-open fills, stop/target levels off the signal-day close.
 
     `slippage` is charged adversarially (buy higher, sell lower) on market fills only; stop/target exits hit at their
     exact levels. `fees` mirrors the paper broker's schedule (india_delivery_fees) for net-of-cost parity (D1/D2).
 
-    `trend_exit=True` mirrors the live deterministic exit: a position whose previous close is below its 200-day average
-    is sold at the next open, whatever the signals say. The live bot has no time exit, so live-parity callers also pass
-    a huge `max_hold_days` (see LIVE_PARITY).
+    `exits` defaults to the LIVE policy (no time limit, MA200 trend exit), so a simulation tests the strategy that is
+    actually running unless the caller explicitly asks for another (`TIME_LIMITED`, or their own `ExitPolicy`).
 
     Entries come from `signals` (BUYs processed in symbol order) or, when given, from `buy_source(signal_day, portfolio)`:
     an ORDERED list of (symbol, confidence) picks, best first, decided from the account state at the fill day's open.
@@ -69,7 +86,7 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: Signals, limits: RiskLimits
     Symbols may have different histories (later listings, halts): the calendar is the union of all dates, a symbol
     without a bar on a day cannot be traded or stopped that day, and its position is valued at its last known close."""
     engine = RiskEngine(limits, fees=fees)
-    ma200 = {sym: df["Close"].astype(float).rolling(200).mean() for sym, df in bars.items()} if trend_exit else {}
+    ma200 = {sym: df["Close"].astype(float).rolling(200).mean() for sym, df in bars.items()} if exits.trend_exit else {}
     calendar = sorted(set().union(*[set(df.index) for df in bars.values()]))
     cash, peak, prev_equity = start_equity, start_equity, start_equity
     halted_since = None  # start of the current continuous drawdown halt (see drawdown_pause)
@@ -93,7 +110,7 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: Signals, limits: RiskLimits
         """Close a simulated position at a price and record the trade."""
         nonlocal cash
         pos = positions.pop(sym)
-        exit_fee = fees("SELL", pos["qty"] * price) if fees else 0.0
+        exit_fee = fees(Action.SELL, pos["qty"] * price) if fees else 0.0
         cash += pos["qty"] * price - exit_fee
         trades.append(Trade(sym, pos["entry_date"], pos["entry_price"], day, price, pos["qty"], reason,
                             fees=exit_fee + pos["entry_fee"], stop=pos["stop"], target=pos["target"]))
@@ -110,16 +127,16 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: Signals, limits: RiskLimits
         if sym in positions or not (has_bar(sym, prev) and has_bar(sym, day)):
             return
         ref = float(bars[sym].loc[prev, "Close"])
-        decision = engine.evaluate("BUY", confidence, sym, ref, portfolio_at(day, "Open"))
+        decision = engine.evaluate(Action.BUY, confidence, sym, ref, portfolio_at(day, "Open"))
         if not decision.approved:
             return
         open_price = float(bars[sym].loc[day, "Open"]) * (1 + slippage)
         qty = min(decision.quantity, int(cash // open_price))
-        while qty > 0 and fees and qty * open_price + fees("BUY", qty * open_price) > cash:
+        while qty > 0 and fees and qty * open_price + fees(Action.BUY, qty * open_price) > cash:
             qty -= 1
         if qty <= 0:
             return
-        entry_fee = fees("BUY", qty * open_price) if fees else 0.0
+        entry_fee = fees(Action.BUY, qty * open_price) if fees else 0.0
         cash -= qty * open_price + entry_fee
         positions[sym] = dict(qty=qty, entry_price=open_price, entry_date=day, days=0, entry_fee=entry_fee,
                               stop=ref * (1 - limits.stop_loss_pct), target=ref * (1 + limits.take_profit_pct))
@@ -134,9 +151,9 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: Signals, limits: RiskLimits
                 if not has_bar(sym, day):
                     continue
                 sig = signals.get(sym, {}).get(prev)
-                if trend_exit and prev in ma200[sym].index and float(bars[sym].loc[prev, "Close"]) < ma200[sym].loc[prev]:
-                    sig = ("SELL", 1.0)
-                if sig and sig[0] == "SELL" and engine.evaluate("SELL", sig[1], sym, 1.0, portfolio_at(day, "Open")).approved:
+                if exits.trend_exit and prev in ma200[sym].index and trend_broken(float(bars[sym].loc[prev, "Close"]), ma200[sym].loc[prev]):
+                    sig = (Action.SELL, 1.0)
+                if sig and sig[0] == Action.SELL and engine.evaluate(Action.SELL, sig[1], sym, 1.0, portfolio_at(day, "Open")).approved:
                     fill = float(bars[sym].loc[day, "Open"]) * (1 - slippage)
                     close_position(sym, day, fill, "SIGNAL")
 
@@ -146,7 +163,7 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: Signals, limits: RiskLimits
             else:
                 for sym in sorted(bars):
                     sig = signals.get(sym, {}).get(prev)
-                    if sig and sig[0] == "BUY":
+                    if sig and sig[0] == Action.BUY:
                         try_buy(sym, sig[1], prev, day)
 
         for sym in list(positions):
@@ -162,7 +179,7 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: Signals, limits: RiskLimits
                 close_position(sym, day, pos["stop"], "STOP")
             elif row.High >= pos["target"]:
                 close_position(sym, day, pos["target"], "TARGET")
-            elif pos["days"] >= max_hold_days:
+            elif exits.max_hold_days is not None and pos["days"] >= exits.max_hold_days:
                 close_position(sym, day, float(row.Close) * (1 - slippage), "TIME")
 
         equity = cash + sum(p["qty"] * price_at(s, day, "Close") for s, p in positions.items())
@@ -183,17 +200,17 @@ def buy_and_hold_curve(bars: Dict[str, pd.DataFrame], start_equity: float = STAR
     return total
 
 
-def rule_signals(bars: Dict[str, pd.DataFrame], dates) -> Signals:
+def rule_signals(bars: Dict[str, pd.DataFrame], dates) -> SignalTable:
     """Trivial baseline the LLM has to beat: trend-following on the same indicators, no model involved."""
-    out: Signals = {}
+    out: SignalTable = {}
     for sym, df in bars.items():
         out[sym] = {}
         for d in dates:
             snap = build_snapshot(sym, df.loc[:d])
-            if snap.price > snap.ma50 > snap.ma200 and snap.rsi < 70:
-                out[sym][d] = ("BUY", 0.9)
-            elif snap.price < snap.ma200:
-                out[sym][d] = ("SELL", 0.9)
+            if entry_filter(snap.price, snap.ma50, snap.ma200, snap.rsi):
+                out[sym][d] = (Action.BUY, 0.9)
+            elif trend_broken(snap.price, snap.ma200):
+                out[sym][d] = (Action.SELL, 0.9)
     return out
 
 

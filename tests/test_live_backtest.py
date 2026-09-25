@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.backtest import LIVE_PARITY, simulate
+from src.research.backtest import ExitPolicy, simulate
 from src.config import RiskLimits
 from src.data.universe import (Candidate, ScreenConfig, UniverseScreener, screen_bars, select_candidates)
 from src.research.live_backtest import (make_buy_source, ranked_candidates, run_live_config, summarize_run)
@@ -76,12 +76,11 @@ def _two_stock_bars():
 def test_ordered_buy_source_fills_the_best_ranked_stock_not_the_alphabetical_one():
     bars, idx = _two_stock_bars()
     limits = RiskLimits(max_open_positions=1, min_position_pct=0.5, max_position_pct=0.5, max_portfolio_exposure_pct=0.8)
-    by_signal = simulate(bars, {"AAA": {idx[0]: ("BUY", 0.9)}, "ZZZ": {idx[0]: ("BUY", 0.9)}}, limits, **LIVE_PARITY)
+    by_signal = simulate(bars, {"AAA": {idx[0]: ("BUY", 0.9)}, "ZZZ": {idx[0]: ("BUY", 0.9)}}, limits)
     assert [t for t in by_signal.trades] == [] and by_signal.open_at_end == 1  # alphabetical: one slot goes to AAA
-    ranked = simulate(bars, {}, limits, buy_source=lambda day, pf: [("ZZZ", 0.9), ("AAA", 0.9)] if day == idx[0] else [],
-                      **LIVE_PARITY)
+    ranked = simulate(bars, {}, limits, buy_source=lambda day, pf: [("ZZZ", 0.9), ("AAA", 0.9)] if day == idx[0] else [],)
     close = simulate(bars, {}, limits, buy_source=lambda day, pf: [("ZZZ", 0.9), ("AAA", 0.9)] if day == idx[0] else [],
-                     max_hold_days=1)
+                     exits=ExitPolicy(max_hold_days=1))
     assert ranked.open_at_end == 1 and [t.symbol for t in close.trades] == ["ZZZ"]  # rank order wins the only slot
 
 
@@ -89,9 +88,9 @@ def test_a_short_history_does_not_truncate_the_calendar_of_the_others():
     idx = pd.bdate_range("2024-01-01", periods=30)
     full = pd.DataFrame({"Open": 100.0, "High": 100.0, "Low": 100.0, "Close": 100.0, "Volume": 1e6}, index=idx)
     late = full.iloc[20:]
-    result = simulate({"OLD": full, "NEW": late}, {"OLD": {idx[0]: ("BUY", 0.9)}}, RiskLimits(), max_hold_days=100)
+    result = simulate({"OLD": full, "NEW": late}, {"OLD": {idx[0]: ("BUY", 0.9)}}, RiskLimits(), exits=ExitPolicy(max_hold_days=100))
     assert len(result.equity) == 30 and result.open_at_end == 1  # the old calendar is kept (intersection was 10 days)
-    late_buy = simulate({"OLD": full, "NEW": late}, {"NEW": {idx[25]: ("BUY", 0.9)}}, RiskLimits(), max_hold_days=100)
+    late_buy = simulate({"OLD": full, "NEW": late}, {"NEW": {idx[25]: ("BUY", 0.9)}}, RiskLimits(), exits=ExitPolicy(max_hold_days=100))
     assert late_buy.open_at_end == 1
 
 

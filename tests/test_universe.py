@@ -157,7 +157,7 @@ def test_screen_needs_a_full_year_of_bars_for_12_1_momentum():
 
 # ---------------------------------------------------------------- delivery filter
 def delivery_frame(dates, values):
-    """dates x symbols delivery percent, as src.research.delivery.load_delivery returns."""
+    """dates x symbols delivery percent, as src.data.delivery.load_delivery returns."""
     return pd.DataFrame(values, index=pd.DatetimeIndex(dates))
 
 

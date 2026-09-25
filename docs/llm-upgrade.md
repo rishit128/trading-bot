@@ -11,7 +11,7 @@ Status key: `PASS` = implemented + unit-tested · `needs data` = implemented, pr
 
 | Review point | Status | Where |
 |---|---|---|
-| 5-step CoT stored per decision | PASS | `src/agents/agents.py` step chain → `reasoning_chain_json`, step tokens `[STEP 1–5]` |
+| 5-step CoT stored per decision | PASS | `src/agents/technical/` step chain → `reasoning_chain_json`, step tokens `[STEP 1–5]` |
 | Each step gets 2–3 sub-questions and the risk list needs ≥3 severity-ranked risks | PASS | `TechnicalAgent.build_prompt` (steps 1–3: `(a)(b)(c)`; step 4: alignment; step 5: "at least three risks, most severe first") |
 | Schema enforces ≥1 risk (resilience to model trimming) | PASS | `AdvancedSignal.risks: min_length=1` |
 | Retry once on malformed/validation-failed JSON so a flaky model does not sink the cycle | PASS | `src/llm.py::LLMClient._ask` (retry-once per provider, appends a fix-it hint; dead model skipped, API error breaks; `LLMUnavailable` raised at the end) |
@@ -51,7 +51,7 @@ Status key: `PASS` = implemented + unit-tested · `needs data` = implemented, pr
 | Deterministic humility discount then final confidence | PASS | `_reflect`: final = step-6 conviction − `HUMILITY` (0.10); reasoning marker `[reflection: … -> final confidence 0.50]` |
 | Reflection only on non-HOLD calls | PASS | `analyze()` skips phase 4 on HOLD (and phase 3) |
 | Store the chain + the concession fields | PASS | `conviction_adjustments` (JSON list of stages), `biggest_risk`, `what_proves_us_wrong`, `bias_check` |
-| Contract adherence + bias/risk quality on real cycles | needs data | `scripts/analyze_phase4_calibration.py` |
+| Contract adherence + bias/risk quality on real cycles | needs data | `scripts/analyze_reflection.py` |
 
 ## Cross-phase
 

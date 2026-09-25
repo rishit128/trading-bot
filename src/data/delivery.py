@@ -25,7 +25,7 @@ def _fetch_day(day: date, client: httpx.Client) -> Optional[str]:
 def parse_bhavcopy(text: str) -> pd.Series:
     """Symbol -> delivery percent for the EQ series of one day's file."""
     df = pd.read_csv(io.StringIO(text), skipinitialspace=True)
-    df.columns = [c.strip() for c in df.columns]
+    df.columns = pd.Index([c.strip() for c in df.columns])
     df = df[df["SERIES"].str.strip() == "EQ"]
     return pd.to_numeric(df.set_index("SYMBOL")["DELIV_PER"], errors="coerce")
 

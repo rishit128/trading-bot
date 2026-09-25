@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 from typing import Optional
 
-from src.app.kit import build_india_screener, make_paper_broker
+from src.app.wiring import build_india_screener, make_paper_broker
 from src.config import Settings
 from src.data.india import IST
 from src.workflow import build_analysis_graph, build_cycle_graph, build_decision_graph

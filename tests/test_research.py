@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from src.research import engine, signals
-from src.research.data import load_universe
+from src.data.price_history import load_universe
 
 DAYS = pd.bdate_range("2023-01-02", periods=400)
 
@@ -323,7 +323,7 @@ def test_index_cache_expires_and_falls_back_to_the_stale_copy(tmp_path):
     import os, time
     from datetime import date
     import pandas as pd
-    from src.research.data import load_index_close
+    from src.data.price_history import load_index_close
 
     def frame(last):
         idx = pd.bdate_range(end=last, periods=5)
@@ -372,3 +372,34 @@ def test_ai_backtest_snapshot_carries_the_enriched_production_indicators():
     future = close.copy()
     future.iloc[301:] = 1.0  # data after as_of must not leak in
     assert point_in_time_snapshot("A", future, volume, idx[300]) == snap
+
+
+def test_ohlc_universe_downloads_in_chunks_caches_to_disk_and_skips_unresolvable_symbols(tmp_path):
+    import numpy as np
+    import pandas as pd
+    from datetime import date
+    from src.data.price_history import load_ohlc_universe
+
+    idx = pd.bdate_range("2024-01-01", periods=30)
+
+    def frame(base):
+        close = pd.Series(np.linspace(base, base + 10, 30), index=idx)
+        return pd.DataFrame({"Open": close, "High": close + 1, "Low": close - 1, "Close": close, "Volume": 1000.0}, index=idx)
+
+    calls = []
+
+    def download(tickers, start, end):
+        calls.append(list(tickers))
+        known = {"AAA.NS": frame(100), "BBB.NS": frame(200), "CCC.NS": frame(300)}
+        return pd.concat({t: known[t] for t in tickers if t in known}, axis=1)  # ZZZ.NS is not in the download
+
+    kwargs = dict(index=500, years=1, cache_dir=tmp_path, symbols=["AAA", "BBB", "CCC", "ZZZ"], chunk=2,
+                  today=lambda: date(2024, 3, 1))
+    out = load_ohlc_universe(download=download, **kwargs)
+    assert set(out) == {"AAA", "BBB", "CCC"} and calls == [["AAA.NS", "BBB.NS"], ["CCC.NS", "ZZZ.NS"]]  # chunked, ZZZ skipped
+    assert list(out["AAA"].columns) == ["Open", "High", "Low", "Close", "Volume"] and len(out["AAA"]) == 30
+    assert (tmp_path / "ohlc_nifty500_1y.pkl").exists()
+    again = load_ohlc_universe(download=lambda *a: (_ for _ in ()).throw(AssertionError("must read the cache")), **kwargs)
+    assert set(again) == set(out)  # the second call is served from disk with no download
+    refreshed = load_ohlc_universe(download=download, refresh=True, **kwargs)
+    assert len(calls) == 4 and set(refreshed) == set(out)  # refresh=True downloads again

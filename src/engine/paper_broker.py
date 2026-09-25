@@ -12,20 +12,13 @@ from typing import Callable, List, Optional, Tuple
 
 from sqlalchemy import func, select
 
-from src.engine.convention import SLIPPAGE
+from src.engine.costs import SLIPPAGE, india_delivery_fees
+from src.engine.enums import Action, OrderStatus
+from src.engine.ports import Fill, MarketClock, PriceFeed
 from src.database import PaperAccountRecord, PaperPositionRecord, PaperTradeRecord
 from src.engine.risk_engine import Portfolio
 
 log = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class Fill:
-    """What the broker reported for an order: id, status, and the quantity and price actually filled when known."""
-    broker_order_id: str
-    status: str
-    filled_qty: Optional[int] = None
-    avg_price: Optional[float] = None
 
 
 def _utc(dt: datetime) -> datetime:
@@ -33,23 +26,12 @@ def _utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
-def india_delivery_fees(side: str, value: float) -> float:
-    """Approximate NSE delivery (CNC) charges with a zero-brokerage discount broker: STT 0.1% both sides, stamp duty
-    0.015% on buys, exchange 0.00297%, SEBI 0.0001%, 18% GST on those two, DP charge Rs 15.93 per sell. Rates change."""
-    stt = 0.001 * value
-    stamp = 0.00015 * value if side == "BUY" else 0.0
-    exchange, sebi = 0.0000297 * value, 0.000001 * value
-    gst = 0.18 * (exchange + sebi)
-    dp = 15.93 if side == "SELL" else 0.0
-    return stt + stamp + exchange + sebi + gst + dp
-
-
 @dataclass
 class PaperBroker:
     """Simulated broker for markets with no sandbox: state kept in the database."""
     sessions: Callable
-    feed: object  # needs last_price(symbol) and bars_since(symbol, since)
-    clock: object  # needs is_open() and today_ist()
+    feed: PriceFeed
+    clock: MarketClock
     initial_cash: float = 1_000_000.0
     fees: Callable[[str, float], float] = india_delivery_fees
     slippage: float = SLIPPAGE
@@ -102,7 +84,7 @@ class PaperBroker:
         with self._lock:
             fill_price = self.feed.last_price(symbol) * (1 + self.slippage)
             value = qty * fill_price
-            cost = value + self.fees("BUY", value)
+            cost = value + self.fees(Action.BUY, value)
             now = self.now_fn()
             with self.sessions() as s:
                 acct = s.get(PaperAccountRecord, 1)
@@ -115,7 +97,7 @@ class PaperBroker:
                                           stop=round(price * (1 - stop_pct), 2), target=round(price * (1 + take_pct), 2),
                                           opened_at=now, last_checked=now))
                 s.commit()
-            return Fill(f"paper-{uuid.uuid4().hex[:12]}", "filled", qty, fill_price)
+            return Fill(f"paper-{uuid.uuid4().hex[:12]}", OrderStatus.FILLED, qty, fill_price)
 
     def sell(self, symbol: str, qty: int) -> Fill:
         """Simulated market sell of some or all of a position."""
@@ -126,7 +108,7 @@ class PaperBroker:
                     raise ValueError(f"{symbol}: cannot sell {qty}, holding {pos.qty if pos else 0}")
             price = self.feed.last_price(symbol) * (1 - self.slippage)
             self._close(symbol, qty, price, "SIGNAL")
-            return Fill(f"paper-{uuid.uuid4().hex[:12]}", "filled", qty, price)
+            return Fill(f"paper-{uuid.uuid4().hex[:12]}", OrderStatus.FILLED, qty, price)
 
     def unprotected_positions(self) -> List[Tuple[str, int, float]]:
         """Always empty: every simulated position is opened with its stop level and checked against 5-minute bars."""
@@ -143,8 +125,8 @@ class PaperBroker:
             pos = s.get(PaperPositionRecord, symbol)
             acct = s.get(PaperAccountRecord, 1)
             proceeds = qty * price
-            fees = self.fees("SELL", proceeds)
-            entry_fees = self.fees("BUY", qty * pos.avg_price)
+            fees = self.fees(Action.SELL, proceeds)
+            entry_fees = self.fees(Action.BUY, qty * pos.avg_price)
             acct.cash += proceeds - fees
             s.add(PaperTradeRecord(symbol=symbol, qty=qty, entry_price=pos.avg_price, exit_price=price,
                                    opened_at=pos.opened_at, closed_at=now, reason=reason, fees=fees + entry_fees,
@@ -168,7 +150,8 @@ class PaperBroker:
                 continue
             if bars is None or len(bars) == 0:
                 continue
-            exit_price, reason = None, None
+            exit_price: Optional[float] = None
+            reason: Optional[str] = None
             for _, bar in bars.iterrows():
                 if bar["Open"] <= stop:
                     exit_price, reason = float(bar["Open"]), "STOP"
@@ -180,7 +163,7 @@ class PaperBroker:
                     exit_price, reason = target, "TARGET"
                 if reason:
                     break
-            if reason:
+            if reason is not None and exit_price is not None:
                 log.info("paper %s hit on %s at %.2f", reason, symbol, exit_price)
                 self._close(symbol, qty, exit_price, reason)
             else:

@@ -1,4 +1,4 @@
-"""Phase 4 calibration: does the reflection step behave as designed on real decisions?
+"""Reflection check: does the reflection step behave as designed on real decisions?
 
 Reflection is a VETO ONLY: the critic may turn a call into a HOLD/SELL, but it does not shave the confidence of a call it
 upholds (its monotone, humility-discounted conviction is stored as `critic_confidence` for audit and never gates a trade).
@@ -10,7 +10,7 @@ counted separately as legacy. It also reports the veto rate.
 It does NOT fabricate an outcome verdict: whether vetoed calls would have lost needs closed trades, and the number is
 reported honestly (or reported as missing).
 
-    python scripts/analyze_phase4_calibration.py"""
+    python scripts/analyze_reflection.py"""
 import json
 import sys
 from pathlib import Path

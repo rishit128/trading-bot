@@ -1,4 +1,4 @@
-"""P0 C2: confidence calibration buckets and reliability analysis.
+"""Confidence calibration buckets and reliability analysis.
 
 Calibration asks a strict question of the confidence score: when the model says 70%, does it win 70% of
 the time? Buckets make that judgment sample-aware - a bucket with fewer than `MIN_SAMPLE` outcomes is

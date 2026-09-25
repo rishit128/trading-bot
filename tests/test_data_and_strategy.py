@@ -3,7 +3,7 @@ import pytest
 
 from src.data.indicators import build_snapshot, compute_rsi
 from src.engine.strategy import combine
-from src.llm import Signal
+from src.llm import AgentSignal
 
 
 def bars(closes):
@@ -41,7 +41,7 @@ def test_snapshot_needs_200_bars():
 
 
 def sig(action, conf=0.8):
-    return Signal(action=action, confidence=conf, reasoning="r")
+    return AgentSignal(action=action, confidence=conf, reasoning="r")
 
 
 def test_technical_hold_stays_hold():
@@ -69,9 +69,9 @@ def test_agreement_averages_confidence():
 
 def test_signal_rejects_bad_values():
     with pytest.raises(ValueError):
-        Signal(action="MAYBE", confidence=0.5, reasoning="r")
+        AgentSignal(action="MAYBE", confidence=0.5, reasoning="r")
     with pytest.raises(ValueError):
-        Signal(action="BUY", confidence=1.5, reasoning="r")
+        AgentSignal(action="BUY", confidence=1.5, reasoning="r")
 
 
 def test_snapshots_are_fetched_once_per_symbol_per_session_and_failures_are_not_cached():

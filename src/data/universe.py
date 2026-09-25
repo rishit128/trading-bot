@@ -10,7 +10,9 @@ from typing import Callable, List, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from src.data.delivery import load_delivery as default_load_delivery
 from src.data.indicators import MAX_STALE_DAYS, MIN_BARS, rsi_from_array
+from src.engine.rules import overbought, uptrend
 
 log = logging.getLogger(__name__)
 
@@ -72,10 +74,10 @@ def screen_arrays(symbol: str, close: np.ndarray, volume: np.ndarray, last_bar: 
     if not volatility <= cfg.max_daily_volatility:  # also rejects NaN
         return None
     ma50, ma200 = float(close[-50:].mean()), float(close[-200:].mean())
-    if not price > ma50 > ma200:
+    if not uptrend(price, ma50, ma200):
         return None
     rsi = rsi_from_array(close)
-    if rsi >= 70:
+    if overbought(rsi):
         return None
     mom_12_1 = float(close[-22] / close[-253] - 1)
     return Candidate(symbol, price, price / float(close[-64]) - 1, rsi, traded_value, volatility, mom_12_1)
@@ -91,7 +93,7 @@ def screen_symbol(symbol: str, close: pd.Series, volume: pd.Series, newest: pd.T
 
 def screen_bars(bars: pd.DataFrame, cfg: ScreenConfig) -> List[Candidate]:
     """bars: MultiIndex (symbol, timestamp) daily OHLCV of COMPLETED sessions. Returns every symbol that passes."""
-    found = []
+    found: List[Candidate] = []
     if bars.empty:
         return found
     newest = bars.index.get_level_values(1).max()
@@ -100,7 +102,7 @@ def screen_bars(bars: pd.DataFrame, cfg: ScreenConfig) -> List[Candidate]:
         close.index = g.index.get_level_values(1)
         volume = (g["Volume"] if "Volume" in g else g["volume"]).copy()
         volume.index = close.index
-        candidate = screen_symbol(symbol, close, volume, newest, cfg)
+        candidate = screen_symbol(str(symbol), close, volume, newest, cfg)
         if candidate is not None:
             found.append(candidate)
     return found
@@ -142,12 +144,9 @@ def delivery_filter(as_of: date, load_delivery: Optional[Callable] = None, windo
 
     Research finding (STRATEGY.md, 2026-09-22): combined with 12-1 month momentum ranking (the live default), this
     added ~14%/yr over the same-window equal-weight basket in a single 3-year test. Promising, not proven."""
-    if load_delivery is None:
-        from src.research.delivery import load_delivery as _load
-
-        load_delivery = _load
+    load = load_delivery or default_load_delivery
     try:
-        deliv = load_delivery(years=3)
+        deliv = load(years=3)
     except Exception as e:
         log.warning("delivery filter unavailable, screening without it today: %s", type(e).__name__)
         return None
@@ -202,6 +201,7 @@ class UniverseScreener:
                     raise
                 log.warning("bar fetch failed (attempt %d/%d): %s: %s", attempt, attempts, type(e).__name__, e)
                 self.sleep(3 * attempt)
+        raise ValueError(f"attempts must be >= 1, got {attempts}")
 
     def symbols_for(self, portfolio) -> List[str]:
         """Current holdings first, then today's candidates: everything to analyse this cycle."""

@@ -3,15 +3,22 @@
 An agent has a unique `name` and a `role`:
   * LEAD    - proposes the trade. All lead agents must agree on a direction or the bot stands down.
   * ADVISOR - can only confirm (raising confidence) or veto (opposing a lead). Neutral/absent advisors are ignored.
-`analyze` returns a Signal, or None when the agent has nothing to say (e.g. no news)."""
+`analyze` returns a AgentSignal, or None when the agent has nothing to say (e.g. no news)."""
 from dataclasses import dataclass
 from typing import Callable, Optional, Protocol, Sequence
 
 from src.data.indicators import Snapshot
-from src.llm import Signal
+from src.engine.enums import Action, Role
+from src.engine.agent_signal import AgentSignal
 
-LEAD = "lead"
-ADVISOR = "advisor"
+LEAD = Role.LEAD  # short names for the two roles, as the agents declare them
+ADVISOR = Role.ADVISOR
+
+
+def fail_safe_hold(reason: str) -> AgentSignal:
+    """The signal an agent returns when it cannot form a view: a HOLD flagged `degraded` so the pipeline can tell a real
+    call from a stand-down (an AI outage must never look like a decision)."""
+    return AgentSignal(action=Action.HOLD, confidence=0.0, reasoning=reason, degraded=True)
 
 
 @dataclass(frozen=True)
@@ -28,8 +35,8 @@ class AgentContext:
 class Agent(Protocol):
     """Contract for any agent: a unique name, a role (lead or advisor) and analyze(ctx)."""
     name: str
-    role: str
+    role: Role
 
-    def analyze(self, ctx: AgentContext) -> Optional[Signal]:
-        """Return a Signal, or None to abstain."""
+    def analyze(self, ctx: AgentContext) -> Optional[AgentSignal]:
+        """Return a AgentSignal, or None to abstain."""
         ...

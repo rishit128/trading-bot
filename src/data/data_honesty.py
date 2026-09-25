@@ -1,4 +1,4 @@
-"""Data-honesty checks run at fetch time (P0). The indicators assume one continuous, comparably-scaled price series;
+"""Data-honesty checks run at fetch time. The indicators assume one continuous, comparably-scaled price series;
 a split/bonus/rights event in raw history breaks that assumption (MA/RSI/ATR see a fake -50% move). Yahoo's
 `auto_adjust=True` restates the whole history, so a correct daily feed should have NO split-like overnight gaps. Any
 bar that still shows one (or leaves it ambiguous with a real crash) is flagged for the caller instead of being fed to
@@ -8,6 +8,7 @@ A real one-day crash also gaps down, but it comes with an expanding intraday ran
 price scale, so the new bar's own high-low range is ordinary. A bar is flagged only when both hold: the overnight
 close-to-close move exceeds `threshold` AND the bar's own range is NOT unusually wide."""
 import logging
+from typing import List
 
 import pandas as pd
 
@@ -40,7 +41,7 @@ def split_like_gaps(df: pd.DataFrame, threshold: float = SPLIT_LOOKALIKE_RATIO) 
 
 def check_bars_honesty(df: pd.DataFrame) -> list:
     """Human-readable findings for a fetched daily frame; the fetcher logs these. Pure report, no mutation."""
-    issues = []
+    issues: List[str] = []
     if df is None or df.empty:
         return issues
     if not df.index.is_monotonic_increasing:

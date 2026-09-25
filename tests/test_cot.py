@@ -1,4 +1,4 @@
-"""Phase 1 chain-of-thought: the structured schema, the client's generic structured call, prompt construction,
+"""Chain-of-thought: the structured schema, the client's generic structured call, prompt construction,
 agent fail-safes, and that the reasoning chain is persisted and replay-able."""
 import json
 
@@ -6,16 +6,16 @@ import pandas as pd
 import pytest
 from sqlalchemy import select
 
-from src.agents.agents import AdvancedSignal, COT_SCHEMA, TechnicalAgent
+from src.agents.technical import AdvancedSignal, COT_SCHEMA, TechnicalAgent
 from src.agents.base import ADVISOR, LEAD, AgentContext
 from src.config import RiskLimits, Settings, load_settings
 from src.data.indicators import Snapshot, build_snapshot
 from src.database import DecisionRecord, make_session_factory
-from src.engine.paper_broker import Fill
+from src.engine.ports import Fill
 from src.engine.risk_engine import Portfolio
 from src.llm import LLMClient, LLMUnavailable
 from src.pipeline import TradingPipeline
-from src.replay import replay
+from src.ops.replay import replay
 from tests.test_llm_and_pipeline import FakeOpenAI, StubAgent, api_error
 
 SNAP = Snapshot("AAPL", 100.0, 98.0, 95.0, 60.0, 1000)
@@ -37,9 +37,9 @@ def test_cot_agent_parses_into_signal_with_details():
     s = agent.analyze(CTX)
     assert s.action == "BUY" and s.confidence == 0.75
     assert s.reasoning == "Clear uptrend, volume confirms, not overbought."
-    assert s.details["edge_confidence"] == 0.6 and s.details["confluence_score"] == 8
-    assert s.details["reasoning_chain"]["trend"].startswith("Uptrend")
-    assert s.details["risks"] == ["Earnings next week", "Sector rotation"]
+    assert s.details.edge_confidence == 0.6 and s.details.confluence_score == 8
+    assert s.details.reasoning_chain.trend.startswith("Uptrend")
+    assert s.details.risks == ["Earnings next week", "Sector rotation"]
 
 
 def test_cot_agent_fails_safe_to_hold_without_details():
@@ -104,7 +104,7 @@ def sample_snapshot(sym: str) -> Snapshot:
 
 
 def make_details_pipeline(tmp_path):
-    """A pipeline whose lead agent returns a chain-of-thought Signal with full details."""
+    """A pipeline whose lead agent returns a chain-of-thought AgentSignal with full details."""
     details = {"edge_confidence": 0.6, "confluence_score": 8, "risks": ["earnings next week"],
                "reasoning_chain": {"trend": "uptrend above MA50", "overbought": "RSI 55 not overbought",
                                    "volume": "volume confirms"}}
@@ -134,8 +134,8 @@ def make_details_pipeline(tmp_path):
 
 
 def Signal_stub(details):
-    from src.llm import Signal
-    return Signal(action="BUY", confidence=0.75, reasoning="r", details=details)
+    from src.llm import AgentSignal
+    return AgentSignal(action="BUY", confidence=0.75, reasoning="r", details=details)
 
 
 def test_cot_details_are_persisted_and_replayed(tmp_path):
@@ -148,7 +148,7 @@ def test_cot_details_are_persisted_and_replayed(tmp_path):
         assert json.loads(row.risks_json) == ["earnings next week"]
         assert json.loads(row.reasoning_chain_json)["trend"].startswith("uptrend")
         session_result = replay(row)
-    assert session_result.signals["technical"].details["confluence_score"] == 8
+    assert session_result.signals["technical"].details.confluence_score == 8
     assert "STEP 1" in session_result.prompt
     assert session_result.reproduced is True
 

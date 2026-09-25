@@ -9,6 +9,8 @@ from typing import Callable, Dict, List, Optional, Set
 import pandas as pd
 
 from src.data.india import IST, SUFFIX
+from src.engine.paper_broker import PaperBroker
+from src.engine.ports import MarketClock
 from src.intraday import strategy as st
 
 log = logging.getLogger(__name__)
@@ -42,9 +44,9 @@ def fetch_today_bars(symbols: List[str], download: Optional[Callable] = None) ->
 @dataclass
 class IntradayEngine:
     """One engine per intraday paper account. `broker` is a PaperBroker on its own database with intraday fees."""
-    broker: object
+    broker: PaperBroker
     universe: List[str]
-    clock: object
+    clock: MarketClock
     fetch_bars: Callable[[List[str]], Dict[str, pd.DataFrame]] = fetch_today_bars
     notify: Optional[Callable[[str], object]] = None
     live: bool = False  # False: log signals only, place nothing
@@ -93,7 +95,7 @@ class IntradayEngine:
         bars = self.fetch_bars(candidates)
         entered = 0
         for sym, df in bars.items():
-            df = df[df.index + BAR <= local]  # completed bars only
+            df = df[(pd.DatetimeIndex(df.index) + BAR) <= pd.Timestamp(local)]  # completed bars only
             if len(pf.positions) + entered >= self.max_positions:
                 break
             setup = st.find_setup(sym, df) if len(df) else None

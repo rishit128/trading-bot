@@ -1,4 +1,4 @@
-"""P0: the holdout reserve is deterministic, decision-only and untouched by the live account.
+"""the holdout reserve is deterministic, decision-only and untouched by the live account.
 
 The paper account is the tuning surface for the whole repo - everything from the learning phase to
 calibration is judged against it - so the reserve must be an independent ruler: same starting cash,
@@ -17,7 +17,7 @@ from src.database import (
     PaperAccountRecord,
     make_session_factory,
 )
-from src.holdout import HoldoutReserve
+from src.ops.holdout import HoldoutReserve
 
 
 def _bars(symbol: str) -> pd.DataFrame:

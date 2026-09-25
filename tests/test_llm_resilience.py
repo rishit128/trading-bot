@@ -262,7 +262,7 @@ def test_from_settings_wires_the_production_values(monkeypatch):
 
 
 # ================================================================== agent level: validation, the fallback ladder, audit tags
-from src.agents.agents import TechnicalAgent  # noqa: E402
+from src.agents.technical import TechnicalAgent  # noqa: E402
 from src.agents.base import AgentContext  # noqa: E402
 from src.data.indicators import Snapshot  # noqa: E402
 
@@ -305,20 +305,20 @@ def test_blank_or_placeholder_reasoning_is_retried_not_traded_on(bad):
 def test_a_blank_falsification_is_dropped_not_fatal():
     agent, client, snap = agent_for({"a": [answer(cot(falsification="  "))]})
     signal = run(agent, snap)
-    assert signal.action == "BUY" and "falsification" not in signal.details and len(client.calls) == 1
+    assert signal.action == "BUY" and signal.details.falsification is None and len(client.calls) == 1
 
 
 def test_rule_alignment_is_computed_not_taken_from_the_model():
     liar = cot(action="HOLD", rule_alignment="agree")  # says it agrees with a BUY filter while answering HOLD
     up_agent, _, up = agent_for({"a": [answer(liar)]}, snap=UP)
-    assert run(up_agent, up).details["rule_alignment"] == "deviate"  # filter says BUY, the model said HOLD
+    assert run(up_agent, up).details.rule_alignment == "deviate"  # filter says BUY, the model said HOLD
     dn_agent, _, dn = agent_for({"a": [answer(cot(action="HOLD", rule_alignment="deviate"))]}, snap=DOWN)
-    assert run(dn_agent, dn).details["rule_alignment"] == "agree"  # filter says HOLD, the model said HOLD
+    assert run(dn_agent, dn).details.rule_alignment == "agree"  # filter says HOLD, the model said HOLD
 
 
 def test_a_normal_answer_is_tagged_as_the_full_chain_of_thought_tier():
     agent, _, snap = agent_for({"a": [answer(cot())]})
-    assert run(agent, snap).details["tier"] == "cot"
+    assert run(agent, snap).details.tier == "cot"
 
 
 def test_if_the_full_prompt_fails_everywhere_the_compact_prompt_is_tried():
@@ -331,7 +331,7 @@ def test_if_the_full_prompt_fails_everywhere_the_compact_prompt_is_tried():
     agent = TechnicalAgent(LLMClient(["a"], client=client), use_learning=False, use_context=False, use_reflect=False)
     signal = run(agent, UP)
     assert signal.action == "BUY" and not signal.degraded
-    assert signal.details["tier"] == "compact" and "cot_failure" in signal.details and signal.details["raw_model"] == "a"
+    assert signal.details.tier == "compact" and signal.details.cot_failure is not None and signal.details.raw_model == "a"
 
 
 def test_only_when_both_prompts_fail_does_the_agent_stand_down():
@@ -348,12 +348,12 @@ def test_a_skipped_refinement_leaves_a_mark_in_the_audit_record():
     agent = TechnicalAgent(LLMClient(["a"], client=client, sleep=lambda s: None), use_learning=False, use_context=False,
                            use_reflect=True)
     signal = run(agent, UP)
-    assert signal.action == "BUY" and signal.details["reflection_skipped"] is True and "reflection" not in signal.details
+    assert signal.action == "BUY" and signal.details.reflection_skipped is True and signal.details.reflection is None
 
     learn_fails = Scripted({"a": [answer(cot()), overloaded()]})
     agent = TechnicalAgent(LLMClient(["a"], client=learn_fails, sleep=lambda s: None), use_learning=True,
                            use_context=False, use_reflect=False, history_fn=lambda s: make_stats(12, 0.3))
-    assert run(agent, UP).details["learning_skipped"] is True
+    assert run(agent, UP).details.learning_skipped is True
 
 
 def test_the_pipeline_logs_one_health_line_per_cycle(tmp_path, caplog):

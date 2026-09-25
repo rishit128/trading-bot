@@ -7,6 +7,7 @@ from typing import Callable, Dict, Optional, Tuple
 import pandas as pd
 import yfinance as yf
 
+from src.data.retry import retry_call
 from src.data.indicators import MAX_STALE_DAYS, Snapshot, StaleDataError, build_snapshot
 
 log = logging.getLogger(__name__)
@@ -61,3 +62,21 @@ def cached_per_session(fetch: Callable[[str], Snapshot], session: Callable[[], d
         return snapshot
 
     return get
+
+
+def fetch_daily_bars(symbol: str, suffix: str = "", download: Callable = yf.download, period: str = "2y",
+                     timeout: float = 30.0) -> Optional[pd.DataFrame]:
+    """A stock's daily Open/High/Low/Close (adjusted, oldest first), or None when Yahoo has nothing for it.
+
+    Used to label what happened AFTER a decision, so unlike the analysis snapshot it deliberately includes the newest
+    completed bars. A transient failure is retried; a definite empty answer is not."""
+    def fetch() -> pd.DataFrame:
+        return download(symbol + suffix, period=period, interval="1d", progress=False, auto_adjust=True, timeout=timeout)
+
+    bars = retry_call(fetch, attempts=2, delay=1.0, what=f"daily bars for {symbol}")
+    if bars is None or bars.empty:
+        return None
+    if hasattr(bars.columns, "levels"):
+        bars.columns = bars.columns.get_level_values(0)
+    bars = bars.dropna(subset=["Open", "High", "Low", "Close"])
+    return bars[["Open", "High", "Low", "Close"]] if len(bars) else None

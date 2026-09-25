@@ -9,7 +9,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.run_backtest import load_bars, read_cache  # noqa: E402
-from src.backtest import START_EQUITY, curve_metrics, simulate, trade_metrics  # noqa: E402
+from src.research.backtest import START_EQUITY, ExitPolicy, curve_metrics, simulate, trade_metrics  # noqa: E402
 from src.config import load_settings  # noqa: E402
 
 
@@ -29,7 +29,7 @@ def main():
     for stop, target, hold in [(0.02, 0.05, 10), (0.03, 0.05, 10), (0.05, 0.05, 10), (0.05, 0.10, 20),
                                (0.08, 0.10, 20), (0.02, 0.05, 20), (0.10, 0.20, 40)]:
         limits = dataclasses.replace(base, stop_loss_pct=stop, take_profit_pct=target)
-        r = simulate(window, signals, limits, max_hold_days=hold)
+        r = simulate(window, signals, limits, exits=ExitPolicy(max_hold_days=hold))
         m, t = curve_metrics(r.equity, START_EQUITY), trade_metrics(r.trades)
         print(f"{stop:5.0%} {target:6.0%} {hold:4d} | {m['total_return']:+7.2%} {m['max_drawdown']:7.2%} {t['trades']:6d} {t.get('win_rate', 0):4.0%}")
 

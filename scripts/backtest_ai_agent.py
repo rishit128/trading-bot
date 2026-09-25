@@ -1,4 +1,4 @@
-"""Backtests the production AI (src.agents.agents.TechnicalAgent, real OpenRouter calls, the production prompt minus ATR/ADX, which need High/Low) on
+"""Backtests the production AI (src.agents.technical.TechnicalAgent, real OpenRouter calls, the production prompt minus ATR/ADX, which need High/Low) on
 Indian stock history, point-in-time, and compares it with the mechanical rule it sits on top of in production.
 
 This directly answers the open gap in STRATEGY.md: the AI has run live since 2026-09-21, but "running" is not
@@ -30,13 +30,13 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.agents.agents import TechnicalAgent  # noqa: E402
+from src.agents.technical import TechnicalAgent  # noqa: E402
 from src.agents.base import AgentContext  # noqa: E402
 from src.config import load_settings  # noqa: E402
 from src.data.indicators import Snapshot, build_snapshot, compute_rsi  # noqa: E402
 from src.llm import LLMClient  # noqa: E402
 from src.research import engine  # noqa: E402
-from src.research.data import load_universe  # noqa: E402
+from src.data.price_history import load_universe  # noqa: E402
 from src.research.signals import liquid_mask, month_end_dates  # noqa: E402
 
 CACHE = Path("research_cache/ai_backtest_signals.json")
@@ -63,7 +63,7 @@ class DiskCachedAgent:
         key = hashlib.sha256(self.agent.build_prompt(snapshot).encode()).hexdigest()
         if key not in self.cache:
             # TechnicalAgent.analyze() never raises: it already catches LLMUnavailable and returns a degraded
-            # fail-safe HOLD Signal, so there is nothing further to catch here.
+            # fail-safe HOLD AgentSignal, so there is nothing further to catch here.
             sig = self.agent.analyze(AgentContext(snapshot.symbol, snapshot))
             self.cache[key] = {"action": sig.action, "confidence": sig.confidence, "degraded": sig.degraded}
             self.calls += 1
@@ -104,7 +104,7 @@ def main():
     ap.add_argument("--index", type=int, default=100)
     ap.add_argument("--cost", type=float, default=0.0012)
     ap.add_argument("--cot-only", action="store_true",
-                    help="phase 1 (five-step reasoning) only; skip the history/market/reflection refinement phases "
+                    help="the five-step reasoning only; skip the history/market/reflection refinement phases "
                          "that make every candidate cost extra real LLM calls and are not disk-cached")
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING)

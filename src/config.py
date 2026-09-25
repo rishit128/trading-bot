@@ -14,9 +14,18 @@ DEFAULT_MODELS = (
 )
 
 
+@dataclass(frozen=True)
+class MarketDefaults:
+    """What differs per market: the currency symbol, the scanner's price and liquidity floors, and the default watchlist."""
+    currency: str
+    min_price: float
+    min_traded_value: float
+    watchlist: tuple
+
+
 MARKET_DEFAULTS = {
-    "india": dict(currency="₹", min_price=100.0, min_traded_value=100_000_000.0,  # Rs 10 crore/day
-                  watchlist=("RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK")),
+    "india": MarketDefaults(currency="₹", min_price=100.0, min_traded_value=100_000_000.0,  # Rs 10 crore/day
+                            watchlist=("RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK")),
 }
 
 
@@ -101,11 +110,13 @@ class Settings:
     llm_reasoning_off: bool = True
     llm_min_interval: float = 3.0  # seconds between request starts (the free tier allows ~20 requests a minute)
     llm_concurrency: int = 2  # requests in flight at once
-    llm_cot: bool = True  # chain-of-thought prompting: 5-step reasoning chain stored with each decision (Phase 1)
-    llm_learning: bool = True  # Phase 2: adjust from closed paper-trade record of similar setups
-    llm_context: bool = True  # Phase 3: adjust when the market regime is notable (risk-off / euphoric)
-    llm_reflect: bool = True  # Phase 4: self-critique of the assembled call before it is final
-    llm_max_adjust: float = 0.15  # largest confidence change one refinement phase may make (review doc 2.4)
+    llm_cot: bool = True  # chain-of-thought prompting: 5-step reasoning chain stored with each decision 
+    llm_learning: bool = True  # decision memory: adjust from closed paper-trade record of similar setups
+    llm_context: bool = True  # market context: adjust when the market regime is notable (risk-off / euphoric)
+    llm_reflect: bool = True  # reflection: self-critique of the assembled call before it is final
+    llm_max_adjust: float = 0.15
+    learning_horizon: int = 20  # sessions an outcome is measured over (what "how did this setup turn out" means)
+    learning_min_samples: int = 30  # independent observations a setup label needs before the memory speaks at all  # largest confidence change one refinement phase may make (review doc 2.4)
     risk: RiskLimits = field(default_factory=RiskLimits)
 
     def __post_init__(self):
@@ -121,6 +132,8 @@ class Settings:
             raise ValueError("analysis_workers must be >= 1 and llm_cache_hours must be >= 0")
         if self.llm_min_interval < 0 or self.llm_concurrency < 0:
             raise ValueError("llm_min_interval and llm_concurrency must be >= 0 (0 concurrency = unlimited)")
+        if self.learning_horizon < 1 or self.learning_min_samples < 1:
+            raise ValueError("learning_horizon and learning_min_samples must be >= 1")
         if not 0 <= self.llm_max_adjust <= 1:
             raise ValueError("llm_max_adjust must be a fraction in [0, 1]")
         if not 0 < self.max_daily_volatility < 1:
@@ -134,7 +147,7 @@ def load_settings() -> Settings:
     market = os.getenv("MARKET", "india").strip().lower()
     defaults = MARKET_DEFAULTS.get(market, MARKET_DEFAULTS["india"])
     watchlist = tuple(
-        s.strip().upper() for s in os.getenv("WATCHLIST", ",".join(defaults["watchlist"])).split(",") if s.strip()
+        s.strip().upper() for s in os.getenv("WATCHLIST", ",".join(defaults.watchlist)).split(",") if s.strip()
     )
     risk = RiskLimits(
         min_position_pct=_float("MIN_POSITION_PCT", _float("MAX_POSITION_PCT", 0.05)),
@@ -151,7 +164,7 @@ def load_settings() -> Settings:
     )
     return Settings(
         market=market,
-        currency=defaults["currency"],
+        currency=defaults.currency,
         paper_initial_cash=_float("PAPER_INITIAL_CASH", 1_000_000.0),
         watchlist=watchlist,
         dry_run=os.getenv("DRY_RUN", "true").strip().lower() != "false",
@@ -160,8 +173,8 @@ def load_settings() -> Settings:
         rebuy_cooldown_hours=_float("REBUY_COOLDOWN_HOURS", 24.0),
         universe=os.getenv("UNIVERSE", "market").strip().lower(),
         max_candidates=int(_float("MAX_CANDIDATES", 15)),
-        min_price=_float("MIN_PRICE", defaults["min_price"]),
-        min_traded_value=_float("MIN_TRADED_VALUE", defaults["min_traded_value"]),
+        min_price=_float("MIN_PRICE", defaults.min_price),
+        min_traded_value=_float("MIN_TRADED_VALUE", defaults.min_traded_value),
         max_daily_volatility=_float("MAX_DAILY_VOLATILITY", 0.04),
         trend_exit=os.getenv("TREND_EXIT", "true").strip().lower() != "false",
         delivery_filter=os.getenv("DELIVERY_FILTER", "true").strip().lower() != "false",
@@ -176,5 +189,7 @@ def load_settings() -> Settings:
         llm_context=os.getenv("LLM_CONTEXT", "true").strip().lower() != "false",
         llm_reflect=os.getenv("LLM_REFLECT", "true").strip().lower() != "false",
         llm_max_adjust=_float("LLM_MAX_ADJUST", 0.15),
+        learning_horizon=int(_float("LEARNING_HORIZON", 20)),
+        learning_min_samples=int(_float("LEARNING_MIN_SAMPLES", 30)),
         risk=risk,
     )

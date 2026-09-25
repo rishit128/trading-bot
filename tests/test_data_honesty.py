@@ -1,4 +1,4 @@
-"""P0 corporate-action guard: a split/bonus restates a symbol's price scale while a real crash expands the
+"""Corporate-action guard: a split/bonus restates a symbol's price scale while a real crash expands the
 intraday range; only a bar with a large overnight gap AND an ordinary range is a split lookalike."""
 import pandas as pd
 import pytest

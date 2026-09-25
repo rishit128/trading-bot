@@ -2,9 +2,13 @@
 import html
 import logging
 import threading
+import time
 from typing import Callable, Optional
 
 import httpx
+
+from src.data.retry import retry_call
+from src.engine.ports import ListsHoldings, ListsTrades
 
 log = logging.getLogger(__name__)
 API = "https://api.telegram.org"
@@ -62,18 +66,29 @@ def format_history(trades: list, cur: str, limit: int = 15) -> Html:
     return Html(head + "\n\n" + "\n\n".join(cards) + f"\n\n<b>Realised net</b>  {'+' if total >= 0 else '-'}{cur}{abs(total):,.0f}")
 
 
+def _worth_retrying(exc: BaseException) -> bool:
+    """A network failure or a server error may pass; a 4xx (wrong token, chat not found) will not."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500 or exc.response.status_code == 429
+    return True
+
+
 class Notifier:
     """Best-effort alerts: a Telegram outage must never break trading."""
 
-    def __init__(self, token: str, chat_id: str, client: Optional[httpx.Client] = None):
+    def __init__(self, token: str, chat_id: str, client: Optional[httpx.Client] = None,
+                 sleep: Callable[[float], None] = time.sleep):
         self.token, self.chat_id = token, str(chat_id)
         self.http = client or httpx.Client(timeout=15)
+        self._sleep = sleep
 
     def send(self, text: str) -> bool:
         """Send an alert; never raises."""
+        def post() -> None:
+            self.http.post(f"{API}/bot{self.token}/sendMessage", json=_payload(self.chat_id, text)).raise_for_status()
+
         try:
-            r = self.http.post(f"{API}/bot{self.token}/sendMessage", json=_payload(self.chat_id, text))
-            r.raise_for_status()
+            retry_call(post, attempts=2, delay=1.0, retry_if=_worth_retrying, sleep=self._sleep, what="telegram alert")
             return True
         except Exception as e:
             log.warning("telegram send failed: %s", type(e).__name__)
@@ -104,13 +119,13 @@ def handle_command(text: str, control, broker, settings, intraday=None) -> str:
         return Html(f"{icon} <b>{state}</b>  ·  {mode}\n\n💰 Equity   <b>{cur}{p.equity:,.2f}</b> ({day})\n"
                     f"💵 Cash       {cur}{p.cash:,.2f}\n📦 Positions  {len(p.positions)}")
     if cmd == "/positions":
-        if hasattr(broker, "holdings"):
+        if isinstance(broker, ListsHoldings):
             return format_positions(broker.holdings(), settings.currency)
         p = broker.portfolio()
         if not p.positions:
             return "No open positions."
         return "\n".join(f"{s}: {p.position_qty.get(s, 0)} sh, {settings.currency}{v:,.0f}" for s, v in sorted(p.positions.items()))
-    if cmd == "/history" and hasattr(broker, "trade_history"):
+    if cmd == "/history" and isinstance(broker, ListsTrades):
         return format_history(broker.trade_history(), settings.currency)
     if cmd in ("/intraday", "/intraday_history") and intraday is not None:
         cur = settings.currency

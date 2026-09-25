@@ -5,6 +5,7 @@ them in advance. Every candidate uses a liquidity filter so it only holds stocks
 import numpy as np
 import pandas as pd
 
+from src.engine.rules import entry_filter_mask, trend_broken_mask
 from src.research.engine import price_returns
 
 
@@ -29,13 +30,13 @@ def liquid_mask(close: pd.DataFrame, volume: pd.DataFrame, min_traded_value: flo
 def _rebalanced(close: pd.DataFrame, score: pd.DataFrame, eligible: pd.DataFrame, top_n: int, ascending: bool) -> pd.DataFrame:
     """At each month end hold the top_n eligible stocks by score, equal weight, until the next month end."""
     weights = pd.DataFrame(0.0, index=close.index, columns=close.columns)
-    for d in month_end_dates(close.index):
-        s = score.loc[d].where(eligible.loc[d]).dropna()
+    for d in month_end_dates(pd.DatetimeIndex(close.index)):
+        s = pd.Series(score.loc[d]).where(pd.Series(eligible.loc[d])).dropna()
         if len(s) < top_n:
             continue
         chosen = s.sort_values(ascending=ascending).index[:top_n]
         weights.loc[d, chosen] = 1.0 / top_n
-    return _hold_between_rebalances(weights, close.index)
+    return _hold_between_rebalances(weights, pd.DatetimeIndex(close.index))
 
 
 def xs_momentum(close, volume, min_traded_value, lookback=252, skip=21, top_n=20):
@@ -93,8 +94,8 @@ def trend_rule(close, volume, min_traded_value, cap=20):
     """The bot's current entry rule without stops: price > MA50 > MA200 and RSI(14) < 70; exit below the MA200."""
     ma50, ma200 = close.rolling(50).mean(), close.rolling(200).mean()
     ok = liquid_mask(close, volume, min_traded_value)
-    enter = (close > ma50) & (ma50 > ma200) & (rsi_series(close, 14) < 70) & ok
-    return _capped_equal_weight(stateful(enter, close < ma200), cap)
+    enter = entry_filter_mask(close, ma50, ma200, rsi_series(close, 14)) & ok
+    return _capped_equal_weight(stateful(enter, trend_broken_mask(close, ma200)), cap)
 
 
 def equal_weight_universe(close, volume, min_traded_value):
@@ -131,5 +132,5 @@ def trend_rule_beating_index(close, volume, min_traded_value, index_close: pd.Se
     idx = index_close.reindex(close.index).ffill()
     beats = (close / close.shift(lookback) - 1).gt(idx / idx.shift(lookback) - 1, axis=0)
     ok = liquid_mask(close, volume, min_traded_value)
-    enter = (close > ma50) & (ma50 > ma200) & (rsi_series(close, 14) < 70) & beats & ok
-    return _capped_equal_weight(stateful(enter, close < ma200), cap)
+    enter = entry_filter_mask(close, ma50, ma200, rsi_series(close, 14)) & beats & ok
+    return _capped_equal_weight(stateful(enter, trend_broken_mask(close, ma200)), cap)

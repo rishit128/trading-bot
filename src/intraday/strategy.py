@@ -2,7 +2,7 @@
 
 Rules (literature-default parameters, fixed before any backtest and NOT tuned):
   * Opening range = high/low of the first 3 five-minute bars (09:15-09:30 IST).
-  * Signal: a 5-minute bar closes above the range high, above the day's VWAP, with volume >= 1.5x the average volume of the
+  * AgentSignal: a 5-minute bar closes above the range high, above the day's VWAP, with volume >= 1.5x the average volume of the
     bars so far, between 09:30 and 14:00, and the range is 0.3%-2.5% of price (too narrow = noise, too wide = poor risk).
   * Entry: the next bar's open (the caller supplies the live price). Stop: the range low. Target: 2 x the risk.
   * One trade per stock per day. Every position is closed at 15:15 IST at the latest."""
@@ -11,6 +11,8 @@ from datetime import time as dtime
 from typing import Optional
 
 import pandas as pd
+
+from src.engine.enums import Action
 
 RANGE_BARS = 3
 ENTRY_FROM, ENTRY_UNTIL, SQUARE_OFF = dtime(9, 30), dtime(14, 0), dtime(15, 15)
@@ -88,6 +90,6 @@ def intraday_fees(side: str, value: float) -> float:
     STT 0.025% on sells, stamp 0.003% on buys, exchange 0.00297%, SEBI 0.0001%, 18% GST on brokerage+exchange+SEBI."""
     brokerage = min(20.0, 0.0003 * value)
     exchange, sebi = 0.0000297 * value, 0.000001 * value
-    stt = 0.00025 * value if side == "SELL" else 0.0
-    stamp = 0.00003 * value if side == "BUY" else 0.0
+    stt = 0.00025 * value if side == Action.SELL else 0.0
+    stamp = 0.00003 * value if side == Action.BUY else 0.0
     return brokerage + exchange + sebi + stt + stamp + 0.18 * (brokerage + exchange + sebi)

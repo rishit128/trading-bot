@@ -1,4 +1,5 @@
-"""Multi-year daily data for research: adjusted close and volume for an index's stocks, plus the Nifty 50 index."""
+"""Multi-year daily price history (adjusted, disk-cached): an index's stocks and the index itself. Shared by the live bot's
+market context and by the research tools, so it lives with the data layer, not in research/."""
 import logging
 import pickle
 import time
@@ -81,7 +82,7 @@ def load_universe(index: int = 500, years: int = 10, cache_dir: Path = Path("res
         for s in batch:
             t = s + SUFFIX
             if t in top:
-                sub = wide[t].dropna(subset=["Close"])
+                sub = pd.DataFrame(wide[t]).dropna(subset=["Close"])
                 if len(sub):
                     closes[s], volumes[s] = sub["Close"], sub["Volume"]
         log.info("downloaded %d/%d symbols", min(i + chunk, len(symbols)), len(symbols))
@@ -100,7 +101,7 @@ def load_universe(index: int = 500, years: int = 10, cache_dir: Path = Path("res
 
 def point_in_time(close: pd.DataFrame, volume: pd.DataFrame,
                   membership: Optional[dict] = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Mask price/volume frames to what a researcher could actually have seen (P0, A1b/A1c).
+    """Mask price/volume frames to what a researcher could actually have seen.
 
     Data availability is already point-in-time: a symbol's rows before it listed and after it delisted are NaN in the
     raw download, so it can neither be selected nor earn returns there. The survivorship hazard is *today's members
@@ -115,7 +116,8 @@ def point_in_time(close: pd.DataFrame, volume: pd.DataFrame,
     hist = hist.reindex(close.index).ffill()
     active = hist.dropna()
     if active.empty:
-        return close.copy().where(False), volume.copy().where(False)
+        nothing = pd.DataFrame(False, index=close.index, columns=close.columns)  # nothing is a member, so everything is masked
+        return close.where(nothing), volume.where(nothing)
     members = set().union(*active)
     allowed = {col: hist.apply(lambda s: col in s) for col in close.columns if col in members}
     mask = pd.DataFrame(False, index=close.index, columns=close.columns)
@@ -145,7 +147,8 @@ def load_ohlc_universe(index: int = 500, years: int = 10, cache_dir: Path = Path
         top = set(wide.columns.get_level_values(0))
         for s in batch:
             if s + SUFFIX in top:
-                sub = wide[s + SUFFIX][["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Open", "High", "Low", "Close"])
+                sub = pd.DataFrame(wide[s + SUFFIX][["Open", "High", "Low", "Close", "Volume"]]).dropna(
+                    subset=["Open", "High", "Low", "Close"])
                 if len(sub):
                     out[s] = sub.fillna({"Volume": 0.0})
         log.info("downloaded %d/%d symbols", min(i + chunk, len(symbols)), len(symbols))

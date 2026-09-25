@@ -8,23 +8,55 @@ from typing import Callable, Dict, List, Mapping, Optional, Sequence
 
 from sqlalchemy import func, select
 
-from src.agents.base import Agent
+from src.agents.base import Agent, AgentContext
 from src.config import Settings
 from src.data.indicators import Snapshot
+from src.data.market_context import MarketContext
 from src.database import DecisionRecord, EquityRecord, OrderRecord
+from src.engine.enums import NOT_A_PLACED_BUY, SILENT_STATUSES, Action, OrderStatus
+from src.engine.ports import Broker, ChargesFees, ConfirmsFills, ProtectsPositions
 from src.engine.risk_engine import Portfolio, RiskDecision, RiskEngine, drawdown_pause
-from src.engine.strategy import Decision
+from src.engine.strategy import Decision, combine_signals, trend_exit_decision
 from src.versions import VERSIONS
-from src.llm import Signal
-from src.results import SymbolResult
+from src.engine.agent_signal import AgentSignal, SignalDetails
+from src.results import SymbolResult, Verdict
 from src.workflow import build_analysis_graph, build_cycle_graph, build_decision_graph
 
 log = logging.getLogger(__name__)
 
-__all__ = ["TradingPipeline", "SymbolResult", "NOT_A_PLACED_BUY"]
+__all__ = ["TradingPipeline", "SymbolResult", "NOT_A_PLACED_BUY"]  # the last is re-exported for callers of the old name
 
-# Statuses that mean "we actually went for this buy"; failures and skips must not start a cooldown.
-NOT_A_PLACED_BUY = ("SKIPPED_OPEN_ORDER", "SKIPPED_COOLDOWN", "FAILED", "PAUSED", "MARKET_CLOSED")
+
+
+def details_columns(details: Optional[SignalDetails]) -> dict:
+    """The lead agent's audit trail as the denormalised `decisions` columns (queryable without parsing the JSON blob).
+    Everything is None when the agent recorded no details or a section did not run."""
+    if details is None:
+        return {}
+    learning, context, reflection, chain = details.learning, details.context, details.reflection, details.reasoning_chain
+    return dict(
+        # chain-of-thought extras
+        confluence_score=details.confluence_score, edge_confidence=details.edge_confidence,
+        risks_json=json.dumps(details.risks) if details.risks is not None else None,
+        reasoning_chain_json=json.dumps(chain.model_dump()) if chain is not None else None,
+        # refinement phases: the untouched base confidence, the historical record, the regime and the review columns
+        base_confidence=details.base_confidence,
+        context_regime=context.regime if context else None,
+        historical_win_rate=learning.win_rate if learning else None,
+        historical_sample_size=learning.sample_size if learning else None,
+        pattern_id=details.pattern_id, adjusted_signal_confidence=details.adjusted_signal_confidence,
+        adjustment_reason=details.adjustment_reason,
+        macro_support=context.macro_support if context else None,
+        sector_support=context.sector_support if context else None,
+        earnings_risk=context.earnings_risk if context else None,
+        diversification_score=context.diversification_score if context else None,
+        market_context_json=json.dumps(details.market_context_json) if details.market_context_json is not None else None,
+        biggest_risk=reflection.biggest_risk if reflection else None,
+        what_proves_us_wrong=reflection.what_proves_us_wrong if reflection else None,
+        bias_check=json.dumps(reflection.bias_check) if reflection else None,
+        conviction_adjustments=json.dumps([c.model_dump() for c in reflection.conviction_adjustments]) if reflection else None,
+        # accountability: who answered and whether the call agreed with the mechanical filter
+        raw_model=details.raw_model, rule_alignment=details.rule_alignment, falsification=details.falsification)
 
 
 class TradingPipeline:
@@ -33,7 +65,7 @@ class TradingPipeline:
         self,
         settings: Settings,
         agents: Sequence[Agent],
-        broker,
+        broker: Broker,
         session_factory,
         snapshot_fn: Callable[[str], Snapshot],
         headlines_fn: Callable[[str], Sequence[str]],
@@ -41,7 +73,8 @@ class TradingPipeline:
         notify: Optional[Callable[[str], object]] = None,
         universe_fn: Optional[Callable[[Portfolio], Sequence[str]]] = None,
         quote_fn: Optional[Callable[[str], float]] = None,
-        market_context_fn: Optional[Callable[[Snapshot], Optional[object]]] = None,
+        market_context_fn: Optional[Callable[[Snapshot], Optional[MarketContext]]] = None,
+        broker_label: str = "",
     ):
         names = [a.name for a in agents]
         if len(set(names)) != len(names):
@@ -52,13 +85,14 @@ class TradingPipeline:
         self.sessions = session_factory
         self.snapshot_fn = snapshot_fn
         self.headlines_fn = headlines_fn
-        self.risk = RiskEngine(settings.risk, fees=getattr(broker, "fees", None))
+        self.broker_label = broker_label  # a human name for the broker, shown in the start-up banner
+        self.risk = RiskEngine(settings.risk, fees=broker.fees if isinstance(broker, ChargesFees) else None)
         self.control = control
         self.universe_fn = universe_fn
         self.quote_fn = quote_fn
         self.market_context_fn = market_context_fn
         self._notify = notify
-        self._halt_kind = None
+        self._halt_kind: Optional[str] = None
         self._llm_down = False
         self._cycle_llm: List[bool] = []
         self._naked_alerted: set = set()
@@ -71,6 +105,58 @@ class TradingPipeline:
         self.analysis_graph = build_analysis_graph(self)
         self.decision_graph = build_decision_graph(self)
         self.cycle_graph = build_cycle_graph(self, self.analysis_graph, self.decision_graph)
+
+    # ---- the CycleServices interface: the only way the workflow graphs touch the application (see workflow.py) --------
+    def snapshot(self, symbol: str) -> Snapshot:
+        """The stock's indicator snapshot as of the last completed session."""
+        return self.snapshot_fn(symbol)
+
+    def agent_context(self, symbol: str, snapshot: Snapshot) -> AgentContext:
+        """What an agent is given for one stock. Headlines and market context are lazy: only agents that ask pay for them."""
+        return AgentContext(symbol, snapshot, headlines=lambda: self.headlines_fn(symbol),
+                            market=lambda: self.market_context_fn(snapshot) if self.market_context_fn else None)
+
+    def open_cycle(self) -> Portfolio:
+        """Start a cycle: read the account, record its equity, apply the drawdown pause, check halts and stop protection."""
+        portfolio = self.broker.portfolio()
+        self._record_equity(portfolio.equity)
+        portfolio = self._apply_drawdown_pause(self._with_peak(portfolio))
+        self._check_halt(portfolio)
+        self._reconcile_protection()
+        self._cycle_llm = []
+        return portfolio
+
+    def select_symbols(self, portfolio: Portfolio) -> List[str]:
+        """Which stocks this cycle analyses (held positions always, so exits keep working)."""
+        return list(self._symbols(portfolio))
+
+    def decide(self, symbol: str, portfolio: Portfolio, snapshot: Snapshot, signals: Mapping[str, Optional[AgentSignal]],
+               universe_size: Optional[int] = None) -> Verdict:
+        """Turn the agents' signals into one recorded decision: the deterministic trend exit if it applies, else the agents
+        combined by role; then size it with the risk engine and write the audit row."""
+        held = portfolio.position_qty.get(symbol, 0)
+        decision = (trend_exit_decision(snapshot, held, self.settings.trend_exit)
+                    or combine_signals(signals, {n: a.role for n, a in self.agents.items()}))
+        price = self._quote(symbol, snapshot.price) if decision.action != Action.HOLD else snapshot.price
+        risk = self.risk.evaluate(decision.action, decision.confidence, symbol, price, portfolio)
+        decision_id = self._log_decision(symbol, snapshot, signals, decision, risk, price, universe_size=universe_size)
+        return Verdict(decision, risk, price, decision_id)
+
+    def place(self, symbol: str, verdict: Verdict) -> str:
+        """Carry out an approved verdict (or record why it was not sent) and return the order status."""
+        return self._place(verdict.decision_id, symbol, verdict.decision.action, verdict.risk.quantity, verdict.price)
+
+    def refresh_portfolio(self) -> Portfolio:
+        """The account as it is now, after orders, with the peak-equity baseline applied."""
+        return self._with_peak(self.broker.portfolio())
+
+    def note_lead_health(self, degraded: bool) -> None:
+        """Record whether a stock's lead agent fell back to its fail-safe (used to detect an AI outage)."""
+        self._cycle_llm.append(degraded)
+
+    def close_cycle(self) -> None:
+        """End a cycle: log AI health and alert on an outage or its recovery."""
+        self._track_llm()
 
     def notify(self, text: str) -> None:
         """Send an alert if Telegram is configured; never raises."""
@@ -111,15 +197,15 @@ class TradingPipeline:
 
         Covers a SELL that fails after its stop/target legs were cancelled, or any stop lost for another reason.
         A second look after a short pause avoids acting on legs that are still activating right after a fill."""
-        check = getattr(self.broker, "unprotected_positions", None)
-        if check is None:
+        if not isinstance(self.broker, ProtectsPositions):
             return
+        broker = self.broker
         acting = self.settings.auto_protect and not self.settings.dry_run
         try:
-            naked = check()
+            naked = broker.unprotected_positions()
             if naked and acting:
                 self._sleep(self.protect_grace_seconds)
-                naked = check()
+                naked = broker.unprotected_positions()
         except Exception as e:
             log.exception("protection check failed")
             self.notify(f"PROTECTION CHECK FAILED: {type(e).__name__}: {e}")
@@ -130,7 +216,7 @@ class TradingPipeline:
             if acting:
                 stop = avg_entry * (1 - self.settings.risk.stop_loss_pct)
                 try:
-                    self.broker.protect(symbol, qty, stop)
+                    broker.protect(symbol, qty, stop)
                     self.notify(f"Protective stop placed: {symbol} {qty} sh, stop {self.settings.currency}{stop:,.2f}.")
                 except Exception as e:
                     log.exception("could not protect %s", symbol)
@@ -169,14 +255,10 @@ class TradingPipeline:
             return self._with_peak(p)
         return p
 
-    def _log_decision(self, symbol: str, snap: Snapshot, signals: Mapping[str, Optional[Signal]],
+    def _log_decision(self, symbol: str, snap: Snapshot, signals: Mapping[str, Optional[AgentSignal]],
                       decision: Decision, risk: RiskDecision, price: float,
                       universe_size: Optional[int] = None) -> int:
         tech, sent = signals.get("technical"), signals.get("sentiment")
-        details = tech.details if tech is not None else None
-        learning = (details or {}).get("learning") or {}
-        context = (details or {}).get("context") or {}
-        reflection = (details or {}).get("reflection") or {}
         with self.sessions() as s:
             record = DecisionRecord(
                 symbol=symbol,
@@ -191,41 +273,14 @@ class TradingPipeline:
                 risk_approved=risk.approved,
                 risk_quantity=risk.quantity,
                 risk_reason=risk.reason,
-                signals_json=json.dumps({n: sig.model_dump() if sig else None for n, sig in signals.items()}),
+                signals_json=json.dumps({n: sig.to_json_dict() if sig else None for n, sig in signals.items()}),
                 snapshot_json=json.dumps(dataclasses.asdict(snap)),
-                # Phase 1 chain-of-thought extras, taken from the lead agent's stored details (None before Phase 1).
-                confluence_score=details.get("confluence_score") if details else None,
-                edge_confidence=details.get("edge_confidence") if details else None,
-                risks_json=json.dumps(details["risks"]) if details and details.get("risks") is not None else None,
-                reasoning_chain_json=json.dumps(details["reasoning_chain"])
-                if details and details.get("reasoning_chain") is not None else None,
-                # Phases 2-4 extras: the untouched base confidence, the regime label (None on normal markets),
-                # the historical pattern record when the learning phase consulted one, and the review-doc columns.
-                base_confidence=details.get("base_confidence") if details else None,
-                context_regime=context.get("regime") if context else None,
-                historical_win_rate=learning.get("win_rate") if learning else None,
-                historical_sample_size=learning.get("sample_size") if learning else None,
-                pattern_id=details.get("pattern_id") if details else None,
-                adjusted_signal_confidence=details.get("adjusted_signal_confidence") if details else None,
-                adjustment_reason=details.get("adjustment_reason") if details else None,
-                macro_support=context.get("macro_support") if context else None,
-                sector_support=context.get("sector_support") if context else None,
-                earnings_risk=context.get("earnings_risk") if context else None,
-                diversification_score=context.get("diversification_score") if context else None,
-                market_context_json=json.dumps(details["market_context_json"])
-                if details and details.get("market_context_json") is not None else None,
-                biggest_risk=reflection.get("biggest_risk") if reflection else None,
-                what_proves_us_wrong=reflection.get("what_proves_us_wrong") if reflection else None,
-                bias_check=json.dumps(reflection["bias_check"])
-                if reflection and reflection.get("bias_check") is not None else None,
-                conviction_adjustments=json.dumps(reflection["conviction_adjustments"])
-                if reflection and reflection.get("conviction_adjustments") is not None else None,
-                raw_model=details.get("raw_model") if details else None,
-                rule_alignment=details.get("rule_alignment") if details else None,
-                falsification=details.get("falsification") if details else None,
+                **details_columns(tech.details if tech is not None else None),
                 prompt_version=VERSIONS["prompt"],
                 feature_version=VERSIONS["feature"],
                 strategy_version=VERSIONS["strategy"],
+                decision_source=decision.source,
+                bar_date=snap.bar_date,
                 universe_size=universe_size,
             )
             s.add(record)
@@ -264,22 +319,26 @@ class TradingPipeline:
         with self.sessions() as s:
             recent = s.scalar(
                 select(OrderRecord.id)
-                .where(OrderRecord.symbol == symbol, OrderRecord.side == "BUY",
+                .where(OrderRecord.symbol == symbol, OrderRecord.side == Action.BUY,
                        OrderRecord.status.not_in(NOT_A_PLACED_BUY), OrderRecord.created_at >= cutoff)
                 .limit(1)
             )
         return recent is not None
 
-    def _place(self, decision_id: int, symbol: str, action: str, qty: int, price: float) -> str:
-        filled_qty = fill_price = None
+    def _place(self, decision_id: int, symbol: str, action: Action, qty: int, price: float) -> str:
+        filled_qty: Optional[int] = None
+        fill_price: Optional[float] = None
+        status: str
+        broker_id: Optional[str]
+        error: Optional[str]
         if self.control and self.control.is_paused():
-            status, broker_id, error = "PAUSED", None, None
-        elif action == "BUY" and self._in_cooldown(symbol):
-            status, broker_id, error = "SKIPPED_COOLDOWN", None, None
+            status, broker_id, error = OrderStatus.PAUSED, None, None
+        elif action == Action.BUY and self._in_cooldown(symbol):
+            status, broker_id, error = OrderStatus.SKIPPED_COOLDOWN, None, None
         elif self.settings.dry_run:
-            status, broker_id, error = "DRY_RUN", None, None
+            status, broker_id, error = OrderStatus.DRY_RUN, None, None
         elif not self.broker.is_market_open():
-            status, broker_id, error = "MARKET_CLOSED", None, None
+            status, broker_id, error = OrderStatus.MARKET_CLOSED, None, None
         else:
             status, broker_id, error, filled_qty, fill_price = self._submit(symbol, action, qty, price)
         with self.sessions() as s:
@@ -297,7 +356,7 @@ class TradingPipeline:
                 )
             )
             s.commit()
-        if status not in ("DRY_RUN", "PAUSED", "MARKET_CLOSED", "SKIPPED_COOLDOWN"):
+        if status not in SILENT_STATUSES:
             detail = f" ({error})" if error else ""
             self.notify(f"{action} {qty} {symbol} @ ~{self.settings.currency}{price:,.2f}: {status}{detail}")
         if filled_qty is not None and filled_qty != qty:
@@ -306,20 +365,19 @@ class TradingPipeline:
 
     def _submit(self, symbol: str, action: str, qty: int, price: float):
         try:
-            if action == "BUY":
+            if action == Action.BUY:
                 if self.broker.has_open_order(symbol):
-                    return "SKIPPED_OPEN_ORDER", None, None, None, None
+                    return OrderStatus.SKIPPED_OPEN_ORDER, None, None, None, None
                 fill = self.broker.buy_with_bracket(
                     symbol, qty, price, self.settings.risk.stop_loss_pct, self.settings.risk.take_profit_pct
                 )
             else:
                 fill = self.broker.sell(symbol, qty)
-            confirm = getattr(self.broker, "confirm", None)
-            if confirm is not None:
-                fill = confirm(fill, qty)  # ask the broker what really happened instead of trusting "accepted"
+            if isinstance(self.broker, ConfirmsFills):
+                fill = self.broker.confirm(fill, qty)  # ask the broker what really happened instead of trusting "accepted"
             return fill.status, fill.broker_order_id, None, fill.filled_qty, fill.avg_price
         except Exception as e:
             log.exception("order submission failed for %s", symbol)
-            if action == "SELL":
+            if action == Action.SELL:
                 self._reconcile_protection()  # a failed sell may have cancelled the stop: repair it right away
-            return "FAILED", None, f"{type(e).__name__}: {e}", None, None
+            return OrderStatus.FAILED, None, f"{type(e).__name__}: {e}", None, None

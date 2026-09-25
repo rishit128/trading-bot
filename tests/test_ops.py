@@ -16,9 +16,9 @@ from src.database import DecisionRecord, EquityRecord, make_session_factory
 from src.engine.risk_engine import Portfolio
 from src.logging_setup import JsonFormatter, TextFormatter, configure_logging
 from src.monitoring.telegram import HELP, handle_command
-from src.preflight import (CheckResult, build_checks, broker_check, critical_failures, format_results, market_data_check,
+from src.ops.preflight import (CheckResult, build_checks, broker_check, critical_failures, format_results, market_data_check,
                            openrouter_check, run_checks, telegram_check)
-from src.replay import replay
+from src.ops.replay import replay
 from tests.test_llm_and_pipeline import FakeBroker, make_pipeline
 
 

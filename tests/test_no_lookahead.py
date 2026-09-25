@@ -1,4 +1,4 @@
-"""No-lookahead property tests (P0): a feature decided from data up to day t must not depend on data after t.
+"""No-lookahead property tests: a feature decided from data up to day t must not depend on data after t.
 
 Three layers are pinned:
   1. every scalar indicator returned by `build_snapshot` at date t equals the same indicator recomputed
@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.backtest import rule_signals, simulate
+from src.research.backtest import rule_signals, simulate
 from src.config import RiskLimits
 from src.data.indicators import build_snapshot
 from src.research.engine import portfolio_returns

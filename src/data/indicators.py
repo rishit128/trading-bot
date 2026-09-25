@@ -26,7 +26,7 @@ class Snapshot:
     avg_volume: Optional[int] = None  # 20-day average volume, gives the volume/context step a baseline (None pre-migration)
     momentum_6m: Optional[float] = None  # return over the last 6 months (126 sessions), for market-relative context
     momentum: Optional[float] = None  # 14-day return, short-horizon momentum for the step-2 context
-    # Phase-5 enrichment (all optional so pre-existing construction sites and Close+Volume-only bars keep working).
+    # Enriched indicators (all optional so pre-existing construction sites and Close+Volume-only bars keep working).
     macd: Optional[float] = None  # 12-26 EMA difference
     macd_signal: Optional[float] = None  # 9-EMA of the MACD line
     macd_histogram: Optional[float] = None  # macd - signal, positive is bullish
@@ -87,7 +87,7 @@ def _volume_trend(volume: pd.Series, period: int = 20) -> Optional[float]:
     return float(recent / older - 1)
 
 
-def compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> Optional[float]:
+def compute_atr(high: Optional[pd.Series], low: Optional[pd.Series], close: pd.Series, period: int = 14) -> Optional[float]:
     """Wilder-smoothed average true range (absolute price volatility), or None when High/Low are missing."""
     if high is None or low is None or len(high) < period:
         return None
@@ -98,7 +98,7 @@ def compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int =
     return float(value) if pd.notna(value) else None
 
 
-def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> Optional[float]:
+def compute_adx(high: Optional[pd.Series], low: Optional[pd.Series], close: pd.Series, period: int = 14) -> Optional[float]:
     """Wilder ADX (0-100), higher = stronger trend in either direction; None without High/Low or a long enough series."""
     if high is None or low is None or len(high) < 2 * period:
         return None
