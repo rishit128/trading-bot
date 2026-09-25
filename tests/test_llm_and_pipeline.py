@@ -43,6 +43,10 @@ def api_error():
 
 
 GOOD = json.dumps({"action": "BUY", "confidence": 0.8, "reasoning": "uptrend"})
+# A chain-of-thought response valid against COT_SCHEMA: what the default TechnicalAgent now asks for.
+COT_OK = json.dumps({"action": "BUY", "confidence": 0.8, "edge_confidence": 0.5, "step1_trend": "uptrend",
+                     "step2_overbought": "not overbought", "step3_volume": "volume confirms",
+                     "step4_confluence": 6, "step5_risks": ["earnings"], "final_reasoning": "uptrend"})
 
 
 def test_llm_uses_first_model_and_sends_schema():
@@ -163,7 +167,7 @@ def test_dry_run_logs_but_never_calls_broker(tmp_path):
 def test_live_buy_uses_risk_quantity_and_bracket_levels(tmp_path):
     pipe, broker, _ = make_pipeline(tmp_path, dry_run=False)
     pipe.run_once()
-    assert broker.buys == [("AAPL", 50, 100.0, 0.08, 1.0)]  # never a hardcoded quantity; wide stop, no practical target
+    assert broker.buys == [("AAPL", 50, 100.0, 0.15, 1.0)]  # never a hardcoded quantity; wide stop, no practical target
 
 
 def test_live_buy_skipped_when_order_already_open(tmp_path):
@@ -260,7 +264,7 @@ def test_model_cannot_set_the_degraded_flag():
 def test_failsafe_hold_is_marked_degraded_and_real_signal_is_not():
     bad = TechnicalAgent(LLMClient(["a"], client=FakeOpenAI({"a": api_error()})))
     assert bad.analyze(CTX).degraded is True
-    good = TechnicalAgent(LLMClient(["a"], client=FakeOpenAI({"a": GOOD})))
+    good = TechnicalAgent(LLMClient(["a"], client=FakeOpenAI({"a": COT_OK})))
     assert good.analyze(CTX).degraded is False
 
 
@@ -375,7 +379,8 @@ def test_pipeline_analyses_the_symbols_from_the_universe_function(tmp_path):
     pipe.universe_fn = lambda portfolio: ["NVDA", "AMD"]
     pipe.snapshot_fn = lambda sym: seen.append(sym) or Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000)
     results = pipe.run_once()
-    assert seen == ["NVDA", "AMD"] and [r.symbol for r in results] == ["NVDA", "AMD"]
+    assert sorted(seen) == ["AMD", "NVDA"]  # fetched in parallel, so only membership (not order) is guaranteed
+    assert [r.symbol for r in results] == ["NVDA", "AMD"]  # results come back in universe order
 
 
 def test_universe_function_receives_the_current_portfolio(tmp_path):

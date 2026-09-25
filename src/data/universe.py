@@ -43,6 +43,38 @@ class ScreenConfig:
     min_price: float = 10.0
     min_traded_value: float = 20_000_000.0
     max_daily_volatility: float = 0.04
+    # One share must fit in this fraction of equity (the smallest position the risk engine will size). On a small
+    # account a Rs 9,000 stock can never be bought, yet it would still be ranked, analysed by the AI and reported;
+    # None disables the rule (large accounts, the plain scanner report).
+    affordable_pct: Optional[float] = None
+
+
+def screen_symbol(symbol: str, close: pd.Series, volume: pd.Series, newest: pd.Timestamp,
+                  cfg: ScreenConfig) -> Optional[Candidate]:
+    """The scanner's verdict on ONE stock: a Candidate, or None. `close`/`volume` are the stock's completed daily bars
+    (oldest first, no NaN); `newest` is the freshest bar date in the whole scan, to spot stocks whose data stopped.
+
+    This is the single implementation of the entry filter: the live scanner (`screen_bars`) and the live-configuration
+    backtest both call it, so what is tested is what runs."""
+    if len(close) < max(MIN_BARS, MOMENTUM_BARS):  # a full year is needed to rank by 12-1 month momentum
+        return None
+    if (newest - close.index[-1]).days > MAX_STALE_DAYS:
+        return None  # data stops early: suspended or delisted, not a tradable candidate
+    price = float(close.iloc[-1])
+    traded_value = float((close * volume).tail(20).mean())
+    if price < cfg.min_price or traded_value < cfg.min_traded_value:
+        return None
+    volatility = float(close.pct_change().tail(63).std())
+    if not volatility <= cfg.max_daily_volatility:  # also rejects NaN
+        return None
+    ma50, ma200 = float(close.tail(50).mean()), float(close.tail(200).mean())
+    if not price > ma50 > ma200:
+        return None
+    rsi = compute_rsi(close)
+    if rsi >= 70:
+        return None
+    mom_12_1 = float(close.iloc[-22] / close.iloc[-253] - 1)
+    return Candidate(symbol, price, price / float(close.iloc[-64]) - 1, rsi, traded_value, volatility, mom_12_1)
 
 
 def screen_bars(bars: pd.DataFrame, cfg: ScreenConfig) -> List[Candidate]:
@@ -52,33 +84,43 @@ def screen_bars(bars: pd.DataFrame, cfg: ScreenConfig) -> List[Candidate]:
         return found
     newest = bars.index.get_level_values(1).max()
     for symbol, g in bars.groupby(level=0):
-        if len(g) < max(MIN_BARS, MOMENTUM_BARS):  # a full year is needed to rank by 12-1 month momentum
-            continue
-        if (newest - g.index.get_level_values(1)[-1]).days > MAX_STALE_DAYS:
-            continue  # data stops early: suspended or delisted, not a tradable candidate
-        close = g["Close"].astype(float) if "Close" in g else g["close"].astype(float)
-        volume = g["Volume"] if "Volume" in g else g["volume"]
-        price = float(close.iloc[-1])
-        traded_value = float((close * volume).tail(20).mean())
-        if price < cfg.min_price or traded_value < cfg.min_traded_value:
-            continue
-        volatility = float(close.pct_change().tail(63).std())
-        if not volatility <= cfg.max_daily_volatility:  # also rejects NaN
-            continue
-        ma50, ma200 = float(close.tail(50).mean()), float(close.tail(200).mean())
-        if not price > ma50 > ma200:
-            continue
-        rsi = compute_rsi(close)
-        if rsi >= 70:
-            continue
-        mom_12_1 = float(close.iloc[-22] / close.iloc[-253] - 1)
-        found.append(Candidate(symbol, price, price / float(close.iloc[-64]) - 1, rsi, traded_value, volatility, mom_12_1))
+        close = (g["Close"] if "Close" in g else g["close"]).astype(float)
+        close.index = g.index.get_level_values(1)
+        volume = (g["Volume"] if "Volume" in g else g["volume"]).copy()
+        volume.index = close.index
+        candidate = screen_symbol(symbol, close, volume, newest, cfg)
+        if candidate is not None:
+            found.append(candidate)
     return found
 
 
 def rank(candidates: Sequence[Candidate], n: int) -> List[Candidate]:
     """The top n candidates by score (12-1 month momentum when available)."""
     return sorted(candidates, key=lambda c: c.score, reverse=True)[:n]
+
+
+def select_candidates(ranked: Sequence[Candidate], n: int, equity: Optional[float] = None,
+                      affordable_pct: Optional[float] = None) -> List[Candidate]:
+    """The top n of an already-ranked list that the account can actually buy at least one share of.
+
+    Shared by the live screener and the live-configuration backtest. With no equity or rule every candidate qualifies."""
+    if equity is not None and affordable_pct is not None:
+        ranked = [c for c in ranked if c.price <= equity * affordable_pct]
+    return list(ranked[:n])
+
+
+def delivery_average(deliv: pd.DataFrame, window: int = 20, min_days: int = 10) -> pd.DataFrame:
+    """Rolling average delivery % per symbol (dates x symbols): the series the delivery filter ranks on."""
+    return deliv.rolling(window, min_periods=min_days).mean()
+
+
+def above_median_delivery(avg: pd.DataFrame, as_of: date) -> Optional[set]:
+    """Symbols above that day's cross-sectional median of `avg` (latest row on or before as_of), or None when no row exists."""
+    usable = avg.index[avg.index <= pd.Timestamp(as_of)]
+    if len(usable) == 0:
+        return None
+    row = avg.loc[usable[-1]]
+    return set(row[row > row.median()].dropna().index)
 
 
 def delivery_filter(as_of: date, load_delivery: Optional[Callable] = None, window: int = 20,
@@ -99,12 +141,7 @@ def delivery_filter(as_of: date, load_delivery: Optional[Callable] = None, windo
         return None
     if deliv.empty:
         return None
-    avg = deliv.rolling(window, min_periods=min_days).mean()
-    usable = avg.index[avg.index <= pd.Timestamp(as_of)]
-    if len(usable) == 0:
-        return None
-    row = avg.loc[usable[-1]]
-    return set(row[row > row.median()].dropna().index)
+    return above_median_delivery(delivery_average(deliv, window, min_days), as_of)
 
 
 class UniverseScreener:
@@ -117,12 +154,12 @@ class UniverseScreener:
         self.list_symbols, self.fetch_bars, self.cfg, self.today, self.chunk = list_symbols, fetch_bars, cfg, today, chunk
         self.sleep, self.use_delivery_filter, self.delivery_loader = sleep, use_delivery_filter, delivery_loader
         self._day: Optional[date] = None
-        self._cached: List[Candidate] = []
+        self._ranked: List[Candidate] = []
 
-    def candidates(self) -> List[Candidate]:
-        """Today's top candidates; the full scan runs once per day and is cached."""
+    def ranked(self) -> List[Candidate]:
+        """Every stock that passed today's filters, best first; the full scan runs once per day and is cached."""
         if self._day == self.today():
-            return self._cached
+            return self._ranked
         symbols = self.list_symbols()
         log.info("screening %d symbols", len(symbols))
         passed: List[Candidate] = []
@@ -134,11 +171,15 @@ class UniverseScreener:
                 before = len(passed)
                 passed = [c for c in passed if c.symbol in ok]
                 log.info("delivery filter: kept %d/%d (above the day's median 20-day delivery %%)", len(passed), before)
-        self._cached = rank(passed, self.cfg.max_candidates)
+        self._ranked = rank(passed, len(passed))
         self._day = self.today()
-        log.info("screen: %d passed filters, keeping top %d: %s", len(passed), len(self._cached),
-                 ", ".join(c.symbol for c in self._cached))
-        return self._cached
+        log.info("screen: %d passed filters, top %d: %s", len(passed), self.cfg.max_candidates,
+                 ", ".join(c.symbol for c in self._ranked[:self.cfg.max_candidates]))
+        return self._ranked
+
+    def candidates(self, equity: Optional[float] = None) -> List[Candidate]:
+        """Today's top candidates; with `equity`, only stocks the account can afford one share of (cfg.affordable_pct)."""
+        return select_candidates(self.ranked(), self.cfg.max_candidates, equity, self.cfg.affordable_pct)
 
     def _fetch_with_retry(self, symbols: List[str], attempts: int = 3) -> pd.DataFrame:
         for attempt in range(1, attempts + 1):
@@ -153,4 +194,4 @@ class UniverseScreener:
     def symbols_for(self, portfolio) -> List[str]:
         """Current holdings first, then today's candidates: everything to analyse this cycle."""
         held = sorted(portfolio.positions)
-        return held + [c.symbol for c in self.candidates() if c.symbol not in portfolio.positions]
+        return held + [c.symbol for c in self.candidates(portfolio.equity) if c.symbol not in portfolio.positions]

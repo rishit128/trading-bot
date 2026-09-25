@@ -258,3 +258,31 @@ def test_ci_workflow_runs_lint_and_tests_on_the_pinned_python():
 def test_json_and_text_formatters_are_exported_for_reuse():
     assert JsonFormatter().format(logging.LogRecord("n", logging.INFO, "f", 1, "m", (), None)).startswith("{")
     assert "m" in TextFormatter().format(logging.LogRecord("n", logging.INFO, "f", 1, "m", (), None))
+
+
+def test_drawdown_halt_ends_by_itself_after_the_pause_and_only_then(tmp_path):
+    broker = FakeBroker(Portfolio(75_000.0, 75_000.0, {}, {}, 75_000.0))
+    pipe, _, sessions = make_pipeline(tmp_path, broker=broker)
+    pipe.control = Control(sessions)
+    messages = []
+    pipe._notify = messages.append
+    pipe._record_equity(100_000.0)                                  # an old peak: equity is 25% below it
+    assert "drawdown" in pipe.run_once()[0].risk.reason              # day 0: halted, the cool-off clock starts
+    assert pipe.control.drawdown_since() is not None
+    assert "drawdown" in pipe.run_once()[0].risk.reason              # still inside the 30 days
+    pipe.control.set_drawdown_since(datetime.now(timezone.utc) - timedelta(days=31))
+    result = pipe.run_once()[0]                                      # cool-off over: peak rebased, buying resumes
+    assert result.risk.approved
+    assert any("Drawdown pause over" in m for m in messages) and pipe.control.drawdown_since() is None
+    assert pipe.control.peak_since() is not None
+
+
+def test_a_zero_pause_leaves_the_drawdown_halt_permanent(tmp_path):
+    import dataclasses
+    broker = FakeBroker(Portfolio(75_000.0, 75_000.0, {}, {}, 75_000.0))
+    pipe, _, sessions = make_pipeline(tmp_path, broker=broker)
+    pipe.settings = dataclasses.replace(pipe.settings, risk=dataclasses.replace(pipe.settings.risk, drawdown_pause_days=0))
+    pipe.control = Control(sessions)
+    pipe._record_equity(100_000.0)
+    pipe.control.set_drawdown_since(datetime.now(timezone.utc) - timedelta(days=400))
+    assert "drawdown" in pipe.run_once()[0].risk.reason

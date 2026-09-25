@@ -1,4 +1,4 @@
-"""Backtests the ACTUAL production AI (src.agents.agents.TechnicalAgent, real OpenRouter calls, the exact prompt) on
+"""Backtests the production AI (src.agents.agents.TechnicalAgent, real OpenRouter calls, the production prompt minus ATR/ADX, which need High/Low) on
 Indian stock history, point-in-time, and compares it with the mechanical rule it sits on top of in production.
 
 This directly answers the open gap in STRATEGY.md: the AI has run live since 2026-09-21, but "running" is not
@@ -33,8 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.agents.agents import TechnicalAgent  # noqa: E402
 from src.agents.base import AgentContext  # noqa: E402
 from src.config import load_settings  # noqa: E402
-from src.data.indicators import compute_rsi  # noqa: E402
-from src.data.indicators import Snapshot  # noqa: E402
+from src.data.indicators import Snapshot, build_snapshot, compute_rsi  # noqa: E402
 from src.llm import LLMClient  # noqa: E402
 from src.research import engine  # noqa: E402
 from src.research.data import load_universe  # noqa: E402
@@ -44,12 +43,12 @@ CACHE = Path("research_cache/ai_backtest_signals.json")
 
 
 def point_in_time_snapshot(symbol: str, close: pd.Series, volume: pd.Series, as_of: pd.Timestamp) -> Snapshot:
-    """Exactly src.data.indicators.build_snapshot, but sliced to data available up to (and including) `as_of`."""
+    """Exactly src.data.indicators.build_snapshot on data up to (and including) `as_of`, so the prompt carries the same
+    indicators as production (MA, RSI, MACD, Bollinger, momentum, volume trend, average volume). Only ATR and ADX stay
+    n/a: the cached research frames hold Close and Volume, not High/Low."""
     c = close.loc[:as_of].dropna()
-    v = volume.loc[:as_of]
-    return Snapshot(symbol=symbol, price=float(c.iloc[-1]), ma50=float(c.tail(50).mean()),
-                    ma200=float(c.tail(200).mean()), rsi=compute_rsi(c.tail(300)), volume=int(v.iloc[-1]),
-                    bar_date=str(as_of.date()))
+    bars = pd.DataFrame({"Close": c, "Volume": volume.loc[c.index].fillna(0.0)})
+    return build_snapshot(symbol, bars)
 
 
 class DiskCachedAgent:
@@ -104,6 +103,9 @@ def main():
     ap.add_argument("--years", type=int, default=2)
     ap.add_argument("--index", type=int, default=100)
     ap.add_argument("--cost", type=float, default=0.0012)
+    ap.add_argument("--cot-only", action="store_true",
+                    help="phase 1 (five-step reasoning) only; skip the history/market/reflection refinement phases "
+                         "that make every candidate cost extra real LLM calls and are not disk-cached")
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING)
 
@@ -119,7 +121,10 @@ def main():
     candidates_by_date = monthly_candidates(close, volume, top_n * 3)  # scan a wider pool than N so the AI has room to reject some
     candidates_by_date = {d: v for d, v in candidates_by_date.items() if d >= window_start}
     llm = LLMClient(settings.models, cache_ttl_seconds=0)
-    agent = DiskCachedAgent(TechnicalAgent(llm))
+    phase = ("CoT + history + market + reflection" if not args.cot_only else "CoT only (no refinement phases)")
+    agent = DiskCachedAgent(TechnicalAgent(llm, use_learning=not args.cot_only, use_context=not args.cot_only,
+                                           use_reflect=not args.cot_only))
+    print(f"agent: {phase}")
 
     ai_weights = pd.DataFrame(0.0, index=close.index, columns=close.columns)
     mech_weights = pd.DataFrame(0.0, index=close.index, columns=close.columns)

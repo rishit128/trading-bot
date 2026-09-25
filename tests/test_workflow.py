@@ -192,7 +192,7 @@ def test_live_quote_is_used_for_sizing_and_bracket_levels_not_the_stale_close(tm
     pipe, broker, sessions = make_pipeline(tmp_path, dry_run=False)
     pipe.quote_fn = lambda symbol: 125.0  # completed-bar close is 100; the market has since gapped up
     pipe.run_once()
-    assert broker.buys == [("AAPL", 40, 125.0, 0.08, 1.0)]  # 5% of 100k at 125 = 40 shares
+    assert broker.buys == [("AAPL", 40, 125.0, 0.15, 1.0)]  # 5% of 100k at 125 = 40 shares
     with sessions() as s:
         assert s.scalar(select(DecisionRecord.price)) == 125.0
 
@@ -205,7 +205,7 @@ def test_missing_live_quote_falls_back_to_the_completed_close(tmp_path):
 
     pipe.quote_fn = broken
     pipe.run_once()
-    assert broker.buys == [("AAPL", 50, 100.0, 0.08, 1.0)]
+    assert broker.buys == [("AAPL", 50, 100.0, 0.15, 1.0)]
 
 
 def test_no_quote_is_fetched_for_hold_decisions(tmp_path):
@@ -316,6 +316,6 @@ def test_new_exit_defaults_and_env_switch(monkeypatch):
     for name in ("STOP_LOSS_PCT", "TAKE_PROFIT_PCT", "TREND_EXIT"):
         monkeypatch.delenv(name, raising=False)
     s = load_settings()
-    assert (s.risk.stop_loss_pct, s.risk.take_profit_pct, s.trend_exit) == (0.08, 1.0, True)
+    assert (s.risk.stop_loss_pct, s.risk.take_profit_pct, s.trend_exit) == (0.15, 1.0, True)
     monkeypatch.setenv("TREND_EXIT", "false")
     assert load_settings().trend_exit is False

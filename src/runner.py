@@ -19,13 +19,16 @@ def run_cycle(pipeline, out: Callable[[str], None] = print) -> None:
 
 
 def run_loop(pipeline, minutes: float, sleep: Callable[[float], None] = time.sleep,
-             max_cycles: Optional[int] = None, out: Callable[[str], None] = print) -> None:
+             max_cycles: Optional[int] = None, after_cycle: Optional[Callable[[], None]] = None,
+             out: Callable[[str], None] = print) -> None:
     """Unattended loop: a failed cycle (network, broker outage) is reported and retried, never fatal."""
     cycles = 0
     while True:
         try:
             if pipeline.broker.is_market_open():
                 run_cycle(pipeline, out)
+                if after_cycle is not None:
+                    after_cycle()
             else:
                 out("market closed; waiting")
         except Exception as e:

@@ -52,10 +52,19 @@ def main():
     ap.add_argument("--min-traded-value", type=float, default=1e8, help="Rs, 60-day average daily value traded")
     ap.add_argument("--holdout-years", type=int, default=3)
     ap.add_argument("--refresh", action="store_true", help="re-download data instead of using research_cache/")
+    ap.add_argument("--membership-json", type=str, default=None,
+                    help="JSON {date: [symbols]} of daily index membership; makes the universe survivorship-free")
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING)
 
-    close, volume, nifty = load_universe(args.index, args.years, refresh=args.refresh)
+    membership = None
+    if args.membership_json:
+        import json
+
+        membership = json.loads(Path(args.membership_json).read_text())
+        print(f"point-in-time universe applied from {args.membership_json}: "
+              f"{len(membership)} dated membership snapshots")
+    close, volume, nifty = load_universe(args.index, args.years, refresh=args.refresh, membership=membership)
     print(f"Nifty {args.index}: {close.shape[1]} stocks, {close.index[0].date()} .. {close.index[-1].date()} "
           f"({len(close) / engine.TRADING_DAYS:.1f} years), costs {args.cost:.2%}/side, hold-out last {args.holdout_years}y\n")
 

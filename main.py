@@ -1,15 +1,18 @@
 """Command-line entry point: builds the market kit, agents and pipeline, then runs one cycle, a loop, or a utility command."""
 import argparse
 import dataclasses
+import logging
 import os
 import sys
 
 from src.agents.agents import SentimentAgent, TechnicalAgent
+from src.agents.history import history_stats
 from src.app.intraday_cli import run_intraday
 from src.app.kit import build_kit, intraday_db_url, make_paper_broker
 from src.app.reports import print_candidates, print_graphs, print_positions, print_report
 from src.config import load_settings
 from src.control import Control
+from src.data.market_context import MarketContextProvider
 from src.database import make_session_factory
 from src.intraday.strategy import intraday_fees
 from src.llm import LLMClient
@@ -18,6 +21,8 @@ from src.monitoring.telegram import CommandListener, Notifier, handle_command
 from src.pipeline import TradingPipeline
 from src.preflight import build_checks, critical_failures, format_results, run_checks
 from src.runner import run_cycle, run_loop
+
+log = logging.getLogger(__name__)
 
 
 def build_pipeline(live: bool) -> TradingPipeline:
@@ -49,10 +54,37 @@ def build_pipeline(live: bool) -> TradingPipeline:
         CommandListener(token, chat_id, lambda text: handle_command(text, control, kit.broker, settings, intraday_broker)).start()
     else:
         print("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID); alerts and /pause disabled")
-    agents = [TechnicalAgent(llm)] + ([SentimentAgent(llm)] if kit.use_news else [])
+    def make_history_fn(sessions):
+        """Phase 2 hook: closed paper-trade stats for setups similar to the snapshot; failures mean no adjustment."""
+
+        def history(snapshot):
+            try:
+                return history_stats(sessions, snapshot)
+            except Exception as e:
+                log.warning("history lookup failed for %s: %s: %s", snapshot.symbol, type(e).__name__, e)
+                return None
+
+        return history
+
+    market_provider = MarketContextProvider()
+
+    def market_context(snapshot):
+        """Phase 3 hook: index regime / VIX for the stock; a failure means no context adjustment."""
+        try:
+            return market_provider.context(snapshot.symbol, snapshot)
+        except Exception as e:
+            log.warning("market context failed for %s: %s: %s", snapshot.symbol, type(e).__name__, e)
+            return None
+
+    agents = [TechnicalAgent(
+        llm, use_cot=settings.llm_cot, use_learning=settings.llm_learning, use_context=settings.llm_context,
+        use_reflect=settings.llm_reflect, history_fn=make_history_fn(sessions),
+        max_adjustment=settings.llm_max_adjust,
+    )] + ([SentimentAgent(llm)] if kit.use_news else [])
     pipeline = TradingPipeline(
         settings, agents, kit.broker, sessions, kit.snapshot_fn, kit.headlines_fn, control=control, notify=notify,
         universe_fn=kit.screener.symbols_for if kit.screener else None, quote_fn=kit.quote_fn,
+        market_context_fn=market_context,
     )
     pipeline.broker_label = kit.broker_label
     return pipeline
@@ -70,6 +102,36 @@ def preflight(pipeline) -> list:
     return critical_failures(results)
 
 
+def build_holdout_callback(pipeline):
+    """The per-cycle hook for --holdout: replays the approved decisions into the independent reserve and prints a mark."""
+    from src.engine.convention import SLIPPAGE
+    from src.holdout import HoldoutReserve
+
+    import yfinance as yf
+
+    def reserve_bars(sym: str):
+        """Daily OHLCV for one symbol; a failure means the symbol is priced out of the reserve, never guessed."""
+        try:
+            df = yf.download(sym + ".NS", period="2y", auto_adjust=True, progress=False, interval="1d")
+            if df is not None and not df.empty and hasattr(df.columns, "levels"):
+                df.columns = df.columns.get_level_values(0)
+            return df[["Open", "High", "Low", "Close", "Volume"]].dropna() if df is not None and not df.empty else None
+        except Exception as e:
+            log.warning("holdout: no daily bars for %s (%s); excluded", sym, e)
+            return None
+
+    reserve = HoldoutReserve(pipeline.sessions, reserve_bars, slippage=SLIPPAGE)
+
+    def mark_reserve():
+        m = reserve.mark()
+        print(f"holdout reserve: equity {m['equity']:,.2f} (return {m['return_pct']:.2%}), "
+              f"{m['closed_trades']} closed, {m['open_positions']} open, {m['decisions']} decisions replayed")
+
+    print("holdout reserve enabled: every cycle replays the approved decisions into an independent account "
+          "(never tuned, never read back by the paper account)")
+    return mark_reserve
+
+
 def main() -> None:
     """Parse arguments and run the requested command."""
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -83,6 +145,8 @@ def main() -> None:
     parser.add_argument("--intraday", action="store_true", help="run the intraday breakout engine (own paper account; add --live to place paper orders)")
     parser.add_argument("--intraday-report", action="store_true", help="positions, trade history and status of the intraday paper account")
     parser.add_argument("--live", action="store_true", help="place paper orders (default: dry run, decisions only)")
+    parser.add_argument("--holdout", action="store_true",
+                        help="after each cycle, mark the independent holdout reserve account (see docs/holdout.md)")
     args = parser.parse_args()
     if args.loop is not None and args.loop < 1:
         parser.error("--loop must be at least 1 minute")
@@ -122,11 +186,15 @@ def main() -> None:
     print(f"market={st.market.upper()} mode={mode} universe={scope}")
     print("note: news sentiment is disabled (no reliable free Indian news source)")
 
+    reserve_callback = build_holdout_callback(pipeline) if args.holdout else None
+
     if args.loop:
         pipeline.notify(f"Trading bot started: {st.market.upper()} {mode}, every {args.loop} min while the market is open.")
-        run_loop(pipeline, args.loop)
+        run_loop(pipeline, args.loop, after_cycle=reserve_callback)
     else:
         run_cycle(pipeline)
+        if reserve_callback is not None:
+            reserve_callback()
 
 
 if __name__ == "__main__":

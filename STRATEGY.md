@@ -14,14 +14,14 @@ Defaults chosen by the builder, NOT by the account owner: review them, then chan
 - Multiple agents combine by role: leads must agree, advisors confirm or veto (`src/engine/strategy.py`). Minimum confidence 0.60.
 
 ## Exits (changed after a 9-year test, see below)
-- **Protective stop -8%** (broker-side; was -2%) and effectively **no profit target** (+100%; was +5%): winners run.
+- **Protective stop -15%** (broker-side; was -8% until 2026-09-25 and -2% originally, see the live-configuration section) and effectively **no profit target** (+100%; was +5%): winners run.
 - **Deterministic trend exit** (`TREND_EXIT=true`): a held stock is sold when its last completed close is below its
   200-day average. Plain code, like the risk engine; it does not depend on the AI happening to say SELL.
 - The AI can still say SELL. Re-buy cooldown 24h so a stop-out is not bought straight back.
 
 ## Risk limits (the risk engine is the only source of order size)
 - 5% of equity per stock; 80% total exposure; at most 10 open positions.
-- New buys halt at -2% on the day or -20% from peak equity (the -20% halt does not reset by itself). `/pause` blocks all orders.
+- New buys halt at -2% on the day or -20% from peak equity. The -20% halt now lapses by itself after 30 calendar days (`DRAWDOWN_PAUSE_DAYS`; the peak is rebased to current equity), or at once with `/rebase`; 0 keeps the old permanent halt. `/pause` blocks all orders.
 
 ## Acceptance criteria (set before testing)
 Signal research (`scripts/research_signals.py`), all seven required: net CAGR > 10%; Sharpe > 0.5; held-out final 3 years
@@ -140,3 +140,69 @@ on symbol/date pairs already scored). Raw logs: `logs/ai_backtest_full.log`.
 **Decision:** the AI stays -- this project is an AI trading bot, not a rule-based one. The fix under consideration is a
 richer prompt (inputs the mechanical filter doesn't already see, so the AI has a genuine reason to disagree) and/or
 testing pure 12-1 momentum as the candidate list instead of the current trend+momentum combination.
+
+
+## Live-configuration backtest (2026-09-25): the numbers that match the account actually running
+Everything above was measured on a Rs 10 lakh account with 10 positions of 5%, and most of it on the plain trend rule.
+The paper account is Rs 20,000 with 5 positions of 10-25%. `scripts/backtest_live_config.py` now runs the live pieces
+themselves (the scanner's own `screen_symbol` filter and 12-1 momentum ranking, the affordability rule, the risk engine
+with the live limits, 8% stop + MA200 trend exit, no time exit, the paper broker's fees and slippage) on Nifty 500 daily
+bars, 2017-10 to 2026-09. The AI is a constant approval confidence of 0.75. Today's members only: survivorship bias
+inflates every stock-picking row; the equal-weight basket of the same stocks carries the same bias.
+
+**Two defects found and fixed by this exercise**
+1. The -20% drawdown halt was permanent. The account first fell 20% on 2018-03-23, the halt engaged and it never bought
+   again: the "9-year result" of -24.7% was six months of trading plus 8.5 years in cash. It now lapses after 30 days.
+2. The scanner ranked and sent to the AI stocks the account could never buy (DIVISLAB, APOLLOHOSP at ~Rs 9,000 against a
+   Rs 2,000-5,000 position budget); every live fill so far was a stock under Rs 1,600. It now keeps only stocks where
+   one share fits in the smallest position (`ScreenConfig.affordable_pct`).
+(Also fixed: the simulator filled buys in alphabetical order, not rank order, and cut the calendar to the shortest history.)
+
+**Full period, 2017-10 .. 2026-09, halt with 30-day pause**
+
+| Setup | Return | CAGR | Max DD | Trades | Win | Avg trade | Profit factor |
+|---|---|---|---|---|---|---|---|
+| **Live: Rs 20,000, 5 positions, 10-25%** | +171% | 12.0% | **-44.6%** | 184 | 22% | +5.2% | 1.43 |
+| Live limits on Rs 10 lakh | +276% | 16.2% | -40.6% | 182 | 23% | +6.4% | 1.61 |
+| Research setup: Rs 10 lakh, 10 x 5% | +194% | 13.0% | -23.4% | 379 | 26% | +6.3% | 1.80 |
+| Nifty 50 buy and hold | +133% | 10.1% | -38.4% | | | | |
+| Equal-weight basket, same stocks | +534% | 23.3% | -45.8% | | | | |
+
+**Last 3 years (2023-09 .. 2026-09), with the delivery filter (the live default)**: live Rs 20,000 +64% (18.3%/yr, Sharpe
+1.04, DD -17%); live limits on Rs 10 lakh +84%; research setup +44%; basket +77%; Nifty 50 +17%.
+
+**Exit variants, live Rs 20,000 account, full period** (a diagnostic, not a tuned choice): 8% stop (default) +171%,
+DD -44.6%, win 22%; 15% stop +255%, DD -36.8%, win 33%; no stop (trend exit only) +350%, DD -35.5%, win 39%, PF 2.06.
+The 8% stop is too tight for the volatile momentum stocks the ranking picks; it converts many later winners into small
+losses. Not changed automatically: one dataset, and a broker-side stop also guards against data outages and gaps.
+
+**What this says**
+- The live setup is not safe as configured: a -45% drawdown against a 20% halt (the halt stops new buys but cannot stop
+  five 10-25% positions gapping down, and each pause rebases the peak). The 10 x 5% research sizing halves the drawdown
+  (-23%) for a similar return. A Rs 20,000 account cannot hold 10 x 5% of most listed stocks (5% is Rs 1,000), which is
+  the real cost of the small account.
+- Fees are material: 3-8% of capital over the test on Rs 20,000 (the fixed Rs 15.93 charge per sale), against 1-2% on Rs 10 lakh.
+- The entry ranking plus these exits beats the Nifty 50 but not the equal-weight basket of the same stocks in either window.
+  Together with the earlier findings, there is still no evidence of an edge from the entry signal itself.
+- Trade counts: about 20 a year on the live setup. Win-rate gates over a 4-week paper run cannot mean anything.
+
+**Decision taken 2026-09-25 (after the sizing x stop grid below), applied to the live configuration**
+- Sizing: 10 positions of a flat 5% (the code defaults; the `.env` overrides of 5 positions at 10-25% were removed).
+  Concentration is the largest single driver of drawdown: 5 large positions lost more in every period at every stop
+  width. 10 x 5% is the only setup with a drawdown near the 20% risk limit (about -23%) and it has the same return per
+  unit of drawdown as the others.
+- Stop: 15% (was 8%). Wider was better in nearly every setup and both halves; "no stop" scored highest but a stop is kept
+  as a safety net against gaps and outages, and 15% captures most of the gain. The MA200 trend exit is the actual exit.
+- Positions already open keep the 8% stop they were opened with.
+
+| Full period, Rs 20,000 | 8% stop | 15% stop | no stop |
+|---|---|---|---|
+| A: 5 positions, 10-25% | +171% (DD -45%) | +255% (-37%) | +350% (-36%) |
+| B: 8 positions, flat 10% | +331% (-37%) | +338% (-39%) | +361% (-34%) |
+| C: 10 positions, flat 8% | +324% (-36%) | +351% (-35%) | +444% (-35%) |
+| **D: 10 positions, flat 5% (chosen)** | +137% (-23%) | **+158% (-27%)** | +201% (-23%) |
+
+Both halves (2017-10..2022-03 and 2022-03..2026-09) agree on the ordering by stop width; first-half returns are much lower
+than second-half in every row (the 2018 small-cap bust and 2020 crash against the 2022-26 rally), so read them as a range.
+Caveats: one dataset, survivorship bias, the AI is a constant stand-in, and the differences between neighbouring cells are
+within what a different sample could reverse; the choice rests on the consistent direction, not on any single cell.

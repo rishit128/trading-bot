@@ -49,6 +49,7 @@ class DecisionState(TypedDict, total=False):
     price: float
     decision_id: int
     order_status: Optional[str]
+    universe_size: int
 
 
 class SymbolInput(TypedDict):
@@ -83,7 +84,8 @@ def build_analysis_graph(p):
         def node(state: AnalysisState):
             """Run one agent for the stock."""
             symbol = state["symbol"]
-            ctx = AgentContext(symbol, state["snapshot"], headlines=lambda: p.headlines_fn(symbol))
+            ctx = AgentContext(symbol, state["snapshot"], headlines=lambda: p.headlines_fn(symbol),
+                               market=lambda: p.market_context_fn(state["snapshot"]) if p.market_context_fn else None)
             return {"signals": {name: p.agents[name].analyze(ctx)}}
 
         return node
@@ -118,7 +120,8 @@ def build_decision_graph(p):
             decision = combine_signals(signals, {n: a.role for n, a in p.agents.items()})
         price = p._quote(symbol, snap.price) if decision.action != "HOLD" else snap.price
         risk = p.risk.evaluate(decision.action, decision.confidence, symbol, price, state["portfolio"])
-        decision_id = p._log_decision(symbol, snap, signals, decision, risk, price)
+        decision_id = p._log_decision(symbol, snap, signals, decision, risk, price,
+                                      universe_size=state.get("universe_size"))
         return {"decision": decision, "risk": risk, "price": price, "decision_id": decision_id}
 
     def execute(state: DecisionState):
@@ -145,7 +148,7 @@ def build_cycle_graph(p, analysis_graph, decision_graph):
         """Read the account, record equity, and check halts and stop protection."""
         portfolio = p.broker.portfolio()
         p._record_equity(portfolio.equity)
-        portfolio = p._with_peak(portfolio)
+        portfolio = p._apply_drawdown_pause(p._with_peak(portfolio))
         p._check_halt(portfolio)
         p._reconcile_protection()
         p._cycle_llm = []
@@ -185,7 +188,7 @@ def build_cycle_graph(p, analysis_graph, decision_graph):
                 continue
             try:
                 out = decision_graph.invoke({"symbol": symbol, "portfolio": portfolio, "snapshot": a["snapshot"],
-                                             "signals": a["signals"]})
+                                             "signals": a["signals"], "universe_size": len(state["symbols"])})
             except Exception as e:
                 log.exception("%s decision failed", symbol)
                 results.append(SymbolResult(symbol, "ERROR", 0.0, None, None, f"{type(e).__name__}: {e}"))

@@ -55,7 +55,7 @@ DECISION (per stock)   decide -> risk approved? -> execute
    one stock at a time in a fixed order, so risk limits always see fresh state.
 4. **Risk engine** (`src/engine/risk_engine.py`, plain code): the only source of order size; 5% per stock, 80% total,
    max 10 positions, halt on -2% day / -20% drawdown, min confidence 0.6, long only.
-5. **Execution** at the live price with a broker-side protective stop (-8%) and no practical target; a held stock is
+5. **Execution** at the live price with a broker-side protective stop (-15%) and no practical target; a held stock is
    sold by a deterministic **trend exit** when its last completed close falls below its 200-day average. India uses the built-in **paper
    broker** (`src/engine/paper_broker.py`): fills at the live 5-minute price + slippage, models Indian delivery costs
    (STT, stamp duty, exchange, SEBI, GST, DP charge), replays 5-minute bars to trigger stops/targets, stores everything
@@ -89,7 +89,7 @@ In `main.py`, add it to the `agents` list in `build_pipeline`. No graph or strat
 | A network call hangs | Every Yahoo, OpenRouter and Telegram call has a timeout (30-60 s). |
 | A bad key or dead service | `python main.py --check` (also run at every start) tests OpenRouter, the broker, market data and Telegram; a critical failure stops startup with a clear message. |
 | All AI models fail | Stocks become HOLD (flagged degraded) and you are alerted. |
-| A -20% drawdown halt | Buying stops and you are alerted; after you review, `/rebase` in Telegram restarts the peak measurement (the daily-loss limit is unaffected). |
+| A -20% drawdown halt | Buying stops and you are alerted; it lapses by itself after 30 days (`DRAWDOWN_PAUSE_DAYS`), or after you review, `/rebase` in Telegram restarts the peak measurement (the daily-loss limit is unaffected). |
 | Database busy or connection dropped | Connections are pre-checked, and SQLite waits up to 30 s for a lock. |
 | You want to know why it did something | Every decision stores each agent's signal and the indicator inputs; `python scripts/replay_decision.py --last 5` shows the exact prompt and re-checks the rules. Logs: `LOG_FORMAT=json` and `LOG_LEVEL` (docker uses JSON). |
 
@@ -207,7 +207,7 @@ flowchart TD
 | `market closed; waiting` | Normal outside NSE hours (Mon-Fri 09:15-15:30 IST, minus exchange holidays). |
 | Every stock is HOLD and you got "LLM UNAVAILABLE" | All free models failed (overloaded or withdrawn). Wait, or set `OPENROUTER_MODEL` / `OPENROUTER_FALLBACK_MODEL` to models still listed as free on openrouter.ai/models. |
 | `UNPROTECTED POSITION` alert | A position has no stop. With `AUTO_PROTECT=true` the bot places one; otherwise close or protect it manually. |
-| `RISK HALT: drawdown ...` | Equity fell 20% from its peak. Buys stay blocked until you decide: send `/rebase` in Telegram to restart the measurement. |
+| `RISK HALT: drawdown ...` | Equity fell 20% from its peak. Buys stay blocked for `DRAWDOWN_PAUSE_DAYS` (30) and then resume with a rebased peak; or send `/rebase` in Telegram to restart the measurement now. |
 | Telegram silent | Send `/start` to your bot from a private chat; check `TELEGRAM_CHAT_ID` is that chat's id; make sure **only one** program uses the bot token (two pollers steal each other's messages). |
 | Yahoo `429` / "Crumb" warnings | Yahoo rate-limiting; harmless, the request is retried. |
 | A stock shows `ERROR ... stale` | Its last bar is old or shows no trading (suspended). It is skipped on purpose. |
@@ -220,7 +220,7 @@ flowchart TD
 
 - **No demonstrated entry edge** (see status). Every historical test uses today's index members, which inflates results
   (~9 points/yr measured); the AI agent itself has never been tested on Indian stocks (the plain rule stands in for it).
-- The -20% drawdown halt does not reset by itself: after it fires, buying stops until equity recovers or you send `/rebase`.
+- The -20% drawdown halt lapses after `DRAWDOWN_PAUSE_DAYS` (30) days, when the peak is rebased; set it to 0 for the old behaviour where only recovery or `/rebase` ends it.
 - **India has no news sentiment** (no reliable free source: Yahoo returned other companies' articles). Technical agent only.
 - **The paper broker is optimistic**: stops fill at the stop price, no circuit-limit modelling (a stock locked at its
   lower circuit may not let you exit), fixed 0.05% slippage, cost rates are approximations and change.

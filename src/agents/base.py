@@ -21,6 +21,8 @@ class AgentContext:
     snapshot: Snapshot
     # Lazy, so only agents that need news pay for fetching it (and they fetch it in parallel with the others).
     headlines: Callable[[], Sequence[str]] = lambda: []
+    # Lazy market context (index regime / VIX / relative strength); None when it is unavailable or not wired up.
+    market: Callable[[], Optional[object]] = lambda: None
 
 
 class Agent(Protocol):

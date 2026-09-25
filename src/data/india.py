@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 import httpx
 import pandas as pd
 
+from .data_honesty import check_bars_honesty
+
 log = logging.getLogger(__name__)
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -79,9 +81,11 @@ def yf_bar_fetcher(lookback_days: int = 400, download: Optional[Callable] = None
             ticker = s + SUFFIX
             if ticker not in top:
                 continue
-            sub = wide[ticker][["Close", "Volume"]].dropna(subset=["Close"])
+            sub = wide[ticker][["Close", "High", "Low", "Volume"]].dropna(subset=["Close"])
             if sub.empty:
                 continue
+            for finding in check_bars_honesty(sub):
+                log.warning("%s: %s", s, finding)
             sub.index = pd.MultiIndex.from_product([[s], sub.index], names=["symbol", "timestamp"])
             frames.append(sub)
         return pd.concat(frames) if frames else pd.DataFrame()

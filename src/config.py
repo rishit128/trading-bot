@@ -36,10 +36,15 @@ class RiskLimits:
     max_portfolio_exposure_pct: float = 0.80
     max_daily_loss_pct: float = 0.02
     max_drawdown_pct: float = 0.20
+    # Calendar days new buys stay halted after the drawdown limit is hit, after which the peak is rebased and trading
+    # resumes (see engine.risk_engine.drawdown_pause). 0 = the halt never ends by itself (only /rebase clears it).
+    drawdown_pause_days: float = 30.0
     min_confidence: float = 0.60
-    # 2%/5% (the original plan) was stopped out within ~1 day by normal noise and lost money in every window tested;
-    # a wide protective stop with a rule-based trend exit did best in both halves of a 9-year test (see STRATEGY.md).
-    stop_loss_pct: float = 0.08
+    # 2%/5% (the original plan) was stopped out within ~1 day by normal noise and lost money in every window tested.
+    # On the live scanner's momentum stocks even 8% was too tight: across four sizing setups and both halves of a 9-year
+    # test, 15% beat 8% on return and profit factor, and no stop beat both (STRATEGY.md, 2026-09-25). 15% is kept as a
+    # safety net against gaps and data outages rather than as the exit; the MA200 trend exit does the real work.
+    stop_loss_pct: float = 0.15
     take_profit_pct: float = 1.00  # effectively no target: winners run until the trend exit
     max_open_positions: int = 10
 
@@ -53,6 +58,8 @@ class RiskLimits:
                 raise ValueError(f"{name} must be a fraction in (0, 1], got {getattr(self, name)}")
         if not 0 <= self.min_confidence <= 1:
             raise ValueError(f"min_confidence must be in [0, 1], got {self.min_confidence}")
+        if self.drawdown_pause_days < 0:
+            raise ValueError(f"drawdown_pause_days must be >= 0, got {self.drawdown_pause_days}")
         if self.take_profit_pct <= 0:
             raise ValueError(f"take_profit_pct must be > 0, got {self.take_profit_pct}")
         if self.min_position_pct > self.max_position_pct:
@@ -84,6 +91,11 @@ class Settings:
     delivery_filter: bool = True
     analysis_workers: int = 3  # stocks analysed concurrently (LLM calls are latency-bound; keep modest for free tiers)
     llm_cache_hours: float = 12.0
+    llm_cot: bool = True  # chain-of-thought prompting: 5-step reasoning chain stored with each decision (Phase 1)
+    llm_learning: bool = True  # Phase 2: adjust from closed paper-trade record of similar setups
+    llm_context: bool = True  # Phase 3: adjust when the market regime is notable (risk-off / euphoric)
+    llm_reflect: bool = True  # Phase 4: self-critique of the assembled call before it is final
+    llm_max_adjust: float = 0.15  # largest confidence change one refinement phase may make (review doc 2.4)
     risk: RiskLimits = field(default_factory=RiskLimits)
 
     def __post_init__(self):
@@ -97,6 +109,8 @@ class Settings:
             raise ValueError("max_candidates must be >= 1 and min_price/min_traded_value must be >= 0")
         if self.analysis_workers < 1 or self.llm_cache_hours < 0:
             raise ValueError("analysis_workers must be >= 1 and llm_cache_hours must be >= 0")
+        if not 0 <= self.llm_max_adjust <= 1:
+            raise ValueError("llm_max_adjust must be a fraction in [0, 1]")
         if not 0 < self.max_daily_volatility < 1:
             raise ValueError("max_daily_volatility must be a fraction in (0, 1), e.g. 0.04")
 
@@ -116,8 +130,9 @@ def load_settings() -> Settings:
         max_portfolio_exposure_pct=_float("MAX_PORTFOLIO_EXPOSURE_PCT", 0.80),
         max_daily_loss_pct=_float("MAX_DAILY_LOSS_PCT", 0.02),
         max_drawdown_pct=_float("MAX_DRAWDOWN_PCT", 0.20),
+        drawdown_pause_days=_float("DRAWDOWN_PAUSE_DAYS", 30.0),
         min_confidence=_float("MIN_CONFIDENCE", 0.60),
-        stop_loss_pct=_float("STOP_LOSS_PCT", 0.08),
+        stop_loss_pct=_float("STOP_LOSS_PCT", 0.15),
         take_profit_pct=_float("TAKE_PROFIT_PCT", 1.00),
         max_open_positions=int(_float("MAX_OPEN_POSITIONS", 10)),
     )
@@ -140,5 +155,10 @@ def load_settings() -> Settings:
         auto_protect=os.getenv("AUTO_PROTECT", "true").strip().lower() != "false",
         analysis_workers=int(_float("ANALYSIS_WORKERS", 3)),
         llm_cache_hours=_float("LLM_CACHE_HOURS", 12.0),
+        llm_cot=os.getenv("LLM_COT", "true").strip().lower() != "false",
+        llm_learning=os.getenv("LLM_LEARNING", "true").strip().lower() != "false",
+        llm_context=os.getenv("LLM_CONTEXT", "true").strip().lower() != "false",
+        llm_reflect=os.getenv("LLM_REFLECT", "true").strip().lower() != "false",
+        llm_max_adjust=_float("LLM_MAX_ADJUST", 0.15),
         risk=risk,
     )

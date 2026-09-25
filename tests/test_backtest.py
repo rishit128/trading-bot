@@ -150,3 +150,47 @@ def test_trade_analysis_of_no_trades_is_empty():
     from src.backtest import analyze_trades
 
     assert analyze_trades([]) == {}
+
+
+def test_trend_exit_sells_at_the_next_open_after_a_close_below_the_200_day_average():
+    import numpy as np
+    import pandas as pd
+    from src.backtest import LIVE_PARITY, simulate
+    from src.config import RiskLimits
+
+    idx = pd.bdate_range("2020-01-01", periods=320)
+    close = np.concatenate([np.linspace(100, 150, 260), np.linspace(150, 60, 60)])
+    df = pd.DataFrame({"Open": close, "High": close * 1.001, "Low": close * 0.999, "Close": close, "Volume": 1e6}, index=idx)
+    signals = {"A": {idx[250]: ("BUY", 0.9)}}
+    limits = RiskLimits(stop_loss_pct=0.99)  # keep the protective stop out of the way
+    held = simulate({"A": df}, signals, limits, **{**LIVE_PARITY, "trend_exit": False})
+    assert held.open_at_end == 1  # no time exit, no trend exit: still holding at the end
+    out = simulate({"A": df}, signals, limits, **LIVE_PARITY)
+    assert out.open_at_end == 0 and out.trades[0].reason == "SIGNAL"
+    ma200 = df["Close"].rolling(200).mean()
+    broke = df.index[(df["Close"] < ma200) & (df.index > idx[250])][0]
+    assert out.trades[0].exit_date == df.index[df.index.get_loc(broke) + 1]
+
+
+def test_simulator_resumes_buying_after_the_drawdown_pause_but_not_when_permanent():
+    import dataclasses
+    import numpy as np
+    from src.config import RiskLimits
+
+    idx = pd.bdate_range("2024-01-01", periods=120)
+    crash = np.concatenate([np.full(10, 100.0), np.linspace(100, 60, 10), np.full(100, 60.0)])
+
+    def frame(close):
+        df = pd.DataFrame({"Close": close, "High": close, "Low": close, "Volume": 1e6}, index=idx)
+        df["Open"] = df["Close"].shift(1).fillna(close[0])
+        return df
+
+    bars = {"X": frame(crash), "Y": frame(np.full(120, 100.0))}
+    sig = {"X": {idx[2]: ("BUY", 0.9)}, "Y": {idx[80]: ("BUY", 0.9)}}  # Y is bought long after X's crash tripped -20%
+    base = RiskLimits(max_position_pct=0.5, min_position_pct=0.5, max_portfolio_exposure_pct=1.0, stop_loss_pct=0.99,
+                      max_drawdown_pct=0.20, max_open_positions=5)
+    # X at 50% of equity falling 40% is a 20%+ drawdown, so the halt starts around day 20
+    permanent = simulate(bars, sig, dataclasses.replace(base, drawdown_pause_days=0), max_hold_days=1000)
+    paused = simulate(bars, sig, dataclasses.replace(base, drawdown_pause_days=30), max_hold_days=1000)
+    assert permanent.open_at_end == 1  # the day-80 BUY of Y was refused by the standing halt
+    assert paused.open_at_end == 2     # 30 days later the peak was rebased and Y was bought

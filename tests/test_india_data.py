@@ -82,7 +82,7 @@ def test_bar_fetcher_returns_long_format_with_plain_symbols_and_skips_unresolvab
     assert seen["tickers"] == ["AAA.NS", "BBB.NS", "CCC.NS"]
     assert seen["end"] == "2026-09-21" and seen["start"] == (date(2026, 9, 21) - timedelta(days=330)).isoformat() and seen["interval"] == "1d"
     assert sorted(set(df.index.get_level_values(0))) == ["AAA", "BBB"]
-    assert list(df.columns) == ["Close", "Volume"] and len(df) == 10
+    assert list(df.columns) == ["Close", "High", "Low", "Volume"] and len(df) == 10
 
 
 def test_bar_fetcher_handles_empty_and_all_nan_results():

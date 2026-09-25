@@ -24,6 +24,26 @@ class RiskDecision:
     reason: str
 
 
+def drawdown_pause(peak: float, equity: float, halted_since, today, limit: float, pause_days: float):
+    """The drawdown circuit breaker's cool-off, shared by the live pipeline and the simulator.
+
+    New buys stop while equity is `limit` below its peak. With no rule to end that, the halt was permanent: an idle
+    account earns nothing, so it never recovers (in a 9-year replay the bot stopped buying in March 2018 and never
+    traded again). After `pause_days` calendar days of continuous halt the peak is rebased to today's equity and buying
+    resumes; the limit then applies to losses from that new base. `pause_days <= 0` keeps the permanent halt.
+
+    `today` and `halted_since` are dates (or timestamps). Returns (peak, halted_since)."""
+    if pause_days <= 0 or peak <= 0:
+        return peak, halted_since
+    if (peak - equity) / peak < limit:
+        return peak, None  # not in drawdown (or recovered): nothing pending
+    if halted_since is None:
+        return peak, today
+    if (today - halted_since).days >= pause_days:
+        return equity, None
+    return peak, halted_since
+
+
 def _reject(reason: str) -> RiskDecision:
     return RiskDecision(False, 0, reason)
 

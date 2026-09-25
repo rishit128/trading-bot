@@ -22,7 +22,8 @@ class MarketKit:
 
 def screen_config(settings: Settings) -> ScreenConfig:
     """Scanner thresholds taken from settings."""
-    return ScreenConfig(settings.max_candidates, settings.min_price, settings.min_traded_value, settings.max_daily_volatility)
+    return ScreenConfig(settings.max_candidates, settings.min_price, settings.min_traded_value, settings.max_daily_volatility,
+                        affordable_pct=settings.risk.min_position_pct)
 
 
 def build_india_screener(settings: Settings) -> UniverseScreener:

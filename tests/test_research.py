@@ -317,3 +317,58 @@ def test_momentum_ignores_a_collapse_in_the_latest_month_but_plain_12_month_retu
     no_skip = signals.xs_momentum(close, volume, 1e7, top_n=1, skip=0).iloc[-1]
     assert with_skip["CRASH"] == 1.0                                # 12-1 looks past the recent crash
     assert no_skip["STEADY"] == 1.0                                 # a plain 12-month return is dominated by it
+
+
+def test_index_cache_expires_and_falls_back_to_the_stale_copy(tmp_path):
+    import os, time
+    from datetime import date
+    import pandas as pd
+    from src.research.data import load_index_close
+
+    def frame(last):
+        idx = pd.bdate_range(end=last, periods=5)
+        return pd.DataFrame({"Close": range(5)}, index=idx)
+
+    calls = []
+
+    def fresh(tickers, start, end):
+        calls.append(1)
+        return frame("2026-09-25")
+
+    old = load_index_close("^X", 1, tmp_path, download=lambda *a: frame("2026-09-23"), today=lambda: date(2026, 9, 23))
+    assert old.index[-1] == pd.Timestamp("2026-09-23")
+    path = tmp_path / "index_X_1y.pkl"
+    # a fresh cache is reused, and a research caller without max_age_hours never refreshes
+    assert load_index_close("^X", 1, tmp_path, download=fresh, max_age_hours=12).index[-1] == pd.Timestamp("2026-09-23")
+    os.utime(path, (time.time() - 48 * 3600,) * 2)
+    assert load_index_close("^X", 1, tmp_path, download=fresh).index[-1] == pd.Timestamp("2026-09-23")
+    assert not calls
+    # an expired cache is re-downloaded
+    assert load_index_close("^X", 1, tmp_path, download=fresh, max_age_hours=12).index[-1] == pd.Timestamp("2026-09-25")
+    # ...and if that fails the stale copy is used rather than crashing the cycle
+    os.utime(path, (time.time() - 48 * 3600,) * 2)
+
+    def broken(*a):
+        raise RuntimeError("yahoo down")
+
+    assert load_index_close("^X", 1, tmp_path, download=broken, max_age_hours=12).index[-1] == pd.Timestamp("2026-09-25")
+
+
+def test_ai_backtest_snapshot_carries_the_enriched_production_indicators():
+    import sys
+    from pathlib import Path
+    import numpy as np
+    import pandas as pd
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scripts.backtest_ai_agent import point_in_time_snapshot
+
+    idx = pd.bdate_range("2022-01-03", periods=320)
+    close = pd.Series(np.linspace(100, 160, 320) + np.sin(np.arange(320)), index=idx)
+    volume = pd.Series(1e6, index=idx)
+    snap = point_in_time_snapshot("A", close, volume, idx[300])
+    assert snap.bar_date == str(idx[300].date())
+    assert None not in (snap.macd_histogram, snap.bb_position, snap.momentum, snap.volume_trend, snap.avg_volume)
+    assert snap.atr is None and snap.adx is None  # no High/Low in the research frames
+    future = close.copy()
+    future.iloc[301:] = 1.0  # data after as_of must not leak in
+    assert point_in_time_snapshot("A", future, volume, idx[300]) == snap

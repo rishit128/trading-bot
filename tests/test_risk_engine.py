@@ -143,3 +143,33 @@ def test_approval_reason_reports_the_sizing_percent_and_confidence_used():
 def test_scaling_never_exceeds_the_exposure_or_cash_limits():
     d = SCALED.evaluate("BUY", 1.0, "AAA", 100.0, pf(cash=1_000.0))  # 25% of equity would be 25,000, cash caps it
     assert d.approved and d.quantity == 10
+
+
+# ---------------------------------------------------------------- drawdown pause (cool-off instead of a permanent halt)
+from datetime import date, timedelta  # noqa: E402
+
+from src.engine.risk_engine import drawdown_pause  # noqa: E402
+
+D0 = date(2026, 1, 1)
+
+
+def test_drawdown_pause_starts_the_clock_only_while_the_limit_is_breached():
+    assert drawdown_pause(100.0, 95.0, None, D0, 0.20, 30) == (100.0, None)           # only -5%: nothing pending
+    assert drawdown_pause(100.0, 79.0, None, D0, 0.20, 30) == (100.0, D0)              # -21%: halt begins today
+    assert drawdown_pause(100.0, 79.0, D0, D0 + timedelta(days=29), 0.20, 30) == (100.0, D0)  # still cooling off
+
+
+def test_drawdown_pause_rebases_the_peak_after_the_cool_off_and_resets_on_recovery():
+    assert drawdown_pause(100.0, 79.0, D0, D0 + timedelta(days=30), 0.20, 30) == (79.0, None)
+    assert drawdown_pause(100.0, 90.0, D0, D0 + timedelta(days=5), 0.20, 30) == (100.0, None)  # recovered: clock cleared
+
+
+def test_drawdown_pause_zero_days_keeps_the_permanent_halt():
+    assert drawdown_pause(100.0, 50.0, D0, D0 + timedelta(days=999), 0.20, 0) == (100.0, D0)
+
+
+def test_risk_limits_reject_a_negative_pause():
+    import pytest
+    from src.config import RiskLimits
+    with pytest.raises(ValueError, match="drawdown_pause_days"):
+        RiskLimits(drawdown_pause_days=-1)

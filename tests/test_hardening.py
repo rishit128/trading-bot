@@ -47,7 +47,7 @@ def test_naked_position_is_alerted_once_and_protected_at_the_configured_stop(tmp
     pipe, messages, naps = sweep_pipeline(tmp_path, broker)
     pipe.run_once()
     pipe.run_once()
-    assert broker.protected == [("AAPL", 50, 92.0), ("AAPL", 50, 92.0)]  # 8% below the entry, retried each cycle
+    assert broker.protected == [("AAPL", 50, 85.0), ("AAPL", 50, 85.0)]  # 15% below the entry, retried each cycle
     assert sum("UNPROTECTED POSITION" in m for m in messages) == 1        # but only announced once
     assert naps and naps[0] == 3.0
 
@@ -105,7 +105,7 @@ def test_a_failed_sell_triggers_an_immediate_protection_repair(tmp_path):
     messages = []
     pipe._notify, pipe._sleep = messages.append, lambda s: None
     [result] = pipe.run_once()
-    assert result.order_status == "FAILED" and broker.protected == [("AAPL", 50, 92.0)]
+    assert result.order_status == "FAILED" and broker.protected == [("AAPL", 50, 85.0)]
     assert any("Protective stop placed" in m for m in messages)
 
 

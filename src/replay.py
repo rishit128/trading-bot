@@ -29,6 +29,7 @@ class Replay:
     recomputed_action: Optional[str]
     rule_based: bool
     reproduced: Optional[bool]
+    versions: Optional[dict]  # prompt/feature/strategy stamps recorded with the decision
 
 
 def replay(record: DecisionRecord, roles: Mapping[str, str] = DEFAULT_ROLES) -> Replay:
@@ -40,9 +41,14 @@ def replay(record: DecisionRecord, roles: Mapping[str, str] = DEFAULT_ROLES) -> 
         recomputed = "SELL" if snap is not None and snap.price < snap.ma200 else None  # a deterministic override, not an AI call
     else:
         recomputed = combine_signals(signals, roles).action if signals else None
+    versions = None
+    if record.prompt_version or record.feature_version or record.strategy_version:
+        versions = {"strategy": record.strategy_version, "prompt": record.prompt_version,
+                    "feature": record.feature_version}
     return Replay(
         decision_id=record.id, symbol=record.symbol, inputs=snap,
         prompt=TechnicalAgent.build_prompt(snap) if snap is not None else None, signals=signals,
         stored_action=record.final_action, stored_confidence=record.final_confidence, recomputed_action=recomputed,
         rule_based=rule_based, reproduced=None if recomputed is None else recomputed == record.final_action,
+        versions=versions,
     )

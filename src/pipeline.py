@@ -12,8 +12,9 @@ from src.agents.base import Agent
 from src.config import Settings
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord, EquityRecord, OrderRecord
-from src.engine.risk_engine import Portfolio, RiskDecision, RiskEngine
+from src.engine.risk_engine import Portfolio, RiskDecision, RiskEngine, drawdown_pause
 from src.engine.strategy import Decision
+from src.versions import VERSIONS
 from src.llm import Signal
 from src.results import SymbolResult
 from src.workflow import build_analysis_graph, build_cycle_graph, build_decision_graph
@@ -40,6 +41,7 @@ class TradingPipeline:
         notify: Optional[Callable[[str], object]] = None,
         universe_fn: Optional[Callable[[Portfolio], Sequence[str]]] = None,
         quote_fn: Optional[Callable[[str], float]] = None,
+        market_context_fn: Optional[Callable[[Snapshot], Optional[object]]] = None,
     ):
         names = [a.name for a in agents]
         if len(set(names)) != len(names):
@@ -54,6 +56,7 @@ class TradingPipeline:
         self.control = control
         self.universe_fn = universe_fn
         self.quote_fn = quote_fn
+        self.market_context_fn = market_context_fn
         self._notify = notify
         self._halt_kind = None
         self._llm_down = False
@@ -149,9 +152,31 @@ class TradingPipeline:
         peak = max(recorded or 0.0, p.equity)
         return Portfolio(p.cash, p.equity, p.positions, p.position_qty, p.start_of_day_equity, peak)
 
+    def _apply_drawdown_pause(self, p: Portfolio) -> Portfolio:
+        """End a drawdown halt by itself after `drawdown_pause_days`: rebase the peak (what /rebase does by hand) and
+        re-read the portfolio against it. The clock only runs while the halt is continuously in force."""
+        if self.control is None or p.peak_equity is None:
+            return p
+        lim, now = self.settings.risk, datetime.now(timezone.utc)
+        since = self.control.drawdown_since()
+        peak, new_since = drawdown_pause(p.peak_equity, p.equity, since, now, lim.max_drawdown_pct, lim.drawdown_pause_days)
+        if new_since != since:
+            self.control.set_drawdown_since(new_since)
+        if peak != p.peak_equity:
+            self.control.rebase_peak(now)
+            self.notify(f"Drawdown pause over after {lim.drawdown_pause_days:g} days: the peak is rebased to equity "
+                        f"{self.settings.currency}{p.equity:,.0f} and buying resumes.")
+            return self._with_peak(p)
+        return p
+
     def _log_decision(self, symbol: str, snap: Snapshot, signals: Mapping[str, Optional[Signal]],
-                      decision: Decision, risk: RiskDecision, price: float) -> int:
+                      decision: Decision, risk: RiskDecision, price: float,
+                      universe_size: Optional[int] = None) -> int:
         tech, sent = signals.get("technical"), signals.get("sentiment")
+        details = tech.details if tech is not None else None
+        learning = (details or {}).get("learning") or {}
+        context = (details or {}).get("context") or {}
+        reflection = (details or {}).get("reflection") or {}
         with self.sessions() as s:
             record = DecisionRecord(
                 symbol=symbol,
@@ -168,6 +193,40 @@ class TradingPipeline:
                 risk_reason=risk.reason,
                 signals_json=json.dumps({n: sig.model_dump() if sig else None for n, sig in signals.items()}),
                 snapshot_json=json.dumps(dataclasses.asdict(snap)),
+                # Phase 1 chain-of-thought extras, taken from the lead agent's stored details (None before Phase 1).
+                confluence_score=details.get("confluence_score") if details else None,
+                edge_confidence=details.get("edge_confidence") if details else None,
+                risks_json=json.dumps(details["risks"]) if details and details.get("risks") is not None else None,
+                reasoning_chain_json=json.dumps(details["reasoning_chain"])
+                if details and details.get("reasoning_chain") is not None else None,
+                # Phases 2-4 extras: the untouched base confidence, the regime label (None on normal markets),
+                # the historical pattern record when the learning phase consulted one, and the review-doc columns.
+                base_confidence=details.get("base_confidence") if details else None,
+                context_regime=context.get("regime") if context else None,
+                historical_win_rate=learning.get("win_rate") if learning else None,
+                historical_sample_size=learning.get("sample_size") if learning else None,
+                pattern_id=details.get("pattern_id") if details else None,
+                adjusted_signal_confidence=details.get("adjusted_signal_confidence") if details else None,
+                adjustment_reason=details.get("adjustment_reason") if details else None,
+                macro_support=context.get("macro_support") if context else None,
+                sector_support=context.get("sector_support") if context else None,
+                earnings_risk=context.get("earnings_risk") if context else None,
+                diversification_score=context.get("diversification_score") if context else None,
+                market_context_json=json.dumps(details["market_context_json"])
+                if details and details.get("market_context_json") is not None else None,
+                biggest_risk=reflection.get("biggest_risk") if reflection else None,
+                what_proves_us_wrong=reflection.get("what_proves_us_wrong") if reflection else None,
+                bias_check=json.dumps(reflection["bias_check"])
+                if reflection and reflection.get("bias_check") is not None else None,
+                conviction_adjustments=json.dumps(reflection["conviction_adjustments"])
+                if reflection and reflection.get("conviction_adjustments") is not None else None,
+                raw_model=details.get("raw_model") if details else None,
+                rule_alignment=details.get("rule_alignment") if details else None,
+                falsification=details.get("falsification") if details else None,
+prompt_version=VERSIONS["prompt"],
+                feature_version=VERSIONS["feature"],
+                strategy_version=VERSIONS["strategy"],
+                universe_size=universe_size,
             )
             s.add(record)
             s.commit()

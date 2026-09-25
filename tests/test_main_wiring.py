@@ -75,3 +75,14 @@ def test_print_graphs_lists_the_agents(capsys):
     india = capsys.readouterr().out
     assert "agent_technical" in india and "agent_sentiment" not in india
     assert india.count("%%") == 3 and "analyze_symbol" in india and "decide" in india
+
+
+def test_holdout_flag_returns_a_callable_hook():
+    """Regression: `--holdout` used to leave reserve_callback as None, so the reserve was never marked."""
+    import main
+    from types import SimpleNamespace
+
+    from src.database import make_session_factory
+
+    hook = main.build_holdout_callback(SimpleNamespace(sessions=make_session_factory("sqlite:///:memory:")))
+    assert callable(hook)

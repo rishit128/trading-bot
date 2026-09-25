@@ -8,6 +8,7 @@ from src.database import ControlFlag
 
 PAUSED = "paused"
 PEAK_SINCE = "peak_since"
+DRAWDOWN_SINCE = "drawdown_halt_since"
 
 
 class Control:
@@ -39,3 +40,15 @@ class Control:
         with self.sessions() as s:
             flag = s.get(ControlFlag, PEAK_SINCE)
         return datetime.fromisoformat(flag.value) if flag is not None else None
+
+    def drawdown_since(self) -> Optional[datetime]:
+        """When the current continuous drawdown halt was first seen, or None when there is none."""
+        with self.sessions() as s:
+            flag = s.get(ControlFlag, DRAWDOWN_SINCE)
+        return datetime.fromisoformat(flag.value) if flag is not None and flag.value else None
+
+    def set_drawdown_since(self, when: Optional[datetime]) -> None:
+        """Record (or clear, with None) when the continuous drawdown halt started."""
+        with self.sessions() as s:
+            s.merge(ControlFlag(key=DRAWDOWN_SINCE, value=when.isoformat() if when else ""))
+            s.commit()

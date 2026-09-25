@@ -117,7 +117,7 @@ def test_dataclass_defaults_match_the_evidence_backed_exit_settings():
     from src.config import Settings
 
     s = Settings()
-    assert s.trend_exit is True and s.risk.stop_loss_pct == 0.08 and s.risk.take_profit_pct == 1.00
+    assert s.trend_exit is True and s.risk.stop_loss_pct == 0.15 and s.risk.take_profit_pct == 1.00
 
 
 def test_delivery_filter_defaults_on_and_can_be_disabled(monkeypatch):
