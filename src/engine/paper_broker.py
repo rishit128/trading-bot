@@ -12,6 +12,7 @@ from typing import Callable, List, Optional, Tuple
 
 from sqlalchemy import func, select
 
+from src.engine.convention import SLIPPAGE
 from src.database import PaperAccountRecord, PaperPositionRecord, PaperTradeRecord
 from src.engine.risk_engine import Portfolio
 
@@ -51,7 +52,7 @@ class PaperBroker:
     clock: object  # needs is_open() and today_ist()
     initial_cash: float = 1_000_000.0
     fees: Callable[[str, float], float] = india_delivery_fees
-    slippage: float = 0.0005
+    slippage: float = SLIPPAGE
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
 
     def __post_init__(self):

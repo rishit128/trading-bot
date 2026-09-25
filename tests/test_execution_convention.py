@@ -10,8 +10,13 @@ import pytest
 
 from src.backtest import Result, simulate
 from src.config import RiskLimits
-from src.engine.convention import SLIPPAGE, apply_slippage
+from src.engine.convention import SLIPPAGE
 from src.engine.paper_broker import india_delivery_fees
+
+def apply_slippage(price, side, slippage=SLIPPAGE):
+    """The convention as a spec: a buy fills higher, a sell fills lower. The oracle the broker and simulator are held to."""
+    return price * (1 + slippage) if side == "BUY" else price * (1 - slippage)
+
 
 LIMITS = RiskLimits(stop_loss_pct=0.08)  # these tests pin exit mechanics at a fixed 8% level, not the default
 

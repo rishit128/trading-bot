@@ -61,7 +61,6 @@ Status key: `PASS` = implemented + unit-tested · `needs data` = implemented, pr
 | pyflakes clean on `src/ tests/ scripts/ main.py` | PASS |
 | Coverage | run `python -m pytest --cov=src --cov-report=term-missing -q` |
 | Benchmark prompt build + history lookup | `scripts/benchmark_performance.py` |
-| Metrics dashboard | `scripts/llm_upgrade_metrics_dashboard.py` (honest status per area) |
 | Backtest unaffected | `backtest_ai_agent.py` uses only `build_prompt`/signal — verified |
 
 ## Known honest gaps

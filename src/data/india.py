@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pandas as pd
 
-from .data_honesty import check_bars_honesty
+from .data_honesty import ZERO_VOLUME, check_bars_honesty
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def yf_bar_fetcher(lookback_days: int = 400, download: Optional[Callable] = None
         wide = download([s + SUFFIX for s in symbols], start=start.isoformat(), end=end.isoformat(), interval="1d")
         if wide is None or wide.empty:
             return pd.DataFrame()
-        frames = []
+        frames, zero_volume, flagged = [], 0, []
         top = set(wide.columns.get_level_values(0))
         for s in symbols:
             ticker = s + SUFFIX
@@ -85,9 +85,19 @@ def yf_bar_fetcher(lookback_days: int = 400, download: Optional[Callable] = None
             if sub.empty:
                 continue
             for finding in check_bars_honesty(sub):
-                log.warning("%s: %s", s, finding)
+                if finding == ZERO_VOLUME:
+                    zero_volume += 1
+                else:
+                    flagged.append(f"{s}: {finding}")
             sub.index = pd.MultiIndex.from_product([[s], sub.index], names=["symbol", "timestamp"])
             frames.append(sub)
+        # One summary per batch instead of one warning per stock: the zero-volume line alone was 83% of a 3-day log.
+        if zero_volume:
+            log.info("data check: %d of %d symbols have zero-volume days (normal for thinly traded stocks)",
+                     zero_volume, len(symbols))
+        if flagged:
+            log.warning("data check: %d finding(s) that make indicators unreliable for those stocks: %s%s", len(flagged),
+                        "; ".join(flagged[:8]), f"; ... and {len(flagged) - 8} more" if len(flagged) > 8 else "")
         return pd.concat(frames) if frames else pd.DataFrame()
 
     return fetch

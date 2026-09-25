@@ -327,7 +327,7 @@ def test_first_call_failure_still_degrades_to_hold_even_with_phases():
     agent = TechnicalAgent(LLMClient(["a"], client=client), history_fn=lambda s: make_stats(50, 0.1))
     s = agent.analyze(agent_context(market=MarketContext(vix_percentile=0.95)))
     assert s.action == "HOLD" and s.degraded is True and s.details is None
-    assert len(client.calls) == 1  # later phases are never reached when the base call itself failed
+    assert len(client.calls) == 2  # the chain-of-thought call and its compact fallback; no later phase is reached
 
 
 def test_simple_mode_signal_stays_without_details_when_phases_disabled():

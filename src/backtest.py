@@ -68,7 +68,7 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: Signals, limits: RiskLimits
 
     Symbols may have different histories (later listings, halts): the calendar is the union of all dates, a symbol
     without a bar on a day cannot be traded or stopped that day, and its position is valued at its last known close."""
-    engine = RiskEngine(limits)
+    engine = RiskEngine(limits, fees=fees)
     ma200 = {sym: df["Close"].astype(float).rolling(200).mean() for sym, df in bars.items()} if trend_exit else {}
     calendar = sorted(set().union(*[set(df.index) for df in bars.values()]))
     cash, peak, prev_equity = start_equity, start_equity, start_equity

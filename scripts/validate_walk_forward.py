@@ -57,7 +57,7 @@ def main():
     llm, sessions = None, None
     if not args.offline and args.phase != DET:
         try:
-            llm = LLMClient(load_settings().models)
+            llm = LLMClient.from_settings(load_settings(), cache_ttl_seconds=0)
             sessions = make_session_factory(args.database_url)
         except Exception as e:
             print(f"no model configured ({e}); falling back to {DET}")

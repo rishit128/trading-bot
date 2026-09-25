@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from src.agents.agents import TechnicalAgent
-from src.data.indicators import (Snapshot, _bollinger_position, _volume_trend,
+from src.data.indicators import (Snapshot, _bollinger, _volume_trend,
                                  build_snapshot, compute_adx, compute_atr)
 
 
@@ -55,7 +55,7 @@ def test_helpers_return_none_for_thin_input():
     close = pd.Series([1.0, 2.0, 3.0])
     assert _volume_trend(close, 20) is None  # shorter than 2 periods
     short = pd.Series([1.0] * 10)
-    assert _bollinger_position(short, 20) is None
+    assert _bollinger(short, 20) is None
     assert compute_atr(None, None, close) is None
     assert compute_adx(pd.Series([1.0] * 10), pd.Series([1.0] * 10), pd.Series([1.0] * 10)) is None
 
@@ -76,3 +76,36 @@ def test_prompt_renders_rich_indicators_and_degrades_to_n_a():
 def test_build_snapshot_still_supports_close_and_volume_only_bars():
     s = build_snapshot("X", ohclv_only(list(range(1, 251))))
     assert s.ma50 > 0 and s.ma200 > 0 and s.rsi > 0  # pre-Phase-5 path unchanged behaviour
+
+
+def _reference_rsi(close, period=14):
+    """The original pandas implementation, kept here as the oracle for the array version the scanner runs."""
+    delta = close.diff().dropna()
+    gains = delta.clip(lower=0).to_numpy()
+    losses = (-delta.clip(upper=0)).to_numpy()
+    avg_gain, avg_loss = gains[:period].mean(), losses[:period].mean()
+    for gain, loss in zip(gains[period:], losses[period:]):
+        avg_gain = (avg_gain * (period - 1) + gain) / period
+        avg_loss = (avg_loss * (period - 1) + loss) / period
+    if avg_loss == 0:
+        return 100.0 if avg_gain > 0 else 50.0
+    return float(100 - 100 / (1 + avg_gain / avg_loss))
+
+
+def test_array_rsi_matches_the_original_implementation_exactly():
+    import numpy as np
+    from src.data.indicators import compute_rsi, rsi_from_array
+
+    rng = np.random.default_rng(7)
+    for n in (15, 40, 300):
+        walk = pd.Series(100 + np.cumsum(rng.normal(0, 1.5, n)))
+        assert compute_rsi(walk) == _reference_rsi(walk)  # bit-for-bit, not approximately
+        assert rsi_from_array(walk.to_numpy()) == _reference_rsi(walk)
+    assert compute_rsi(pd.Series(np.arange(1.0, 60.0))) == 100.0  # only gains
+    assert compute_rsi(pd.Series([5.0] * 60)) == 50.0  # flat
+    assert compute_rsi(pd.Series(np.arange(60.0, 1.0, -1.0))) == pytest.approx(0.0, abs=1e-9)  # only losses
+    with_gap = pd.Series(100 + np.cumsum(rng.normal(0, 1, 80)))
+    with_gap.iloc[30] = np.nan  # NaN diffs are dropped, as before
+    assert compute_rsi(with_gap) == _reference_rsi(with_gap)
+    with pytest.raises(ValueError):
+        compute_rsi(pd.Series([1.0, 2.0, 3.0]))

@@ -1,7 +1,8 @@
 """Per-stock market data and news fetching (Yahoo Finance)."""
 import logging
+import threading
 from datetime import date
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 import pandas as pd
 import yfinance as yf
@@ -35,3 +36,28 @@ def fetch_snapshot(symbol: str, suffix: str = "", as_of: Optional[Callable[[], d
         raise StaleDataError(f"{symbol}: last bar {snap.bar_date} shows zero volume (no trading)")
     return snap
 
+
+
+def cached_per_session(fetch: Callable[[str], Snapshot], session: Callable[[], date]) -> Callable[[str], Snapshot]:
+    """Memoise `fetch(symbol)` for as long as the last completed session stays the same.
+
+    The analysis only ever uses completed daily bars, so a stock's snapshot cannot change until the next session closes;
+    without this every 30-minute cycle re-downloaded two years of history for each of ~20 stocks. Failures are never
+    cached (the next cycle retries), and yesterday's entries are dropped when the session rolls over."""
+    lock = threading.Lock()
+    store: Dict[str, Tuple[date, Snapshot]] = {}
+
+    def get(symbol: str) -> Snapshot:
+        today = session()
+        with lock:
+            hit = store.get(symbol)
+        if hit is not None and hit[0] == today:
+            return hit[1]
+        snapshot = fetch(symbol)
+        with lock:
+            for stale in [k for k, (d, _) in store.items() if d != today]:
+                del store[stale]
+            store[symbol] = (today, snapshot)
+        return snapshot
+
+    return get

@@ -120,7 +120,7 @@ def main():
     window_start = close.index[-1] - pd.DateOffset(years=args.years)
     candidates_by_date = monthly_candidates(close, volume, top_n * 3)  # scan a wider pool than N so the AI has room to reject some
     candidates_by_date = {d: v for d, v in candidates_by_date.items() if d >= window_start}
-    llm = LLMClient(settings.models, cache_ttl_seconds=0)
+    llm = LLMClient.from_settings(settings, cache_ttl_seconds=0)
     phase = ("CoT + history + market + reflection" if not args.cot_only else "CoT only (no refinement phases)")
     agent = DiskCachedAgent(TechnicalAgent(llm, use_learning=not args.cot_only, use_context=not args.cot_only,
                                            use_reflect=not args.cot_only))

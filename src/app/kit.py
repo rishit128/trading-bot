@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
 from src.config import Settings
-from src.data.market_data import fetch_snapshot
+from src.data.market_data import cached_per_session, fetch_snapshot
 from src.data.universe import ScreenConfig, UniverseScreener
 
 
@@ -60,6 +60,8 @@ def build_kit(settings: Settings, sessions) -> MarketKit:
     # Analyse the last COMPLETED session only (stable prompts all day -> cacheable, and matches the backtest), then
     # size/bracket the order off the live price. No reliable free Indian news source, so no sentiment agent.
     return MarketKit(
-        broker, lambda s: fetch_snapshot(s, suffix=SUFFIX, as_of=clock.last_completed_session), lambda s: [], screener,
+        broker, cached_per_session(lambda s: fetch_snapshot(s, suffix=SUFFIX, as_of=clock.last_completed_session),
+                                   clock.last_completed_session),
+        lambda s: [], screener,
         "built-in paper simulator", use_news=False, quote_fn=feed.last_price,
     )

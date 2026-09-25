@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 MIN_BARS = 200
@@ -75,12 +76,6 @@ def _bollinger(close: pd.Series, period: int = 20):
     return upper_v, mid_v, lower_v, pos
 
 
-def _bollinger_position(close: pd.Series, period: int = 20) -> Optional[float]:
-    """0 = price at the lower 2-sigma band, 1 = at the upper band; 0.5 when bands are degenerate or the series is short."""
-    out = _bollinger(close, period)
-    return None if out is None else out[3]
-
-
 def _volume_trend(volume: pd.Series, period: int = 20) -> Optional[float]:
     """How the last `period` bars' average volume compares with the `period` before: fractional change, or None if too short."""
     if len(volume) < 2 * period:
@@ -122,21 +117,29 @@ def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int =
     return float(value) if pd.notna(value) else None
 
 
-def compute_rsi(close: pd.Series, period: int = 14) -> float:
-    """Wilder's RSI: SMA-seeded first average, then recursive smoothing."""
-    delta = close.diff().dropna()
+def rsi_from_array(values, period: int = 14) -> float:
+    """Wilder's RSI of a numeric array: SMA-seeded first average, then recursive smoothing. Plain floats in the loop:
+    the pandas version spent ~2 ms per call on Series overhead, and the scanner runs this for thousands of stocks."""
+    delta = np.diff(np.asarray(values, dtype=float))
+    delta = delta[~np.isnan(delta)]
     if len(delta) < period:
         raise ValueError("not enough data for RSI")
-    gains = delta.clip(lower=0).to_numpy()
-    losses = (-delta.clip(upper=0)).to_numpy()
-    avg_gain = gains[:period].mean()
-    avg_loss = losses[:period].mean()
-    for gain, loss in zip(gains[period:], losses[period:]):
-        avg_gain = (avg_gain * (period - 1) + gain) / period
-        avg_loss = (avg_loss * (period - 1) + loss) / period
+    gains = np.where(delta > 0, delta, 0.0)
+    losses = np.where(delta < 0, -delta, 0.0)
+    avg_gain = float(gains[:period].mean())
+    avg_loss = float(losses[:period].mean())
+    decay = period - 1
+    for gain, loss in zip(gains[period:].tolist(), losses[period:].tolist()):
+        avg_gain = (avg_gain * decay + gain) / period
+        avg_loss = (avg_loss * decay + loss) / period
     if avg_loss == 0:
         return 100.0 if avg_gain > 0 else 50.0
     return float(100 - 100 / (1 + avg_gain / avg_loss))
+
+
+def compute_rsi(close: pd.Series, period: int = 14) -> float:
+    """Wilder's RSI of a close series."""
+    return rsi_from_array(close.to_numpy(dtype=float), period)
 
 
 def build_snapshot(symbol: str, bars: pd.DataFrame) -> Snapshot:

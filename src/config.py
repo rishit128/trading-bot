@@ -46,6 +46,9 @@ class RiskLimits:
     # safety net against gaps and data outages rather than as the exit; the MA200 trend exit does the real work.
     stop_loss_pct: float = 0.15
     take_profit_pct: float = 1.00  # effectively no target: winners run until the trend exit
+    # Refuse a buy whose round-trip fees would exceed this fraction of the position (fixed per-sale charges make tiny
+    # positions uneconomic: one Rs 363 share pays ~4.4%). 0 disables. Needs the broker's fee schedule (see RiskEngine).
+    max_fee_drag_pct: float = 0.04
     max_open_positions: int = 10
 
     def __post_init__(self):
@@ -58,6 +61,8 @@ class RiskLimits:
                 raise ValueError(f"{name} must be a fraction in (0, 1], got {getattr(self, name)}")
         if not 0 <= self.min_confidence <= 1:
             raise ValueError(f"min_confidence must be in [0, 1], got {self.min_confidence}")
+        if not 0 <= self.max_fee_drag_pct < 1:
+            raise ValueError(f"max_fee_drag_pct must be in [0, 1), got {self.max_fee_drag_pct}")
         if self.drawdown_pause_days < 0:
             raise ValueError(f"drawdown_pause_days must be >= 0, got {self.drawdown_pause_days}")
         if self.take_profit_pct <= 0:
@@ -91,6 +96,11 @@ class Settings:
     delivery_filter: bool = True
     analysis_workers: int = 3  # stocks analysed concurrently (LLM calls are latency-bound; keep modest for free tiers)
     llm_cache_hours: float = 12.0
+    # Free OpenRouter models are reasoning models: hidden thinking eats max_tokens and leaves the answer empty or cut off.
+    # Switching it off gave valid answers 3-10x faster on all three configured models (src/llm.py).
+    llm_reasoning_off: bool = True
+    llm_min_interval: float = 3.0  # seconds between request starts (the free tier allows ~20 requests a minute)
+    llm_concurrency: int = 2  # requests in flight at once
     llm_cot: bool = True  # chain-of-thought prompting: 5-step reasoning chain stored with each decision (Phase 1)
     llm_learning: bool = True  # Phase 2: adjust from closed paper-trade record of similar setups
     llm_context: bool = True  # Phase 3: adjust when the market regime is notable (risk-off / euphoric)
@@ -109,6 +119,8 @@ class Settings:
             raise ValueError("max_candidates must be >= 1 and min_price/min_traded_value must be >= 0")
         if self.analysis_workers < 1 or self.llm_cache_hours < 0:
             raise ValueError("analysis_workers must be >= 1 and llm_cache_hours must be >= 0")
+        if self.llm_min_interval < 0 or self.llm_concurrency < 0:
+            raise ValueError("llm_min_interval and llm_concurrency must be >= 0 (0 concurrency = unlimited)")
         if not 0 <= self.llm_max_adjust <= 1:
             raise ValueError("llm_max_adjust must be a fraction in [0, 1]")
         if not 0 < self.max_daily_volatility < 1:
@@ -134,6 +146,7 @@ def load_settings() -> Settings:
         min_confidence=_float("MIN_CONFIDENCE", 0.60),
         stop_loss_pct=_float("STOP_LOSS_PCT", 0.15),
         take_profit_pct=_float("TAKE_PROFIT_PCT", 1.00),
+        max_fee_drag_pct=_float("MAX_FEE_DRAG_PCT", 0.04),
         max_open_positions=int(_float("MAX_OPEN_POSITIONS", 10)),
     )
     return Settings(
@@ -155,6 +168,9 @@ def load_settings() -> Settings:
         auto_protect=os.getenv("AUTO_PROTECT", "true").strip().lower() != "false",
         analysis_workers=int(_float("ANALYSIS_WORKERS", 3)),
         llm_cache_hours=_float("LLM_CACHE_HOURS", 12.0),
+        llm_reasoning_off=os.getenv("LLM_REASONING_OFF", "true").strip().lower() != "false",
+        llm_min_interval=_float("LLM_MIN_INTERVAL", 3.0),
+        llm_concurrency=int(_float("LLM_CONCURRENCY", 2)),
         llm_cot=os.getenv("LLM_COT", "true").strip().lower() != "false",
         llm_learning=os.getenv("LLM_LEARNING", "true").strip().lower() != "false",
         llm_context=os.getenv("LLM_CONTEXT", "true").strip().lower() != "false",

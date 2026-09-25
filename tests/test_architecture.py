@@ -111,8 +111,9 @@ def test_failures_are_never_cached():
     llm = LLMClient(["a"], client=fake, cache_ttl_seconds=3600.0, clock=lambda: 0.0)
     with pytest.raises(LLMUnavailable):
         llm.signal("p")
+    failed_calls = len(fake.calls)  # the failed call itself was retried (transient errors are), but nothing was cached
     fake.behaviours["a"] = GOOD
-    assert llm.signal("p").action == "BUY" and len(fake.calls) == 2
+    assert llm.signal("p").action == "BUY" and len(fake.calls) == failed_calls + 1
 
 
 def test_cache_is_bounded():

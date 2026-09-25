@@ -14,3 +14,5 @@ logs/
 *.log
 *_out.txt
 research_results.csv
+.coverage
+htmlcov/

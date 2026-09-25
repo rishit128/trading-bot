@@ -173,3 +173,45 @@ def test_risk_limits_reject_a_negative_pause():
     from src.config import RiskLimits
     with pytest.raises(ValueError, match="drawdown_pause_days"):
         RiskLimits(drawdown_pause_days=-1)
+
+
+# ---------------------------------------------------------------- fee drag: tiny positions are not worth their fixed charges
+from src.engine.paper_broker import india_delivery_fees  # noqa: E402
+
+
+def _engine(fee_drag=0.04, fees=india_delivery_fees):
+    from src.config import RiskLimits
+    return RiskEngine(RiskLimits(min_position_pct=0.05, max_position_pct=0.05, max_fee_drag_pct=fee_drag), fees=fees)
+
+
+def test_a_one_share_position_whose_fixed_sale_charge_dwarfs_it_is_refused():
+    squeezed = Portfolio(cash=400, equity=20_000)  # only Rs 400 of cash/exposure room left: one Rs 363 share fits
+    tiny = _engine().evaluate("BUY", 0.8, "TINY", 363.0, squeezed)  # the Rs 15.93 sale charge alone is ~4.4%
+    assert not tiny.approved and "fees would cost" in tiny.reason
+    pf = Portfolio(cash=20_000, equity=20_000)
+    fine = _engine().evaluate("BUY", 0.8, "FINE", 950.0, pf)  # Rs 950: fees ~1.9%
+    assert fine.approved and fine.quantity == 1
+
+
+def test_the_fee_rule_can_be_turned_off_or_is_skipped_without_a_fee_schedule():
+    squeezed = Portfolio(cash=400, equity=20_000)
+    assert _engine(fee_drag=0.0).evaluate("BUY", 0.8, "TINY", 363.0, squeezed).approved
+    assert _engine(fees=None).evaluate("BUY", 0.8, "TINY", 363.0, squeezed).approved
+
+
+def test_the_fee_rule_never_blocks_a_sell():
+    pf = Portfolio(cash=0, equity=20_000, positions={"TINY": 363.0}, position_qty={"TINY": 1})
+    assert _engine().evaluate("SELL", 1.0, "TINY", 363.0, pf).approved  # you must always be able to exit
+
+
+def test_risk_limits_validate_the_fee_cap_and_the_pipeline_uses_the_brokers_fee_schedule(tmp_path):
+    import pytest
+    from src.config import RiskLimits
+    from tests.test_llm_and_pipeline import FakeBroker, make_pipeline
+
+    with pytest.raises(ValueError, match="max_fee_drag_pct"):
+        RiskLimits(max_fee_drag_pct=1.0)
+    broker = FakeBroker(Portfolio(20_000.0, 20_000.0, {}, {}, 20_000.0))
+    broker.fees = india_delivery_fees
+    pipe, _, _ = make_pipeline(tmp_path, broker=broker)
+    assert pipe.risk.fees is india_delivery_fees

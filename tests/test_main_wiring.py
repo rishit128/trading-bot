@@ -86,3 +86,22 @@ def test_holdout_flag_returns_a_callable_hook():
 
     hook = main.build_holdout_callback(SimpleNamespace(sessions=make_session_factory("sqlite:///:memory:")))
     assert callable(hook)
+
+
+def test_the_live_kit_downloads_a_stock_once_per_session_not_every_cycle(monkeypatch, tmp_path):
+    """Regression: every 30-minute cycle re-downloaded two years of daily bars per stock."""
+    import dataclasses
+    from src.app import kit as kit_module
+    from src.config import Settings
+    from src.data.indicators import Snapshot
+    from src.database import make_session_factory
+
+    calls = []
+    monkeypatch.setattr(kit_module, "fetch_snapshot",
+                        lambda symbol, **kw: calls.append(symbol) or Snapshot(symbol, 1.0, 1.0, 1.0, 50.0, 1))
+    settings = dataclasses.replace(Settings(), universe="watchlist")
+    built = kit_module.build_kit(settings, make_session_factory(f"sqlite:///{tmp_path / 'k.db'}"))
+    built.snapshot_fn("RELIANCE")
+    built.snapshot_fn("RELIANCE")
+    built.snapshot_fn("TCS")
+    assert calls == ["RELIANCE", "TCS"]

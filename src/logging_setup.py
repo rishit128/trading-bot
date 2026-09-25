@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 FORMATS = ("text", "json")
 _STANDARD = set(vars(logging.LogRecord("", 0, "", 0, "", (), None))) | {"message", "asctime"}
-NOISY = ("httpx", "httpcore", "openai", "urllib3", "peewee", "websockets")  # per-request chatter, and httpx URLs hold the Telegram token
+NOISY = ("httpx", "httpx2", "httpcore", "openai", "urllib3", "peewee", "websockets")  # per-request chatter, and httpx URLs hold the Telegram token
 
 
 def _extras(record: logging.LogRecord) -> dict:

@@ -25,7 +25,7 @@ def main():
     passed = 0
     for model in models:
         try:
-            sig = LLMClient([model]).signal(PROMPT)
+            sig = LLMClient([model], reasoning_off=True).signal(PROMPT)
             print(f"OK   {model}\n     {sig.action} conf={sig.confidence} | {sig.reasoning}")
             passed += 1
         except LLMUnavailable as e:

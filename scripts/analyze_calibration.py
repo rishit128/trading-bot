@@ -26,10 +26,7 @@ from src.database import DecisionRecord, PaperTradeRecord, make_session_factory 
 from src.research.calibration import (  # noqa: E402
     DEFAULT_EDGES,
     MIN_SAMPLE,
-    bucket_profiles,
-    expected_calibration_error,
-    monotone_in_confidence,
-    brier_score,
+    calibration_metrics,
 )
 
 MAYBE_OPEN_WINDOW_SECONDS = 86400  # a decision and its opening fill land within the same day
@@ -86,14 +83,15 @@ def main():
 
     print(f"\ncalibration (approved BUYs matched to a closed trade): {len(pairs)} matched")
     if pairs:
-        for p in bucket_profiles(pairs, DEFAULT_EDGES):
+        m = calibration_metrics(pairs, DEFAULT_EDGES)  # one pass: buckets, ECE, Brier and monotonicity together
+        for p in m["profiles"]:
             note = (f"realised win rate {p.realized_rate:.0%} vs confidence {p.mean_confidence:.2f}"
                     if p.n >= MIN_SAMPLE else "insufficient sample, not quoted")
             print(f"  conf [{p.lo:.2f}, {p.hi:.2f}) n={p.n:<3d} {note}")
         print(f"  ECE (weighted |realized - confidence| over sufficient buckets): "
-              f"{expected_calibration_error(bucket_profiles(pairs, DEFAULT_EDGES)):.2%}")
-        print(f"  Brier score: {brier_score(pairs):.3f} (random ~ base_rate*(1-base_rate))")
-        trend = "rises with confidence" if monotone_in_confidence(pairs, DEFAULT_EDGES) else "does NOT rise with confidence"
+              f"{m['ece']:.2%}")
+        print(f"  Brier score: {m['brier']:.3f} (random ~ base_rate*(1-base_rate))")
+        trend = "rises with confidence" if m["monotone"] else "does NOT rise with confidence"
         print(f"  realized win rate vs confidence so far: {trend}")
         print("  All sites answer 'does confidence predict outcome?', but act only when every bucket has n >= 5.")
     else:

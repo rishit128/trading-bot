@@ -38,7 +38,7 @@ def build_pipeline(live: bool) -> TradingPipeline:
     if not os.getenv("OPENROUTER_API_KEY"):
         sys.exit("Missing in .env: OPENROUTER_API_KEY")
 
-    llm = LLMClient(settings.models, cache_ttl_seconds=settings.llm_cache_hours * 3600)
+    llm = LLMClient.from_settings(settings)
     sessions = make_session_factory(settings.database_url)
     control = Control(sessions)
     kit = build_kit(settings, sessions)

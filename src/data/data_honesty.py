@@ -13,6 +13,7 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
+ZERO_VOLUME = "zero or negative volume bars present"  # benign and common on thin NSE stocks: counted, not itemised
 SPLIT_LOOKALIKE_RATIO = 0.30  # an overnight -30% / +43% close-to-close that is not a crash
 RANGE_EXPANSION_MULT = 3.0  # the bar's high-low may not exceed this times the 20-day median range
 
@@ -47,10 +48,10 @@ def check_bars_honesty(df: pd.DataFrame) -> list:
     dupes = int(df.index.duplicated().sum())
     if dupes:
         issues.append(f"{dupes} duplicate timestamps")
-    if (df["Volume"].astype(float) <= 0).any():
-        issues.append("zero or negative volume bars present")
-    for idx, row in split_like_gaps(df).iterrows():
-        if row["is_split_like"]:
-            issues.append(f"{idx.date()} split-like overnight {row['overnight_ret']:+.1%}; "
-                          "corporate action or unadjusted mix - indicators for this range are unreliable")
+    if (df["Volume"].to_numpy(dtype=float) <= 0).any():
+        issues.append(ZERO_VOLUME)
+    flags = split_like_gaps(df)
+    for idx, overnight in flags.loc[flags["is_split_like"], "overnight_ret"].items():  # flagged rows only, not every bar
+        issues.append(f"{idx.date()} split-like overnight {overnight:+.1%}; "
+                      "corporate action or unadjusted mix - indicators for this range are unreliable")
     return issues

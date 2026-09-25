@@ -61,7 +61,7 @@ def load_bars(symbols):
 def llm_signals(bars, dates, workers):
     cache = read_cache()
     wanted = set(dates)
-    agent = TechnicalAgent(LLMClient(load_settings().models))
+    agent = TechnicalAgent(LLMClient.from_settings(load_settings()))
     lock, done, failures = threading.Lock(), [0], [0]
     jobs = [(s, d) for s in bars for d in dates if f"{s}|{d.date()}" not in cache]
     print(f"{len(cache)} cached, {len(jobs)} to compute", flush=True)

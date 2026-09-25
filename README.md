@@ -93,6 +93,21 @@ In `main.py`, add it to the `agents` list in `build_pipeline`. No graph or strat
 | Database busy or connection dropped | Connections are pre-checked, and SQLite waits up to 30 s for a lock. |
 | You want to know why it did something | Every decision stores each agent's signal and the indicator inputs; `python scripts/replay_decision.py --last 5` shows the exact prompt and re-checks the rules. Logs: `LOG_FORMAT=json` and `LOG_LEVEL` (docker uses JSON). |
 
+## Working with free AI models
+The free OpenRouter models are reasoning models: hidden "thinking" eats the token budget, upstreams are often overloaded, and
+answers can arrive empty, cut off or wrapped in prose. `src/llm.py` handles this instead of hoping:
+- **Reasoning is switched off** (`LLM_REASONING_OFF=true`): valid answers 3-10x faster; the prompt already reasons step by step in the JSON.
+- **Every failure is classified**: overloaded/rate-limited/empty -> backoff and retry (honouring Retry-After); cut off at the
+  token limit -> retry with double the budget; malformed or blank JSON -> retry once telling the model what was wrong;
+  missing model -> skipped for the session.
+- **Tolerant parsing** of fenced or prose-wrapped JSON, and **semantic validation** (no blank reasoning, at least one real risk);
+  `rule_alignment` is computed from the data, not taken from the model.
+- **Model health**: a model that fails three calls in a row is benched for 5 minutes so the healthy one answers first.
+  Requests are paced (`LLM_MIN_INTERVAL`, `LLM_CONCURRENCY`) to stay under the free tier's limit.
+- **Fallback ladder**: full chain-of-thought -> compact one-sentence prompt (recorded as `tier: compact`) -> HOLD. A skipped
+  reflection/learning/context step is recorded in the decision (`reflection_skipped`, ...).
+- **Visibility**: one `LLM health:` log line per cycle (calls ok, average seconds, failures by kind, benched models).
+
 ## Configuration
 
 `.env` keys and every tunable (with defaults) are documented in `.env.example`. Limits are validated at startup
@@ -234,7 +249,7 @@ flowchart TD
 
 ## Scripts
 
-`scripts/test_yfinance.py`, `scripts/test_openrouter_api.py` (real calls, safe).
+`scripts/test_openrouter_api.py` tries each configured AI model with a real call (safe); `python main.py --check` tests keys and connectivity.
 
 ## Project layout
 

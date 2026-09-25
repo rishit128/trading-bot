@@ -52,7 +52,7 @@ class TradingPipeline:
         self.sessions = session_factory
         self.snapshot_fn = snapshot_fn
         self.headlines_fn = headlines_fn
-        self.risk = RiskEngine(settings.risk)
+        self.risk = RiskEngine(settings.risk, fees=getattr(broker, "fees", None))
         self.control = control
         self.universe_fn = universe_fn
         self.quote_fn = quote_fn
@@ -223,7 +223,7 @@ class TradingPipeline:
                 raw_model=details.get("raw_model") if details else None,
                 rule_alignment=details.get("rule_alignment") if details else None,
                 falsification=details.get("falsification") if details else None,
-prompt_version=VERSIONS["prompt"],
+                prompt_version=VERSIONS["prompt"],
                 feature_version=VERSIONS["feature"],
                 strategy_version=VERSIONS["strategy"],
                 universe_size=universe_size,
@@ -239,8 +239,17 @@ prompt_version=VERSIONS["prompt"],
             self.notify(f"RISK HALT: {halt[1]}. New buys are blocked." if halt else "Risk halt cleared: buys allowed again.")
             self._halt_kind = kind
 
+    def _log_llm_health(self) -> None:
+        """One INFO line per cycle on how the AI models behaved (calls that worked, failures by kind, benched models)."""
+        for agent in self.agents.values():
+            health = getattr(getattr(agent, "llm", None), "health_line", None)
+            line = health() if callable(health) else None
+            if line:
+                log.info(line)
+
     def _track_llm(self) -> None:
         """Alert only when every analysis in a cycle failed; one flaky call is not an outage."""
+        self._log_llm_health()
         if not self._cycle_llm:
             return
         down = all(self._cycle_llm)

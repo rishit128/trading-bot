@@ -78,7 +78,7 @@ def test_two_bad_answers_fail_the_model_and_raise():
     assert len(client.calls) == 2  # retried exactly once, then given up
 
 
-def test_transport_and_missing_model_errors_are_not_retried():
+def test_transient_errors_are_retried_then_the_next_model_and_missing_models_are_skipped():
     import httpx
     import openai
 
@@ -95,14 +95,14 @@ def test_transport_and_missing_model_errors_are_not_retried():
     api = NoRetryClient(openai.APIConnectionError(request=httpx.Request("POST", "http://x")))
     with pytest.raises(LLMUnavailable):
         LLMClient(["a", "b"], client=api).signal("p")
-    assert api.calls == ["a", "b"]  # each model tried exactly once: no retry on transport errors
+    assert api.calls == ["a"] * 3 + ["b"] * 3  # transient: the first try plus two backed-off retries, then the next model
 
     gone = NoRetryClient(openai.NotFoundError(
         "gone", response=httpx.Response(404, request=httpx.Request("POST", "http://x")), body=None))
     llm = LLMClient(["a"], client=gone)
     with pytest.raises(LLMUnavailable):
         llm.signal("p")
-    assert gone.calls == ["a"]  # a missing model is skipped, not retried
+    assert gone.calls == ["a"]  # a missing model is skipped, never retried
     assert "a" in llm.dead  # and skipped for the rest of this session
 
 

@@ -20,7 +20,7 @@ import dataclasses
 import logging
 from typing import List, Literal, Optional, Sequence, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.agents.base import ADVISOR, LEAD, AgentContext
 from src.agents.history import HUMILITY, PatternStats, _pattern_id
@@ -28,6 +28,7 @@ from src.llm import LLMClient, LLMUnavailable, Signal
 
 log = logging.getLogger(__name__)
 
+PLACEHOLDERS = {"n/a", "na", "none", "null", "unknown", "tbd", "todo", "string", "...", "-", "--"}
 MAX_PHASE_ADJUSTMENT = 0.15  # the largest confidence swing one refinement phase may make (review doc 2.4)
 
 
@@ -49,6 +50,29 @@ class AdvancedSignal(BaseModel):
     raw_model: Optional[str] = None  # stamped client-side by the LLM client, never read from the model's JSON
     rule_alignment: Optional[Literal["agree", "deviate"]] = None  # does the call depart from the mechanical filter?
     falsification: Optional[str] = None  # the single most concrete thing that would prove this call wrong
+
+    @field_validator("step1_trend", "step2_overbought", "step3_volume", "final_reasoning")
+    @classmethod
+    def _substantive(cls, value: str) -> str:
+        """Schema-valid but empty answers ("", "n/a") are what a starved free model produces; reject them so the client
+        retries (quoting the problem) instead of trading on a blank rationale."""
+        value = value.strip()
+        if len(value) < 4 or value.lower().strip(".") in PLACEHOLDERS:
+            raise ValueError("a reasoning step must say something, not be blank or a placeholder like 'n/a'")
+        return value
+
+    @field_validator("step5_risks")
+    @classmethod
+    def _real_risks(cls, value: List[str]) -> List[str]:
+        risks = [r.strip() for r in value if r and r.strip()]
+        if not risks:
+            raise ValueError("step5_risks must name at least one concrete risk")
+        return risks
+
+    @field_validator("falsification")
+    @classmethod
+    def _blank_falsification_is_absent(cls, value: Optional[str]) -> Optional[str]:
+        return value.strip() or None if value is not None else None
 
     def to_signal(self) -> Signal:
         """Map to the pipeline's Signal, stashing the reasoning chain so it is logged, persisted and replay-able."""
@@ -438,10 +462,35 @@ class TechnicalAgent:
         )
 
     def _base(self, ctx: AgentContext) -> Signal:
-        if self.use_cot:
+        """The first call, with a fallback ladder for unreliable free models: the full chain-of-thought answer; if every
+        model fails at that, the compact one-sentence prompt (a smaller schema a weak model can usually still satisfy,
+        recorded as tier "compact"); only when that fails too does the caller stand down with a HOLD."""
+        if not self.use_cot:
+            return self.llm.signal(self.build_simple_prompt(ctx.snapshot))
+        try:
             advanced = self.llm.structured_call(self.build_prompt(ctx.snapshot), AdvancedSignal, COT_SCHEMA)
-            return advanced.to_signal()
-        return self.llm.signal(self.build_simple_prompt(ctx.snapshot))
+        except LLMUnavailable as e:
+            log.warning("chain-of-thought failed for %s (%s); trying the compact prompt", ctx.symbol, str(e)[:200])
+            compact = self.llm.signal(self.build_simple_prompt(ctx.snapshot))
+            details = {"tier": "compact", "cot_failure": str(e)[:300]}
+            if compact.raw_model:
+                details["raw_model"] = compact.raw_model
+            return Signal(action=compact.action, confidence=compact.confidence, reasoning=compact.reasoning,
+                          details=details)
+        # Whether the call departs from the mechanical filter is a fact we can compute; a model's own claim about it is
+        # unreliable (the live logs showed it labelling a HOLD "deviate" while quoting the filter's BUY), so overwrite it.
+        advanced.rule_alignment = "agree" if advanced.action == mechanical_action(ctx.snapshot) else "deviate"
+        signal = advanced.to_signal()
+        signal.details["tier"] = "cot"
+        return signal
+
+    @staticmethod
+    def _tag(sig: Signal, key: str, value) -> Signal:
+        """The same signal with one more audit flag in its details, so a skipped review is visible in the record."""
+        if sig.details is None:
+            return sig
+        return Signal(action=sig.action, confidence=sig.confidence, reasoning=sig.reasoning, degraded=sig.degraded,
+                      details={**sig.details, key: value})
 
     @staticmethod
     def _stamp_base(sig: Signal) -> Signal:
@@ -474,7 +523,7 @@ class TechnicalAgent:
             out = self.llm.structured_call(prompt, model, schema)
         except LLMUnavailable:
             log.warning("phase %s failed for %s, keeping current call", phase, ctx.symbol)
-            return current
+            return self._tag(current, f"{phase}_skipped", True)
         applied = self._clamp_adjustment(current.confidence, out.confidence, cap if cap is not None else self.max_adjustment)
         details = {**(current.details or {}), phase: extra(out, applied)}
         return Signal(action=out.action, confidence=applied,
@@ -547,7 +596,7 @@ class TechnicalAgent:
                                            ReflectionChain, REFLECT_SCHEMA)
         except LLMUnavailable:
             log.warning("phase reflection failed for %s, keeping current call", ctx.symbol)
-            return base
+            return self._tag(base, "reflection_skipped", True)
         steps, critic_confidence = self._apply_reflection(base, out)
         # Veto only: the critic may turn the call into a HOLD/SELL, but it does not shave the confidence of a call it
         # upholds. Its monotone stages plus the humility discount always land below min_confidence (0 of 182 live

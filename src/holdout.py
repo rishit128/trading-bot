@@ -26,7 +26,7 @@ from sqlalchemy import select
 from src.backtest import LIVE_PARITY, RiskLimits, Signals, simulate
 from src.database import DecisionRecord, HoldoutMark, PaperAccountRecord
 from src.engine.paper_broker import india_delivery_fees
-from datetime import timezone as _utc
+from datetime import timezone
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def _bar_date(created_at) -> Optional[pd.Timestamp]:
     """A decision expects a daily bar on its UTC calendar day; return that naive timestamp (or None)."""
     if created_at is None:
         return None
-    dt = created_at if created_at.tzinfo is None else created_at.astimezone(_utc.utc)
+    dt = created_at if created_at.tzinfo is None else created_at.astimezone(timezone.utc)
     return pd.Timestamp(dt.year, dt.month, dt.day)
 
 

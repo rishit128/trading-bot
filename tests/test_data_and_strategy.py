@@ -72,3 +72,28 @@ def test_signal_rejects_bad_values():
         Signal(action="MAYBE", confidence=0.5, reasoning="r")
     with pytest.raises(ValueError):
         Signal(action="BUY", confidence=1.5, reasoning="r")
+
+
+def test_snapshots_are_fetched_once_per_symbol_per_session_and_failures_are_not_cached():
+    from datetime import date
+    from src.data.indicators import Snapshot
+    from src.data.market_data import cached_per_session
+
+    calls, session = [], [date(2026, 9, 24)]
+    fail = {"B": True}
+
+    def fetch(symbol):
+        calls.append(symbol)
+        if fail.get(symbol):
+            raise ValueError("yahoo hiccup")
+        return Snapshot(symbol, 1.0, 1.0, 1.0, 50.0, 1)
+
+    get = cached_per_session(fetch, lambda: session[0])
+    first = get("A")
+    assert get("A") is first and calls == ["A"]  # the second cycle of the day reuses it: no second download
+    with pytest.raises(ValueError):
+        get("B")
+    fail["B"] = False
+    assert get("B").symbol == "B" and calls == ["A", "B", "B"]  # the failure was retried, not remembered
+    session[0] = date(2026, 9, 25)  # the next session closed: yesterday's data is stale
+    assert get("A") is not first and calls[-1] == "A"

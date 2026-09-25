@@ -1,12 +1,14 @@
-"""Phase 4 calibration: does the six-stage self-critique behave as designed on real decisions?
+"""Phase 4 calibration: does the reflection step behave as designed on real decisions?
 
-Checks the enforced contract (review doc 4.2), which is deterministic and checkable on every stored
-decision: each stage only keeps or lowers conviction, the chain ends with the fixed humility discount,
-the biggest-risk / what-proves-wrong / bias fields were filled, and the final confidence never exceeds
-the self-critiqued step 6. It also reports the confidence distribution before/after reflection.
+Reflection is a VETO ONLY: the critic may turn a call into a HOLD/SELL, but it does not shave the confidence of a call it
+upholds (its monotone, humility-discounted conviction is stored as `critic_confidence` for audit and never gates a trade).
+On every stored decision this checks that contract: each stage of the critic's chain only keeps or lowers conviction, the
+critic's number is the last stage minus the 0.10 humility discount, an upheld call keeps its confidence, and a vetoed one
+took the critic's confidence. Decisions recorded before the veto-only change carried the discount in the final confidence and are
+counted separately as legacy. It also reports the veto rate.
 
-It does NOT fabricate an outcome verdict: whether a humbler call wins more often needs closed trades,
-and the number is reported honestly (or reported as missing).
+It does NOT fabricate an outcome verdict: whether vetoed calls would have lost needs closed trades, and the number is
+reported honestly (or reported as missing).
 
     python scripts/analyze_phase4_calibration.py"""
 import json
@@ -38,11 +40,11 @@ def main():
         print("phases, so it is quiet until actionable signals occur.")
         return
 
-    violations = 0
-    humility_checks = 0
+    violations, legacy, upheld_n, vetoed_n = 0, 0, 0, 0
     for d in rows:
         try:
             stages = json.loads(d.conviction_adjustments or "[]")
+            reflection = ((json.loads(d.signals_json or "{}").get("technical") or {}).get("details") or {}).get("reflection") or {}
         except (ValueError, json.JSONDecodeError):
             violations += 1
             continue
@@ -53,16 +55,31 @@ def main():
                 violations += 1  # a later stage raised conviction: breaks the monotonic contract
             if conv is not None:
                 prev = conv
-        if prev is not None:
-            humility_checks += 1
-            if (d.final_confidence or 0.0) > prev - 0.099:
-                violations += 1  # the humility discount (0.10) was not applied
+        if "upheld" not in reflection:
+            legacy += 1  # pre-veto decisions: the humility discount was applied to the final confidence itself
+            if prev is not None and (d.final_confidence or 0.0) > prev - 0.099:
+                violations += 1
+            continue
+        if prev is not None and abs(reflection.get("critic_confidence", -1) - max(0.0, prev - 0.10)) > 1e-3:
+            violations += 1  # the audit number is not last stage minus humility
+        if reflection["upheld"]:
+            upheld_n += 1
+            entering = reflection.get("base_confidence_entering")
+            if entering is not None and abs((d.final_confidence or 0.0) - entering) > 1e-3:
+                violations += 1  # an upheld call must keep its confidence
+        else:
+            vetoed_n += 1
+            if abs((d.final_confidence or 0.0) - reflection.get("critic_confidence", -1)) > 1e-3:
+                violations += 1  # a vetoed call takes the critic's own (humility-discounted) confidence
 
-    print(f"\nmonotonic + humility contract violations: {violations} of {len(rows)} decisions checked")
+    print(f"\nreflection contract violations: {violations} of {len(rows)} decisions checked "
+          f"({legacy} legacy pre-veto, {upheld_n} upheld, {vetoed_n} vetoed)")
+    if upheld_n + vetoed_n:
+        print(f"  veto rate on current-contract decisions: {vetoed_n / (upheld_n + vetoed_n):.0%}")
     if violations:
-        print("  FIX NEEDED: some stored chains do not follow 'conviction only ever falls, minus 0.10 humility'.")
+        print("  FIX NEEDED: some stored chains break the contract described at the top of this script.")
     else:
-        print("  all stored chains obey: stage conviction never rises, and final confidence <= last stage - 0.10.")
+        print("  all stored chains obey the contract.")
 
     filled_risk = sum(1 for d in rows if d.biggest_risk and d.what_proves_us_wrong)
     filled_bias = sum(1 for d in rows if d.bias_check)
@@ -75,9 +92,8 @@ def main():
         if d.base_confidence is not None:
             base += 1
     if deltas:
-        print(f"\nconfidence reductions from base to final across {len(deltas)} decisions: "
-              f"avg {sum(deltas)/len(deltas):+.3f} | absorbs the reflection phase's effect on average")
-        print("  (review doc expects the self-critique to trim, typically by 0.15 - 0.40 when it finds real holes)")
+        print(f"\nconfidence change from base to final across {len(deltas)} decisions: avg {sum(deltas)/len(deltas):+.3f}")
+        print("  (legacy decisions carry the old humility discount; current ones change only when a phase before reflection did)")
         print(f"  base confidence recorded on {base} reflected decisions")
     else:
         print("\nno base->final deltas computable yet (reflection ran without a stored base confidence).")

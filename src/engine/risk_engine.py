@@ -51,8 +51,11 @@ def _reject(reason: str) -> RiskDecision:
 class RiskEngine:
     """Deterministic gate. The only source of order quantity: callers must not size trades themselves."""
 
-    def __init__(self, limits: RiskLimits):
+    def __init__(self, limits: RiskLimits, fees=None):
+        """`fees(side, value)` is the broker's fee schedule; with it, buys whose round-trip fees are too large a share
+        of the position are refused (limits.max_fee_drag_pct). Without it that rule is simply not applied."""
         self.limits = limits
+        self.fees = fees
 
     def evaluate(self, action: str, confidence: float, symbol: str, price: float, portfolio: Portfolio) -> RiskDecision:
         """Decide whether, and how much, to trade for a BUY or SELL signal."""
@@ -117,4 +120,9 @@ class RiskEngine:
                 f"no room: position_room={position_room:,.0f} exposure_room={exposure_room:,.0f} cash={p.cash:,.0f}"
             )
         qty = int(budget // price)
+        if self.fees is not None and lim.max_fee_drag_pct > 0:
+            value = qty * price
+            drag = (self.fees("BUY", value) + self.fees("SELL", value)) / value
+            if drag > lim.max_fee_drag_pct:
+                return _reject(f"fees would cost {drag:.1%} of a {value:,.0f} position (limit {lim.max_fee_drag_pct:.1%}): too small to be worth trading")
         return RiskDecision(True, qty, f"approved {qty} shares (value {qty * price:,.0f}, sized at {pct:.1%} for confidence {confidence:.2f})")

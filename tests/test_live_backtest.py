@@ -6,7 +6,6 @@ import pytest
 from src.backtest import LIVE_PARITY, simulate
 from src.config import RiskLimits
 from src.data.universe import (Candidate, ScreenConfig, UniverseScreener, screen_bars, select_candidates)
-from src.engine.paper_broker import india_delivery_fees
 from src.research.live_backtest import (make_buy_source, ranked_candidates, run_live_config, summarize_run)
 
 CFG = ScreenConfig(max_candidates=5, min_price=1.0, min_traded_value=1.0, max_daily_volatility=0.5)
@@ -97,7 +96,6 @@ def test_a_short_history_does_not_truncate_the_calendar_of_the_others():
 
 
 def test_live_config_run_uses_live_limits_costs_and_reports_expectancy():
-    close, volume = wide("Close"), wide("Volume")
     dates = list(IDX[260:])
     limits = RiskLimits(max_open_positions=2, min_position_pct=0.10, max_position_pct=0.25, stop_loss_pct=0.08)
     cfg = ScreenConfig(max_candidates=5, min_price=1.0, min_traded_value=1.0, max_daily_volatility=0.5, affordable_pct=0.10)

@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Callable, List, Optional, Sequence
 
+import numpy as np
 import pandas as pd
 
-from src.data.indicators import MAX_STALE_DAYS, MIN_BARS, compute_rsi
+from src.data.indicators import MAX_STALE_DAYS, MIN_BARS, rsi_from_array
 
 log = logging.getLogger(__name__)
 
@@ -49,32 +50,43 @@ class ScreenConfig:
     affordable_pct: Optional[float] = None
 
 
-def screen_symbol(symbol: str, close: pd.Series, volume: pd.Series, newest: pd.Timestamp,
+def screen_arrays(symbol: str, close: np.ndarray, volume: np.ndarray, last_bar: pd.Timestamp, newest: pd.Timestamp,
                   cfg: ScreenConfig) -> Optional[Candidate]:
-    """The scanner's verdict on ONE stock: a Candidate, or None. `close`/`volume` are the stock's completed daily bars
-    (oldest first, no NaN); `newest` is the freshest bar date in the whole scan, to spot stocks whose data stopped.
+    """The scanner's verdict on ONE stock from plain arrays (completed daily closes and volumes, oldest first, no NaN
+    closes): a Candidate, or None. `last_bar` is the date of the newest bar; `newest` the freshest bar in the whole scan,
+    to spot stocks whose data stopped.
 
     This is the single implementation of the entry filter: the live scanner (`screen_bars`) and the live-configuration
-    backtest both call it, so what is tested is what runs."""
+    backtest both end up here, so what is tested is what runs. Arrays, not Series: the backtest calls it millions of
+    times and pandas overhead dominated the cost."""
     if len(close) < max(MIN_BARS, MOMENTUM_BARS):  # a full year is needed to rank by 12-1 month momentum
         return None
-    if (newest - close.index[-1]).days > MAX_STALE_DAYS:
+    if (newest - last_bar).days > MAX_STALE_DAYS:
         return None  # data stops early: suspended or delisted, not a tradable candidate
-    price = float(close.iloc[-1])
-    traded_value = float((close * volume).tail(20).mean())
+    price = float(close[-1])
+    traded_value = float(np.nanmean(close[-20:] * volume[-20:]))
     if price < cfg.min_price or traded_value < cfg.min_traded_value:
         return None
-    volatility = float(close.pct_change().tail(63).std())
+    recent = close[-64:]
+    volatility = float(np.std(recent[1:] / recent[:-1] - 1.0, ddof=1))
     if not volatility <= cfg.max_daily_volatility:  # also rejects NaN
         return None
-    ma50, ma200 = float(close.tail(50).mean()), float(close.tail(200).mean())
+    ma50, ma200 = float(close[-50:].mean()), float(close[-200:].mean())
     if not price > ma50 > ma200:
         return None
-    rsi = compute_rsi(close)
+    rsi = rsi_from_array(close)
     if rsi >= 70:
         return None
-    mom_12_1 = float(close.iloc[-22] / close.iloc[-253] - 1)
-    return Candidate(symbol, price, price / float(close.iloc[-64]) - 1, rsi, traded_value, volatility, mom_12_1)
+    mom_12_1 = float(close[-22] / close[-253] - 1)
+    return Candidate(symbol, price, price / float(close[-64]) - 1, rsi, traded_value, volatility, mom_12_1)
+
+
+def screen_symbol(symbol: str, close: pd.Series, volume: pd.Series, newest: pd.Timestamp,
+                  cfg: ScreenConfig) -> Optional[Candidate]:
+    """`screen_arrays` for one stock's Series (completed daily bars, oldest first, no NaN closes)."""
+    if len(close) == 0:
+        return None
+    return screen_arrays(symbol, close.to_numpy(dtype=float), volume.to_numpy(dtype=float), close.index[-1], newest, cfg)
 
 
 def screen_bars(bars: pd.DataFrame, cfg: ScreenConfig) -> List[Candidate]:
@@ -173,7 +185,7 @@ class UniverseScreener:
                 log.info("delivery filter: kept %d/%d (above the day's median 20-day delivery %%)", len(passed), before)
         self._ranked = rank(passed, len(passed))
         self._day = self.today()
-        log.info("screen: %d passed filters, top %d: %s", len(passed), self.cfg.max_candidates,
+        log.info("screen: %d passed filters, best by momentum (before the affordability rule): %s", len(passed),
                  ", ".join(c.symbol for c in self._ranked[:self.cfg.max_candidates]))
         return self._ranked
 
@@ -194,4 +206,11 @@ class UniverseScreener:
     def symbols_for(self, portfolio) -> List[str]:
         """Current holdings first, then today's candidates: everything to analyse this cycle."""
         held = sorted(portfolio.positions)
-        return held + [c.symbol for c in self.candidates(portfolio.equity) if c.symbol not in portfolio.positions]
+        picks = self.candidates(portfolio.equity)
+        if self.cfg.affordable_pct is not None:
+            budget = portfolio.equity * self.cfg.affordable_pct
+            skipped = [c.symbol for c in self.ranked()[:self.cfg.max_candidates] if c.price > budget]
+            if skipped:
+                log.info("affordability: one share must fit in %.0f (%.0f%% of equity); skipped %s",
+                         budget, self.cfg.affordable_pct * 100, ", ".join(skipped))
+        return held + [c.symbol for c in picks if c.symbol not in portfolio.positions]

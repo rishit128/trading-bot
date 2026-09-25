@@ -22,9 +22,10 @@ from typing import Callable, Dict, List, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from src.backtest import LIVE_PARITY, Result, Trade, curve_metrics, simulate
+from src.backtest import LIVE_PARITY, Result, curve_metrics, simulate
 from src.config import RiskLimits
-from src.data.universe import (Candidate, ScreenConfig, above_median_delivery, rank, screen_symbol,
+from src.data.indicators import MIN_BARS
+from src.data.universe import (MOMENTUM_BARS, Candidate, ScreenConfig, above_median_delivery, rank, screen_arrays,
                                select_candidates)
 from src.engine.convention import SLIPPAGE
 from src.engine.paper_broker import india_delivery_fees
@@ -41,17 +42,18 @@ def ranked_candidates(close: pd.DataFrame, volume: pd.DataFrame, dates: Sequence
     `delivery_avg` (see `delivery_average`) applies the delivery filter on the dates it covers, and is skipped on the
     dates it does not, exactly as the live scanner fails open."""
     out: Dict[pd.Timestamp, List[Candidate]] = {}
-    index = close.index
+    index, symbols = close.index, list(close.columns)
+    C, V = close.to_numpy(dtype=float), volume.reindex(index=index, columns=close.columns).to_numpy(dtype=float)
+    min_bars = max(MIN_BARS, MOMENTUM_BARS)
     for d in dates:
         end = index.get_loc(d) + 1
         start = index.searchsorted(d - pd.Timedelta(days=LIVE_LOOKBACK_DAYS))
-        c_win, v_win = close.iloc[start:end], volume.iloc[start:end]
+        c_win, v_win, idx_win = C[start:end], V[start:end], index[start:end]
+        valid = ~np.isnan(c_win)
         found = []
-        for sym in c_win.columns:
-            c = c_win[sym].dropna()
-            if c.empty:
-                continue
-            candidate = screen_symbol(sym, c, v_win[sym].reindex(c.index).fillna(0.0), d, cfg)
+        for j in np.flatnonzero(valid.sum(axis=0) >= min_bars):  # cheap length test before touching any column
+            rows = np.flatnonzero(valid[:, j])
+            candidate = screen_arrays(symbols[j], c_win[rows, j], np.nan_to_num(v_win[rows, j]), idx_win[rows[-1]], d, cfg)
             if candidate is not None:
                 found.append(candidate)
         if delivery_avg is not None:

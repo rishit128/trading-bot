@@ -206,3 +206,10 @@ Both halves (2017-10..2022-03 and 2022-03..2026-09) agree on the ordering by sto
 than second-half in every row (the 2018 small-cap bust and 2020 crash against the 2022-26 rally), so read them as a range.
 Caveats: one dataset, survivorship bias, the AI is a constant stand-in, and the differences between neighbouring cells are
 within what a different sample could reverse; the choice rests on the consistent direction, not on any single cell.
+
+**Fee-drag rule (2026-09-25).** The first live cycle on the new sizing opened a one-share Rs 363 position: with the fixed
+Rs 15.93 charge per sale its round trip costs ~4.6%. The risk engine now refuses a buy whose round-trip fees exceed
+`MAX_FEE_DRAG_PCT` (default 4%, roughly a Rs 425 minimum position on Indian delivery costs). Backtest on the Rs 20,000
+account (10 x 5%, 15% stop): no cap +158%, 5% cap +158%, **4% cap +158% (identical trades)**, 3% cap +142%, 2% cap -19%
+(it starves the account of trades). So 4% costs nothing in the tested history and only blocks the degenerate case;
+tighter caps do measurable harm.
