@@ -280,3 +280,50 @@ def test_trade_history_lists_closed_trades_newest_first_with_both_dates(tmp_path
     first, second = broker.trade_history()
     assert (first["symbol"], first["net_pnl"], first["opened_at"], first["closed_at"]) == ("BBB", -100.0, T0, T0 + timedelta(days=1))
     assert (second["symbol"], second["net_pnl"], second["reason"]) == ("AAA", 200.0, "SIGNAL")
+
+
+# ---------------------------------------------------------------- cash sweep (idle cash earning a liquid-fund rate)
+def sweeping(tmp_path, rate=0.05, cash=100_000.0):
+    broker, feed, clock, now, sessions = make(tmp_path, cash=cash)
+    broker.cash_yield = rate
+    return broker, feed, clock, now, sessions
+
+
+def test_cash_sweep_is_off_by_default_and_idle_cash_earns_nothing(tmp_path):
+    broker, _, _, now, _ = make(tmp_path, cash=100_000.0)
+    broker.portfolio()
+    now[0] = T0 + timedelta(days=365)
+    assert broker.portfolio().cash == 100_000.0 and broker.summary()["interest_earned"] == 0.0
+
+
+def test_idle_cash_compounds_at_the_sweep_rate_and_is_never_back_dated(tmp_path):
+    broker, _, _, now, _ = sweeping(tmp_path)
+    assert broker.portfolio().cash == 100_000.0  # the first read only starts the clock
+    now[0] = T0 + timedelta(days=365)
+    assert broker.portfolio().cash == pytest.approx(105_000.0)
+    assert broker.summary()["interest_earned"] == pytest.approx(5_000.0)
+
+
+def test_interest_is_credited_on_the_balance_as_it_stood_before_each_cash_change(tmp_path):
+    broker, feed, _, now, _ = sweeping(tmp_path)
+    broker.portfolio()
+    now[0] = T0 + timedelta(days=365)
+    broker.buy_with_bracket("AAA", 100, 100.0, 0.15, 1.0)  # a year on 100,000 first, then 10,000 leaves cash
+    assert broker.portfolio().cash == pytest.approx(95_000.0)
+    now[0] = T0 + timedelta(days=730)
+    broker.sell("AAA", 100)  # a year on 95,000 before the 10,000 proceeds land; the proceeds earn nothing back-dated
+    assert broker.portfolio().cash == pytest.approx(95_000.0 * 1.05 + 10_000.0)
+
+
+def test_reconciliation_still_ties_out_with_interest_in_the_cash(tmp_path):
+    from src.ops.reconciliation import reconcile_paper
+
+    broker, _, _, now, sessions = sweeping(tmp_path)
+    broker.portfolio()
+    now[0] = T0 + timedelta(days=200)
+    broker.buy_with_bracket("AAA", 10, 100.0, 0.15, 1.0)
+    now[0] = T0 + timedelta(days=400)
+    broker.sell("AAA", 10)
+    broker.portfolio()
+    result = reconcile_paper(sessions, fees=no_fees)
+    assert not [f for f in result["findings"] if "cash" in f], result["findings"]

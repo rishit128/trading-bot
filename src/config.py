@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
+from src.learning.outcomes import HORIZONS
+
 load_dotenv()
 
 
@@ -93,6 +95,9 @@ class Settings:
     database_url: str = "sqlite:///trading.db"
     models: tuple = ()
     rebuy_cooldown_hours: float = 24.0
+    # Annual rate the paper account's idle cash earns, standing in for a liquid mutual fund sweep. 0 = off (cash earns
+    # nothing). The bot is only ~45% invested (10 positions x 5%), so this matters; see STRATEGY.md (2026-09-26).
+    cash_yield_pct: float = 0.0
     universe: str = "market"  # "market": scan every listed NSE stock; "watchlist": only WATCHLIST
     max_candidates: int = 15
     min_price: float = 100.0
@@ -102,7 +107,9 @@ class Settings:
     trend_exit: bool = True  # sell a held stock when its last completed close is below its 200-day average
     # Only above the day's cross-sectional median 20-day NSE delivery %. Combined with 12-1 momentum ranking, a
     # single 3-year test added ~14%/yr over the same-window basket (STRATEGY.md, 2026-09-22) -- promising, unproven.
-    delivery_filter: bool = True
+    # Off by default since 2026-09-26: its data (NSE's daily bhavcopy) may not be downloaded automatically under NSE's
+    # terms, so it only works with files saved by hand each trading day (see README, 'Files you download').
+    delivery_filter: bool = False
     analysis_workers: int = 3  # stocks analysed concurrently (LLM calls are latency-bound; keep modest for free tiers)
     llm_cache_hours: float = 12.0
     # Free OpenRouter models are reasoning models: hidden thinking eats max_tokens and leaves the answer empty or cut off.
@@ -115,7 +122,10 @@ class Settings:
     llm_context: bool = True  # market context: adjust when the market regime is notable (risk-off / euphoric)
     llm_reflect: bool = True  # reflection: self-critique of the assembled call before it is final
     llm_max_adjust: float = 0.15
-    learning_horizon: int = 20  # sessions an outcome is measured over (what "how did this setup turn out" means)
+    # Sessions an outcome is measured over (what "how did this setup turn out" means). 60, not 20: live-setup trades are
+    # held a median 65-74 sessions, and the 60-session outcome ranks their real results better (0.66-0.69 vs 0.53-0.62
+    # rank correlation, STRATEGY.md 2026-09-26). Must be one of the labelled horizons (src.learning.outcomes.HORIZONS).
+    learning_horizon: int = 60
     learning_min_samples: int = 30  # independent observations a setup label needs before the memory speaks at all  # largest confidence change one refinement phase may make (review doc 2.4)
     risk: RiskLimits = field(default_factory=RiskLimits)
 
@@ -134,8 +144,13 @@ class Settings:
             raise ValueError("llm_min_interval and llm_concurrency must be >= 0 (0 concurrency = unlimited)")
         if self.learning_horizon < 1 or self.learning_min_samples < 1:
             raise ValueError("learning_horizon and learning_min_samples must be >= 1")
+        if self.learning_horizon not in HORIZONS:
+            raise ValueError(f"learning_horizon must be one of the labelled horizons {HORIZONS}, "
+                             f"got {self.learning_horizon}")
         if not 0 <= self.llm_max_adjust <= 1:
             raise ValueError("llm_max_adjust must be a fraction in [0, 1]")
+        if not 0 <= self.cash_yield_pct <= 0.15:
+            raise ValueError(f"cash_yield_pct must be an annual fraction in [0, 0.15], e.g. 0.05, got {self.cash_yield_pct}")
         if not 0 < self.max_daily_volatility < 1:
             raise ValueError("max_daily_volatility must be a fraction in (0, 1), e.g. 0.04")
 
@@ -171,13 +186,14 @@ def load_settings() -> Settings:
         database_url=os.getenv("DATABASE_URL", "sqlite:///trading.db"),
         models=models,
         rebuy_cooldown_hours=_float("REBUY_COOLDOWN_HOURS", 24.0),
+        cash_yield_pct=_float("CASH_YIELD_PCT", 0.0),
         universe=os.getenv("UNIVERSE", "market").strip().lower(),
         max_candidates=int(_float("MAX_CANDIDATES", 15)),
         min_price=_float("MIN_PRICE", defaults.min_price),
         min_traded_value=_float("MIN_TRADED_VALUE", defaults.min_traded_value),
         max_daily_volatility=_float("MAX_DAILY_VOLATILITY", 0.04),
         trend_exit=os.getenv("TREND_EXIT", "true").strip().lower() != "false",
-        delivery_filter=os.getenv("DELIVERY_FILTER", "true").strip().lower() != "false",
+        delivery_filter=os.getenv("DELIVERY_FILTER", "false").strip().lower() == "true",
         auto_protect=os.getenv("AUTO_PROTECT", "true").strip().lower() != "false",
         analysis_workers=int(_float("ANALYSIS_WORKERS", 3)),
         llm_cache_hours=_float("LLM_CACHE_HOURS", 12.0),
@@ -189,7 +205,7 @@ def load_settings() -> Settings:
         llm_context=os.getenv("LLM_CONTEXT", "true").strip().lower() != "false",
         llm_reflect=os.getenv("LLM_REFLECT", "true").strip().lower() != "false",
         llm_max_adjust=_float("LLM_MAX_ADJUST", 0.15),
-        learning_horizon=int(_float("LEARNING_HORIZON", 20)),
+        learning_horizon=int(_float("LEARNING_HORIZON", 60)),
         learning_min_samples=int(_float("LEARNING_MIN_SAMPLES", 30)),
         risk=risk,
     )

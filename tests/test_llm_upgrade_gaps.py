@@ -15,6 +15,7 @@ from sqlalchemy import select
 from src.agents.technical import (AdvancedSignal, COT_SCHEMA, ReflectionChain, ReflectionStage, TechnicalAgent,
                                   mechanical_action, mechanical_baseline)
 from src.agents.base import LEAD
+from src.agents.technical.phases import apply_reflection
 from src.agents.history import MAX_MATCHES, PatternMatch, pattern_id, analyze_pattern, find_similar_patterns
 from src.config import Settings, load_settings
 from src.data.indicators import Snapshot
@@ -108,7 +109,7 @@ def test_transient_errors_are_retried_then_the_next_model_and_missing_models_are
 
 # ------------------------------------------------------------------ decision-memory: cap, label, pattern lookup
 def test_clamp_adjustment_bounds_and_cap():
-    clamp = TechnicalAgent._clamp_adjustment
+    from src.agents.technical.phases import clamp_adjustment as clamp
     assert clamp(0.75, 0.7, 0.15) == pytest.approx(0.7)  # inside the cap: applied as-is
     assert clamp(0.75, 0.5, 0.15) == pytest.approx(0.6)  # a -0.25 request is capped at -0.15
     assert clamp(0.75, 1.0, 0.15) == pytest.approx(0.9)  # a +0.25 request is capped at +0.15
@@ -157,7 +158,6 @@ def test_analyze_pattern_maps_matches_into_stats():
 
 # ------------------------------------------------------------------ reflection: monotonic clamp + humility
 def test_reflection_never_lets_a_stage_raise_conviction():
-    agent = TechnicalAgent(llm=None)
     base = SimpleNamespace(confidence=0.75)
     rising = ReflectionChain(action="BUY", confidence=0.9,
                              step2_reflection=ReflectionStage(conviction=0.9, reason="overconfident"),
@@ -166,14 +166,13 @@ def test_reflection_never_lets_a_stage_raise_conviction():
                              step5_integration=ReflectionStage(conviction=0.8, reason="still sure"),
                              step6_risk=ReflectionStage(conviction=0.8, reason="very sure"),
                              biggest_risk="x", what_proves_us_wrong="y", bias_check=[])
-    steps, final = agent._apply_reflection(base, rising)
+    steps, final = apply_reflection(base, rising)
     # Every later stage that tried to go above 0.75 is pinned to the previous conviction (never up).
     assert [c for _, c, _ in steps] == pytest.approx([0.75, 0.75, 0.75, 0.75, 0.75, 0.75])
     assert final == pytest.approx(0.65)  # 0.75 minus the 0.10 humility, even though the model wanted 0.8
 
 
 def test_reflection_keeps_model_drops_and_applies_humility_once():
-    agent = TechnicalAgent(llm=None)
     falling = ReflectionChain(action="SELL", confidence=0.3,
                               step2_reflection=ReflectionStage(conviction=0.7, reason="r2"),
                               step3_fundamental=ReflectionStage(conviction=0.6, reason="r3"),
@@ -181,7 +180,7 @@ def test_reflection_keeps_model_drops_and_applies_humility_once():
                               step5_integration=ReflectionStage(conviction=0.5, reason="r5"),
                               step6_risk=ReflectionStage(conviction=0.4, reason="r6"),
                               biggest_risk="x", what_proves_us_wrong="y", bias_check=[])
-    steps, final = agent._apply_reflection(SimpleNamespace(confidence=0.75), falling)
+    steps, final = apply_reflection(SimpleNamespace(confidence=0.75), falling)
     assert [c for _, c, _ in steps] == pytest.approx([0.75, 0.7, 0.6, 0.5, 0.5, 0.4])
     assert final == pytest.approx(0.3)  # 0.4 - 0.10, exactly the one humility discount
 

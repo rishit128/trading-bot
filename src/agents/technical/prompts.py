@@ -4,7 +4,7 @@ was sent (`scripts/replay_decision.py`) and a wording change is a one-file diff.
 `PROMPT_VERSION` in src/versions.py."""
 from src.agents.history import PatternStats
 from src.engine.enums import Action
-from src.engine.rules import above_ma50, entry_filter, ma_stack_bullish, overbought
+from src.engine.rules import RSI_OVERBOUGHT, above_ma50, entry_filter, ma_stack_bullish, overbought
 from src.engine.agent_signal import AgentSignal
 
 
@@ -20,15 +20,15 @@ def mechanical_baseline(s) -> str:
     """Human-readable form of the mechanical verdict, rendered into the CoT prompt and reused by the metrics dashboards."""
     above, stacked = above_ma50(s.price, s.ma50), ma_stack_bullish(s.ma50, s.ma200)
     if entry_filter(s.price, s.ma50, s.ma200, s.rsi):
-        return ("BUY (price above MA50, MA50 above MA200, RSI(14) below 70 - the technical filter this candidate "
-                "passed)")
+        return (f"BUY (price above MA50, MA50 above MA200, RSI(14) below {RSI_OVERBOUGHT:.0f} - the technical filter "
+                "this candidate passed)")
     divergences = []
     if not above:
         divergences.append(f"price {s.price:.2f} is below MA50 {s.ma50:.2f}")
     if not stacked:
         divergences.append(f"MA50 {s.ma50:.2f} is below MA200 {s.ma200:.2f}")
     if overbought(s.rsi):
-        divergences.append(f"RSI(14) {s.rsi:.1f} is at or above 70")
+        divergences.append(f"RSI(14) {s.rsi:.1f} is at or above {RSI_OVERBOUGHT:.0f}")
     return "HOLD (" + "; ".join(divergences) + " - the mechanical filter did NOT select this candidate)"
 
 

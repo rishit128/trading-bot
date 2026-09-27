@@ -1,7 +1,14 @@
+"""The deterministic risk gate: example-based checks below, then property-style tests over thousands of seeded random
+accounts (the risk engine is the only thing standing between an AI's opinion and an order, so its guarantees are
+checked broadly, not just on a few examples)."""
+import random
+from datetime import date, timedelta
+
 import pytest
 
 from src.config import RiskLimits
-from src.engine.risk_engine import Portfolio, RiskEngine
+from src.engine.costs import india_delivery_fees
+from src.engine.risk_engine import Portfolio, RiskEngine, drawdown_pause
 
 # min_position_pct == max_position_pct here: a flat 5% regardless of confidence, so the existing quantity assertions
 # below (written before confidence-scaled sizing existed) still hold. Scaling itself is tested separately below.
@@ -146,10 +153,6 @@ def test_scaling_never_exceeds_the_exposure_or_cash_limits():
 
 
 # ---------------------------------------------------------------- drawdown pause (cool-off instead of a permanent halt)
-from datetime import date, timedelta  # noqa: E402
-
-from src.engine.risk_engine import drawdown_pause  # noqa: E402
-
 D0 = date(2026, 1, 1)
 
 
@@ -169,18 +172,12 @@ def test_drawdown_pause_zero_days_keeps_the_permanent_halt():
 
 
 def test_risk_limits_reject_a_negative_pause():
-    import pytest
-    from src.config import RiskLimits
     with pytest.raises(ValueError, match="drawdown_pause_days"):
         RiskLimits(drawdown_pause_days=-1)
 
 
 # ---------------------------------------------------------------- fee drag: tiny positions are not worth their fixed charges
-from src.engine.costs import india_delivery_fees  # noqa: E402
-
-
 def _engine(fee_drag=0.04, fees=india_delivery_fees):
-    from src.config import RiskLimits
     return RiskEngine(RiskLimits(min_position_pct=0.05, max_position_pct=0.05, max_fee_drag_pct=fee_drag), fees=fees)
 
 
@@ -188,8 +185,8 @@ def test_a_one_share_position_whose_fixed_sale_charge_dwarfs_it_is_refused():
     squeezed = Portfolio(cash=400, equity=20_000)  # only Rs 400 of cash/exposure room left: one Rs 363 share fits
     tiny = _engine().evaluate("BUY", 0.8, "TINY", 363.0, squeezed)  # the Rs 15.93 sale charge alone is ~4.4%
     assert not tiny.approved and "fees would cost" in tiny.reason
-    pf = Portfolio(cash=20_000, equity=20_000)
-    fine = _engine().evaluate("BUY", 0.8, "FINE", 950.0, pf)  # Rs 950: fees ~1.9%
+    room = Portfolio(cash=20_000, equity=20_000)
+    fine = _engine().evaluate("BUY", 0.8, "FINE", 950.0, room)  # Rs 950: fees ~1.9%
     assert fine.approved and fine.quantity == 1
 
 
@@ -200,13 +197,11 @@ def test_the_fee_rule_can_be_turned_off_or_is_skipped_without_a_fee_schedule():
 
 
 def test_the_fee_rule_never_blocks_a_sell():
-    pf = Portfolio(cash=0, equity=20_000, positions={"TINY": 363.0}, position_qty={"TINY": 1})
-    assert _engine().evaluate("SELL", 1.0, "TINY", 363.0, pf).approved  # you must always be able to exit
+    held = Portfolio(cash=0, equity=20_000, positions={"TINY": 363.0}, position_qty={"TINY": 1})
+    assert _engine().evaluate("SELL", 1.0, "TINY", 363.0, held).approved  # you must always be able to exit
 
 
 def test_risk_limits_validate_the_fee_cap_and_the_pipeline_uses_the_brokers_fee_schedule(tmp_path):
-    import pytest
-    from src.config import RiskLimits
     from tests.test_llm_and_pipeline import FakeBroker, make_pipeline
 
     with pytest.raises(ValueError, match="max_fee_drag_pct"):
@@ -215,3 +210,130 @@ def test_risk_limits_validate_the_fee_cap_and_the_pipeline_uses_the_brokers_fee_
     broker.fees = india_delivery_fees
     pipe, _, _ = make_pipeline(tmp_path, broker=broker)
     assert pipe.risk.fees is india_delivery_fees
+
+
+# ==================================================================================================================
+# Property-style tests over thousands of seeded random accounts (see the module docstring).
+CASES = 4000
+
+
+def random_limits(rng):
+    max_pos = rng.choice([0.03, 0.05, 0.1, 0.25])
+    min_pos = rng.choice([max_pos, max_pos / 2, max_pos / 4])
+    return RiskLimits(min_position_pct=min_pos, max_position_pct=max_pos,
+                      max_portfolio_exposure_pct=rng.choice([0.5, 0.8, 1.0]), max_daily_loss_pct=rng.choice([0.02, 0.05]),
+                      max_drawdown_pct=rng.choice([0.1, 0.2, 0.3]), min_confidence=rng.choice([0.5, 0.6, 0.7]),
+                      max_open_positions=rng.choice([1, 3, 5, 10]), max_fee_drag_pct=rng.choice([0.0, 0.04]))
+
+
+def random_portfolio(rng):
+    equity = rng.uniform(5_000, 2_000_000)
+    names = [f"S{i}" for i in range(rng.randint(0, 9))]
+    values = {n: equity * rng.uniform(0.005, 0.12) for n in names}
+    invested = sum(values.values())
+    cash = max(0.0, equity - invested) * rng.choice([1.0, 0.8, 0.5, 0.03, 0.01])  # some accounts are nearly out of cash
+    prices = {n: equity * rng.uniform(0.0005, 0.05) for n in names}
+    qty = {n: max(1, int(values[n] / prices[n])) for n in names}
+    sod = equity * rng.choice([1.0, 1.0, 1.03, 0.99, 1.1])
+    peak = equity * rng.choice([1.0, 1.0, 1.05, 1.15, 1.4])
+    return Portfolio(cash=cash, equity=equity, positions=values, position_qty=qty, start_of_day_equity=sod, peak_equity=peak)
+
+
+def scenarios(seed):
+    rng = random.Random(seed)
+    for _ in range(CASES):
+        limits, p = random_limits(rng), random_portfolio(rng)
+        symbol = rng.choice(list(p.positions) + ["NEW1", "NEW2"])
+        price = p.equity * rng.uniform(0.0003, 0.06)  # from a fraction of a percent to a share worth 6% of the account
+        yield limits, p, symbol, price, rng.uniform(0.3, 1.0), rng.choice(["BUY", "BUY", "BUY", "SELL", "HOLD"])
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_an_approved_buy_never_breaks_a_limit(seed):
+    approved = 0
+    for limits, p, symbol, price, conf, action in scenarios(seed):
+        engine = RiskEngine(limits, fees=india_delivery_fees)
+        d = engine.evaluate(action, conf, symbol, price, p)
+        if action != "BUY":
+            continue
+        if not d.approved:
+            assert d.quantity == 0
+            continue
+        approved += 1
+        value = d.quantity * price
+        existing = p.positions.get(symbol, 0.0)
+        assert d.quantity >= 1
+        assert conf >= limits.min_confidence
+        assert value <= p.cash + 1e-6                                                       # never spends money it lacks
+        assert existing + value <= p.equity * engine.position_pct(conf) + price            # size follows confidence
+        assert existing + value <= p.equity * limits.max_position_pct + price              # ... and the position cap
+        assert sum(p.positions.values()) + value <= p.equity * limits.max_portfolio_exposure_pct + price
+        assert symbol in p.positions or len(p.positions) < limits.max_open_positions       # never a slot beyond the cap
+        assert engine.halt_reason(p) is None                                                # never buys while halted
+        if limits.max_fee_drag_pct > 0:
+            drag = (india_delivery_fees("BUY", value) + india_delivery_fees("SELL", value)) / value
+            assert drag <= limits.max_fee_drag_pct + 1e-9                                   # never a fee-dominated position
+    assert approved > 150  # the generator really produces approvable cases; a vacuous pass would prove nothing
+
+
+@pytest.mark.parametrize("seed", [4, 5])
+def test_sells_only_close_what_is_held_and_holds_never_trade(seed):
+    sells = 0
+    for limits, p, symbol, price, conf, action in scenarios(seed):
+        d = RiskEngine(limits).evaluate(action, conf, symbol, price, p)
+        if action == "HOLD":
+            assert not d.approved and d.quantity == 0
+        elif action == "SELL":
+            held = p.position_qty.get(symbol, 0)
+            if conf < limits.min_confidence:
+                assert not d.approved
+            elif d.approved:
+                sells += 1
+                assert held > 0 and d.quantity == held  # a full close of a real position, never a short
+            else:
+                assert held == 0 or conf < limits.min_confidence
+    assert sells > 100
+
+
+def test_position_size_never_shrinks_as_confidence_grows_and_stays_within_its_bounds():
+    rng = random.Random(6)
+    for _ in range(500):
+        limits = random_limits(rng)
+        engine, last = RiskEngine(limits), -1.0
+        for conf in [i / 100 for i in range(0, 101)]:
+            pct = engine.position_pct(conf)
+            assert limits.min_position_pct - 1e-12 <= pct <= limits.max_position_pct + 1e-12
+            assert pct >= last - 1e-12
+            last = pct
+
+
+def test_a_halt_is_reported_exactly_when_a_limit_is_breached():
+    rng = random.Random(7)
+    for _ in range(CASES):
+        limits, p = random_limits(rng), random_portfolio(rng)
+        halt = RiskEngine(limits).halt_reason(p)
+        day_loss = (p.start_of_day_equity - p.equity) / p.start_of_day_equity
+        drawdown = (p.peak_equity - p.equity) / p.peak_equity
+        breached = day_loss >= limits.max_daily_loss_pct or drawdown >= limits.max_drawdown_pct
+        assert (halt is not None) == breached
+        if halt:
+            assert halt[0] in ("daily_loss", "drawdown")
+
+
+def test_the_drawdown_pause_only_ever_rebases_downward_after_the_full_cool_off():
+    rng, today = random.Random(8), date(2026, 1, 1)
+    for _ in range(CASES):
+        peak, equity = rng.uniform(1_000, 2e6), rng.uniform(500, 2e6)
+        limit, pause = rng.choice([0.1, 0.2, 0.3]), rng.choice([0, 7, 30])
+        since = rng.choice([None, today - timedelta(days=rng.randint(0, 60))])
+        new_peak, new_since = drawdown_pause(peak, equity, since, today, limit, pause)
+        in_drawdown = (peak - equity) / peak >= limit
+        if pause <= 0:
+            assert (new_peak, new_since) == (peak, since)
+        elif not in_drawdown:
+            assert new_peak == peak and new_since is None      # recovered: nothing pending, peak untouched
+        elif new_peak != peak:
+            assert new_peak == equity and new_since is None    # rebased to today's equity only ...
+            assert since is not None and (today - since).days >= pause  # ... after a full cool-off
+        else:
+            assert new_since is not None                       # still cooling off, and the clock is running

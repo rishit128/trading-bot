@@ -8,7 +8,7 @@ import pytest
 
 SRC = Path(__file__).resolve().parent.parent / "src"
 ROOT_ALLOWED = {"config", "control", "logging_setup", "pipeline", "results", "runner", "versions", "workflow"}
-PACKAGES = {"agents", "app", "data", "database", "engine", "intraday", "learning", "llm", "monitoring", "ops", "research"}
+PACKAGES = {"agents", "app", "data", "database", "engine", "intraday", "learning", "llm", "monitoring", "ops", "portfolio", "research"}
 
 
 def module_name(path: Path) -> str:
@@ -23,7 +23,7 @@ def package_of(name: str) -> str:
 
 def runtime_imports(path: Path):
     """(imported module, level) for every import that runs, i.e. not under TYPE_CHECKING."""
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     skip = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.If) and "TYPE_CHECKING" in ast.dump(node.test):
@@ -98,6 +98,16 @@ def test_there_are_no_import_cycles_between_modules():
         if module not in state:
             visit(module, [module])
     assert cycles == []
+
+
+def test_the_real_portfolio_agent_is_walled_off_from_the_trading_code():
+    """It reads a real-money account: it imports nothing of the trading code (no path to the paper broker, pipeline or
+    orders), and only its one wiring module (app/portfolio_agent.py) imports it."""
+    assert not [f"{m} imports {t}" for m in MODULES if package_of(m) == "portfolio"
+                for t, _, _ in IMPORTS[m] if not t.startswith("src.portfolio")]
+    importers = {m for m in MODULES if package_of(m) != "portfolio"
+                 for t, _, _ in IMPORTS[m] if package_of(t) == "portfolio"}
+    assert importers == {"src.app.portfolio_agent"}
 
 
 @pytest.mark.parametrize("module", ["src.workflow"])

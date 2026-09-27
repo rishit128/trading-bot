@@ -28,7 +28,7 @@ Status key: `PASS` = implemented + unit-tested · `needs data` = implemented, pr
 | Profit factor = avg winner / avg loser (None when a bucket is empty) | PASS | `pattern_stats.profit_factor` |
 | Sample-size-aware confidence in the memory (`n/30`, capped) | PASS | `PatternStats.confidence_in_pattern` |
 | Reliability rendered as yes/maybe/no | PASS | `LearningSignal.pattern_reliability: Literal["yes","maybe","no"]`, schema v2, `min_pattern_sample=3` gate |
-| Per-refinement confidence cap of ≤0.15 | PASS | `_clamp_adjustment` + `TechnicalAgent(max_adjustment=...)`, wired from `LLM_MAX_ADJUST` (default 0.15) |
+| Per-refinement confidence cap of ≤0.15 | PASS | `phases.clamp_adjustment` + `TechnicalAgent(max_adjustment=...)`, wired from `LLM_MAX_ADJUST` (default 0.15) |
 | Store what was adjusted and why | PASS | `adjusted_signal_confidence`, `adjustment_reason`, `pattern_id` columns, written by the pipeline |
 | Effectiveness over time | needs data | `scripts/analyze_learning_effectiveness.py` |
 
@@ -47,7 +47,7 @@ Status key: `PASS` = implemented + unit-tested · `needs data` = implemented, pr
 | Review point | Status | Where |
 |---|---|---|
 | Six-stage chain incl. biggest risk + "what proves me wrong" + bias check | PASS | `ReflectionStage`/`ReflectionChain` + `REFLECT_SCHEMA` (`reflection_check_v2`) |
-| Conviction only ever stays or falls, each stage | PASS | `_apply_reflection` (monotonic clamp, client-side enforced) |
+| Conviction only ever stays or falls, each stage | PASS | `phases.apply_reflection` (monotonic clamp, client-side enforced) |
 | Deterministic humility discount then final confidence | PASS | `_reflect`: final = step-6 conviction − `HUMILITY` (0.10); reasoning marker `[reflection: … -> final confidence 0.50]` |
 | Reflection only on non-HOLD calls | PASS | `analyze()` skips phase 4 on HOLD (and phase 3) |
 | Store the chain + the concession fields | PASS | `conviction_adjustments` (JSON list of stages), `biggest_risk`, `what_proves_us_wrong`, `bias_check` |

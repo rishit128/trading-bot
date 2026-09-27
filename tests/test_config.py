@@ -120,8 +120,23 @@ def test_dataclass_defaults_match_the_evidence_backed_exit_settings():
     assert s.trend_exit is True and s.risk.stop_loss_pct == 0.15 and s.risk.take_profit_pct == 1.00
 
 
-def test_delivery_filter_defaults_on_and_can_be_disabled(monkeypatch):
+def test_delivery_filter_defaults_off_and_can_be_enabled(monkeypatch):
+    """Off by default since 2026-09-26: its NSE bhavcopy data may not be downloaded automatically under NSE's terms."""
     monkeypatch.delenv("DELIVERY_FILTER", raising=False)
-    assert load_settings().delivery_filter is True
-    monkeypatch.setenv("DELIVERY_FILTER", "false")
     assert load_settings().delivery_filter is False
+    monkeypatch.setenv("DELIVERY_FILTER", "true")
+    assert load_settings().delivery_filter is True
+
+
+def test_learning_horizon_defaults_to_the_live_holding_period(monkeypatch):
+    """60 sessions: live-setup trades are held a median 65-74 sessions (STRATEGY.md, 2026-09-26)."""
+    monkeypatch.delenv("LEARNING_HORIZON", raising=False)
+    assert load_settings().learning_horizon == 60
+
+
+def test_an_unlabelled_learning_horizon_is_rejected_at_startup_not_deep_inside_setupmemory(monkeypatch):
+    """Only 5/20/60 are labelled (src.learning.outcomes.HORIZONS); any other value must fail load_settings() with the
+    standard "Invalid configuration" message, not surface later as an unhandled ValueError from SetupMemory()."""
+    monkeypatch.setenv("LEARNING_HORIZON", "30")
+    with pytest.raises(ValueError, match="learning_horizon"):
+        load_settings()

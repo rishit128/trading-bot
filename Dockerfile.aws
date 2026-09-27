@@ -1,0 +1,36 @@
+# The AWS deployment: the paper trading bot AND the real-portfolio agent in one image (the /portfolio Telegram
+# command is wired into the trading bot's own process, so both must run together — see src/app/portfolio_agent.py).
+# The plain Dockerfile (paper bot only, no browser) stays as the lighter image for anyone who does not want that agent.
+FROM python:3.13-slim
+
+# UTF-8 output (the rupee sign); LangGraph/LangSmith telemetry explicitly off.
+# PORTFOLIO_SECRET_BACKEND=aws: the login (mobile/MPIN) lives in AWS Secrets Manager, not Windows Credential Manager,
+# which does not exist here. PORTFOLIO_NO_SANDBOX=true: Chromium's own OS sandbox needs a capability (CAP_SYS_ADMIN)
+# a container does not have by default; Docker's own container isolation stands in for it instead (see session.py).
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PYTHONIOENCODING=utf-8 \
+    LANGSMITH_TRACING=false LANGCHAIN_TRACING_V2=false LOG_FORMAT=json \
+    PORTFOLIO_SECRET_BACKEND=aws PORTFOLIO_NO_SANDBOX=true \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+WORKDIR /app
+COPY requirements.txt requirements-portfolio.txt ./
+RUN pip install -r requirements-portfolio.txt \
+    && playwright install --with-deps chromium
+
+COPY main.py ./
+COPY src ./src
+
+# /data: the paper account's own sqlite database (as in the plain Dockerfile).
+# /app/portfolio_data: the read-only agent's browser profile (keeps the portal's device ID across restarts) and its
+# saved run reports; nothing in it is a secret (the login itself is in AWS Secrets Manager, never on disk).
+RUN useradd --create-home bot && mkdir -p /data /app/portfolio_data \
+    && chown -R bot:bot /data /app/portfolio_data /ms-playwright
+USER bot
+ENV DATABASE_URL=sqlite:////data/trading.db
+ENV INTRADAY_DATABASE_URL=sqlite:////data/intraday.db
+VOLUME ["/data", "/app/portfolio_data"]
+
+# Paper trading, every 30 minutes while NSE is open, placing paper orders (--live: the built-in simulator, never a
+# real order). Send /portfolio to the bot on Telegram at any time to read the real account (read-only; asks for the
+# OTP on Telegram, never places an order there either).
+CMD ["python", "main.py", "--loop", "30", "--live"]

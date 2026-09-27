@@ -28,6 +28,11 @@ def main():
 
     close, volume, nifty = load_universe(500, 10)
     deliv = load_delivery(args.years)
+    if deliv.empty:
+        from src.data.delivery import bhavcopy_dir
+
+        sys.exit(f"no NSE bhavcopy files in {bhavcopy_dir()}: download them in a browser first "
+                 "(see README, 'Files you download')")
     print(f"delivery data: {len(deliv)} trading days, {deliv.index[0].date()} .. {deliv.index[-1].date()}")
     avg = deliv.reindex(close.index).rolling(20, min_periods=10).mean().reindex(columns=close.columns)
     high_delivery = avg.gt(avg.median(axis=1), axis=0)

@@ -1,11 +1,11 @@
 from datetime import date, datetime, timedelta, timezone
-from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 
 from src.data import india
-from src.data.india import IndiaClock, IntradayFeed, _parse_symbols, fetch_nse_symbols, yf_bar_fetcher
+from src.data.india import (IndiaClock, IntradayFeed, NseFileMissing, _parse_symbols, load_index_symbols,
+                            load_nse_symbols, yf_bar_fetcher)
 
 UTC = timezone.utc
 
@@ -17,12 +17,8 @@ def nse_csv(n=150, extra=""):
     return "\n".join(r for r in rows if r)
 
 
-def resp(text, status=200):
-    def raise_for_status():
-        if status >= 400:
-            raise RuntimeError(f"HTTP {status}")
-
-    return SimpleNamespace(text=text, status_code=status, raise_for_status=raise_for_status)
+def nifty_csv(n):
+    return "Company Name,Industry,Symbol,Series,ISIN Code\n" + "\n".join(f"C{i},Ind{i % 3},SYM{i:03d},EQ,{i}" for i in range(n))
 
 
 def test_parser_keeps_only_eq_series_and_strips_column_names():
@@ -35,31 +31,84 @@ def test_parser_handles_nifty_style_csv_without_series_filter_needed():
     assert _parse_symbols(csv) == ["ABB", "TCS"]
 
 
-def test_fetch_uses_nse_list_first():
-    calls = []
-
-    def get(url, **kw):
-        calls.append(url)
-        return resp(nse_csv())
-
-    assert len(fetch_nse_symbols(get)) == 150 and calls == [india.NSE_EQUITY_LIST]
+def yahoo_list(n):
+    return lambda min_traded_value: [f"Y{i:04d}" for i in range(n)]
 
 
-def test_fetch_falls_back_to_nifty500_when_nse_archive_fails():
-    def get(url, **kw):
-        if url == india.NSE_EQUITY_LIST:
-            raise ConnectionError("blocked")
-        return resp("Company Name,Industry,Symbol,Series,ISIN Code\n" +
-                    "\n".join(f"C{i},X,SYM{i:03d},EQ,{i}" for i in range(120)))
-
-    assert len(fetch_nse_symbols(get)) == 120
+def yahoo_down(min_traded_value):
+    raise ConnectionError("yahoo down")
 
 
-def test_fetch_rejects_suspiciously_small_lists_and_raises_if_nothing_works():
+def test_a_hand_saved_equity_file_wins_over_yahoo(tmp_path):
+    (tmp_path / "EQUITY_L.csv").write_text(nse_csv())
+    assert len(load_nse_symbols(tmp_path, yahoo=yahoo_list(3000))) == 150
+
+
+def test_without_files_the_list_comes_from_yahoo_automatically(tmp_path):
+    seen = []
+    assert len(load_nse_symbols(tmp_path, min_traded_value=1e8, yahoo=lambda m: seen.append(m) or yahoo_list(2500)(m))) == 2500
+    assert seen == [1e8]  # the liquidity floor is passed on for Yahoo's pre-cut
+
+
+def test_yahoo_failure_falls_back_to_a_saved_nifty500_file(tmp_path):
+    (tmp_path / "ind_nifty500list.csv").write_text(nifty_csv(120))
+    assert len(load_nse_symbols(tmp_path, yahoo=yahoo_down)) == 120
+    assert len(load_nse_symbols(tmp_path, yahoo=yahoo_list(5))) == 120  # a suspiciously tiny Yahoo list is not trusted
+
+
+def test_nothing_usable_raises_a_message_saying_what_failed(tmp_path):
+    with pytest.raises(NseFileMissing, match="Yahoo's list was unavailable"):
+        load_nse_symbols(tmp_path, yahoo=yahoo_down)
+    (tmp_path / "EQUITY_L.csv").write_text(nse_csv(5))  # a half-saved file is not trusted either
     with pytest.raises(RuntimeError, match="NSE stock list"):
-        fetch_nse_symbols(lambda url, **kw: resp(nse_csv(5)))
-    with pytest.raises(RuntimeError):
-        fetch_nse_symbols(lambda url, **kw: resp("", status=503))
+        load_nse_symbols(tmp_path, yahoo=yahoo_down)
+
+
+def test_yahoo_list_keeps_main_board_symbols_and_drops_other_segments_and_illiquid_ones():
+    from src.data.india import yahoo_nse_symbols
+
+    quotes = [{"symbol": s + ".NS", "averageDailyVolume3Month": v, "regularMarketPrice": 100.0, "financialCurrency": "INR"}
+              for s, v in (
+        ("RELIANCE", 5e6), ("BAJAJ-AUTO", 1e6), ("KLBRENG-B", 1e6),  # real symbols, hyphens included
+        ("TINY", 1e3),  # Rs 1 lakh a day: well under half the floor
+        ("NOVOL", None),  # no volume from Yahoo: kept, not guessed away
+        ("ABC-SM", 5e6), ("XYZ-IV", 5e6), ("011NSETEST", 5e6))] + [{"symbol": "AAPL"}]
+    quotes.append({"symbol": "GOLDBEES.NS", "averageDailyVolume3Month": 5e6, "regularMarketPrice": 100.0})  # an ETF
+    pages = [{"quotes": quotes[:5], "total": len(quotes)}, {"quotes": quotes[5:], "total": len(quotes)}]
+    got = yahoo_nse_symbols(min_traded_value=1e8, screen=lambda offset: pages[0 if offset == 0 else 1], pause=0)
+    assert got == ["RELIANCE", "BAJAJ-AUTO", "KLBRENG-B", "NOVOL"]
+
+
+def test_the_folder_comes_from_nse_files_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("NSE_FILES_DIR", str(tmp_path))
+    (tmp_path / "EQUITY_L.csv").write_text(nse_csv())
+    assert india.nse_files_dir() == tmp_path and len(load_nse_symbols()) == 150
+
+
+def test_index_lists_give_symbols(tmp_path):
+    (tmp_path / "ind_nifty50list.csv").write_text(nifty_csv(4))
+    assert load_index_symbols(50, tmp_path) == ["SYM000", "SYM001", "SYM002", "SYM003"]
+
+
+def test_a_present_but_unreadable_index_file_raises_nsefilemissing_not_a_raw_parsing_error(tmp_path):
+    """A caller (run_intraday) catches only NseFileMissing to fall back to Yahoo; a half-saved or wrong file (e.g. an
+    HTML error page saved with a .csv extension, or one missing the SYMBOL column) must not bypass that fallback with
+    an uncaught pandas/KeyError."""
+    (tmp_path / "ind_nifty100list.csv").write_text("<html>not a csv</html>")
+    with pytest.raises(NseFileMissing):
+        load_index_symbols(100, tmp_path)
+
+
+def test_no_code_downloads_from_nse_websites():
+    """NSE's and NSE Indices' terms prohibit automated collection: no module may call their sites (comments may name them)."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    pattern = re.compile(r"https?://[^\s\"']*(nseindia\.com|niftyindices\.com)")
+    offenders = [str(p.relative_to(root)) for p in [root / "main.py", *(root / "src").rglob("*.py"), *(root / "scripts").rglob("*.py")]
+                 if pattern.search(p.read_text(encoding="utf-8"))]
+    assert offenders == []
 
 
 def wide(tickers, days=5):
@@ -161,3 +210,16 @@ def test_intraday_feed_accepts_naive_timestamps_as_read_back_from_sqlite():
     feed = IntradayFeed(download=lambda ticker, **kw: five_min_bars())
     naive_utc = datetime(2026, 9, 18, 3, 47)  # SQLite returns datetimes without tzinfo; stored values are UTC
     assert len(feed.bars_since("RELIANCE", naive_utc)) == 3
+
+
+def test_top_n_ranks_by_traded_value_so_a_stock_missing_its_market_cap_is_not_lost():
+    """Regression: Yahoo left RELIANCE's market cap empty (2026-09-26), which sorted it near the end of the list."""
+    from src.data.india import yahoo_nse_symbols
+
+    def q(sym, value):
+        return {"symbol": sym + ".NS", "averageDailyVolume3Month": value / 100.0, "regularMarketPrice": 100.0,
+                "financialCurrency": "INR"}
+
+    quotes = [q("MID1", 5e8), q("MID2", 4e8), q("SMALL", 1e7), q("RELIANCE", 1.4e10)]  # RELIANCE last, as Yahoo sent it
+    got = yahoo_nse_symbols(top=2, screen=lambda offset: {"quotes": quotes if offset == 0 else [], "total": 4}, pause=0)
+    assert got == ["RELIANCE", "MID1"]

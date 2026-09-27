@@ -18,7 +18,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.backtest_intraday import download_5m, simulate  # noqa: E402
-from src.data.india import fetch_index_symbols  # noqa: E402
+from src.data.india import load_index_symbols  # noqa: E402
 from src.intraday import strategy as st  # noqa: E402
 
 CACHE = Path("research_cache/intraday_5m_59d.pkl")
@@ -28,7 +28,7 @@ NOTIONAL = 50_000.0  # a fixed trade value so variants compare on expectancy, no
 def load(refresh):
     if CACHE.exists() and not refresh:
         return pickle.loads(CACHE.read_bytes())
-    data = download_5m(fetch_index_symbols(100), 59)
+    data = download_5m(load_index_symbols(100), 59)
     CACHE.parent.mkdir(exist_ok=True)
     CACHE.write_bytes(pickle.dumps(data))
     return data

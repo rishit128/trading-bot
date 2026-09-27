@@ -83,7 +83,7 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
     monkeypatch.setattr(intraday_cli, "make_paper_broker", lambda settings, url, fees=None: broker)
-    monkeypatch.setattr(intraday_cli, "fetch_index_symbols", lambda index: ["AAA", "BBB", "CCC"])
+    monkeypatch.setattr(intraday_cli, "load_index_symbols", lambda index: ["AAA", "BBB", "CCC"])
     monkeypatch.setattr(intraday_cli, "Notifier", lambda token, chat: SimpleNamespace(send=alerts.append))
     monkeypatch.setattr(intraday_cli.IntradayEngine, "run_loop", lambda self: started.update(engine=self))
     intraday_cli.run_intraday(live=True)
@@ -100,3 +100,14 @@ def test_intraday_launcher_refuses_an_invalid_configuration(monkeypatch):
     monkeypatch.setattr(intraday_cli, "load_settings", lambda: (_ for _ in ()).throw(ValueError("bad MAX_POSITION_PCT")))
     with pytest.raises(SystemExit, match="Invalid configuration: bad MAX_POSITION_PCT"):
         intraday_cli.run_intraday(live=False)
+
+
+def test_equity_risk_reports_the_worst_peak_to_trough_fall_and_the_start():
+    from datetime import datetime
+
+    from src.app.reports import equity_risk
+
+    t = [datetime(2026, 9, d) for d in range(1, 6)]
+    assert equity_risk([]) is None
+    r = equity_risk(zip(t, [100.0, 120.0, 90.0, 130.0, 117.0]))
+    assert r["since"] == t[0] and abs(r["max_drawdown"] - (90 / 120 - 1)) < 1e-12  # -25%, not the later -10%

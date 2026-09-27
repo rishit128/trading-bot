@@ -255,3 +255,38 @@ def test_every_research_entry_point_simulates_with_the_live_exit_policy(monkeypa
     HoldoutReserve(sessions, lambda symbol: bars, initial_cash=100_000.0).mark()
     assert len(seen) == before + 1, "the holdout reserve never reached the simulator, so this test would prove nothing about it"
     assert len(seen) >= 4 and all(policy == LIVE_EXITS for policy in seen)
+
+
+def test_idle_cash_accrues_at_cash_yield_only_from_cash_yield_from():
+    """No signals, so every rupee is idle: equity must grow exactly at the sweep rate from the start date, and the
+    warm-up before it must earn nothing (it would otherwise show up as a gain in a curve reported from the start)."""
+    import pandas as pd
+    from src.config import RiskLimits
+    from src.research.backtest import simulate
+
+    days = pd.date_range("2024-01-01", "2026-01-01", freq="D")
+    df = pd.DataFrame({"Open": 100.0, "High": 100.0, "Low": 100.0, "Close": 100.0, "Volume": 1e6}, index=days)
+    start = pd.Timestamp("2025-01-01")
+    flat = simulate({"A": df}, {}, RiskLimits(), start_equity=1000.0)
+    swept = simulate({"A": df}, {}, RiskLimits(), start_equity=1000.0, cash_yield=0.05, cash_yield_from=start)
+    assert flat.equity.iloc[-1] == 1000.0
+    assert swept.equity.loc[:start].iloc[-1] == 1000.0  # nothing earned during the warm-up
+    assert swept.equity.iloc[-1] / swept.equity.loc[start] == pytest.approx(1.05 ** (365 / 365), rel=1e-9)
+
+
+def test_exit_source_sells_a_held_position_at_the_next_open():
+    """A rebalanced strategy's 'no longer in the top N' exit goes through the same next-open fill as any signal."""
+    import pandas as pd
+    from src.config import RiskLimits
+    from src.research.backtest import simulate
+
+    days = pd.bdate_range("2025-01-01", periods=300)
+    close = pd.Series(range(100, 400), index=days, dtype=float)  # a steady rise: no stop, no trend exit
+    df = pd.DataFrame({"Open": close + 1, "High": close + 2, "Low": close - 2, "Close": close, "Volume": 1e6})
+    buy_day, sell_day = days[250], days[270]
+    result = simulate({"A": df}, {}, RiskLimits(), start_equity=100_000.0,
+                      buy_source=lambda d, pf: [("A", 0.9)] if d == buy_day else [],
+                      exit_source=lambda d, sym: d == sell_day)
+    [trade] = result.trades
+    assert trade.reason == "SIGNAL" and trade.entry_date == days[251] and trade.exit_date == days[271]
+    assert trade.exit_price == df.loc[days[271], "Open"]

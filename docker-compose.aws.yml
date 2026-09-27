@@ -1,0 +1,25 @@
+# The AWS deployment: the paper trading bot AND the real-portfolio agent (Playwright + Chromium) in one container.
+# Run on the EC2 instance with: docker compose -f docker-compose.aws.yml up -d --build
+#
+# .env on the instance needs only: OPENROUTER_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (never the Integrated
+# mobile/MPIN — those go into AWS Secrets Manager, set once by running `python -m src.portfolio setup` inside the
+# container: docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio setup).
+# The instance's IAM role needs secretsmanager:GetSecretValue/PutSecretValue/CreateSecret/DeleteSecret scoped to the
+# one secret named ai-trading-bot/integrated-portfolio (see deploy/ec2-secrets-policy.json).
+services:
+  trading-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.aws
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - bot_data:/data
+      - portfolio_data:/app/portfolio_data
+    # Check progress any time:  docker compose -f docker-compose.aws.yml exec trading-bot python main.py --report
+    # For a dry run (decisions only, no simulated trades), remove "--live" below.
+    command: ["python", "main.py", "--loop", "30", "--live"]
+
+volumes:
+  bot_data:
+  portfolio_data:

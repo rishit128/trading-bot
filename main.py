@@ -10,6 +10,7 @@ from src.agents.technical import TechnicalAgent
 from src.learning.jobs import DailyOutcomeLabelling
 from src.learning.setups import SetupMemory
 from src.app.intraday_cli import run_intraday
+from src.app.portfolio_agent import PortfolioCommand, make_explainer, run_standalone, strip_html
 from src.app.wiring import build_market_wiring, intraday_db_url, make_paper_broker
 from src.app.reports import print_candidates, print_graphs, print_positions, print_report
 from src.config import load_settings
@@ -55,7 +56,11 @@ def build_pipeline(live: bool) -> TradingPipeline:
     token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
     if token and chat_id:
         notify = Notifier(token, chat_id).send
-        CommandListener(token, chat_id, lambda text: handle_command(text, control, kit.broker, settings, intraday_broker)).start()
+        # /portfolio: the read-only real-account agent. It shares this Telegram bot, so this listener hands it the OTP.
+        portfolio = PortfolioCommand(notify, make_explainer(llm))
+        extra = {"/portfolio": (PortfolioCommand.HELP, portfolio)}
+        CommandListener(token, chat_id, lambda text: handle_command(text, control, kit.broker, settings, intraday_broker, extra),
+                        intercept=portfolio.inbox.offer).start()
     else:
         print("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID); alerts and /pause disabled")
     def make_history_fn(sessions):
@@ -131,7 +136,8 @@ def build_holdout_callback(pipeline):
             log.warning("holdout: no daily bars for %s (%s); excluded", sym, e)
             return None
 
-    reserve = HoldoutReserve(pipeline.sessions, reserve_bars, slippage=SLIPPAGE)
+    reserve = HoldoutReserve(pipeline.sessions, reserve_bars, slippage=SLIPPAGE,
+                             cash_yield=pipeline.settings.cash_yield_pct)
 
     def mark_reserve():
         m = reserve.mark()
@@ -141,6 +147,32 @@ def build_holdout_callback(pipeline):
     print("holdout reserve enabled: every cycle replays the approved decisions into an independent account "
           "(never tuned, never read back by the paper account)")
     return mark_reserve
+
+
+def run_portfolio_agent(show: bool, otp_from: str, use_ai: bool) -> int:
+    """--portfolio: one read-only run of the real-account agent while the trading bot is NOT running (when it is, send
+    /portfolio to it instead: one Telegram bot can have only one reader)."""
+    import getpass
+
+    try:
+        settings = load_settings()
+    except ValueError as e:
+        sys.exit(f"Invalid configuration: {e}")
+    token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+    telegram = Notifier(token, chat_id).send if token and chat_id else None
+
+    def notify(text: str) -> None:
+        print(strip_html(text))  # the terminal has no HTML rendering; Telegram gets the formatted version
+        if telegram:
+            telegram(text)
+
+    use_ai = use_ai and bool(settings.models) and bool(os.getenv("OPENROUTER_API_KEY"))
+    explain = make_explainer(LLMClient.from_settings(settings)) if use_ai else None
+    result = run_standalone(token, chat_id, notify, explain, headless=not show, otp_from=otp_from,
+                            ask_terminal=lambda: getpass.getpass("OTP sent to your mobile (4 digits): ").strip())
+    if result.get("run_dir"):
+        print(f"saved under {result['run_dir']}")
+    return 1 if result.get("error") else 0
 
 
 def main() -> None:
@@ -159,6 +191,12 @@ def main() -> None:
     parser.add_argument("--live", action="store_true", help="place paper orders (default: dry run, decisions only)")
     parser.add_argument("--holdout", action="store_true",
                         help="after each cycle, mark the independent holdout reserve account (see docs/holdout.md)")
+    parser.add_argument("--portfolio", action="store_true",
+                        help="read the REAL Integrated account (read-only; OTP on Telegram), analyse it, log out")
+    parser.add_argument("--show", action="store_true", help="with --portfolio: show the browser window")
+    parser.add_argument("--otp-from", choices=("telegram", "terminal"), default="telegram",
+                        help="with --portfolio: where you give the OTP")
+    parser.add_argument("--no-ai", action="store_true", help="with --portfolio: skip the AI-written note")
     args = parser.parse_args()
     if args.loop is not None and args.loop < 1:
         parser.error("--loop must be at least 1 minute")
@@ -167,6 +205,8 @@ def main() -> None:
         configure_logging(os.getenv("LOG_LEVEL", "INFO"), os.getenv("LOG_FORMAT", "text"))
     except ValueError as e:
         sys.exit(f"Invalid configuration: {e}")
+    if args.portfolio:
+        sys.exit(run_portfolio_agent(args.show, args.otp_from, not args.no_ai))
     if args.intraday:
         run_intraday(args.live)
         return
@@ -177,12 +217,16 @@ def main() -> None:
             sys.exit(f"Invalid configuration: {e}")
         print_positions(settings, intraday_db_url())
         return
-    if args.screen or args.report or args.graph or args.positions:
+    # Read-only reports; if more than one flag is given, the first match here wins.
+    REPORT_COMMANDS = (("graph", print_graphs), ("screen", print_candidates), ("positions", print_positions),
+                       ("report", print_report))
+    report_fn = next((fn for name, fn in REPORT_COMMANDS if getattr(args, name)), None)
+    if report_fn is not None:
         try:
             settings = load_settings()
         except ValueError as e:
             sys.exit(f"Invalid configuration: {e}")
-        (print_graphs if args.graph else print_candidates if args.screen else print_positions if args.positions else print_report)(settings)
+        report_fn(settings)
         return
 
     if args.check:

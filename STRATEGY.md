@@ -220,7 +220,7 @@ The bot learns from **every** decision it analyses, not only the trades it took 
 a BUY that failed):
 
 1. **Label outcomes** (`src/learning/outcomes.py`, once a day after a cycle, or `scripts/label_outcomes.py`). For each analysed
-   stock-session: entry at the next open, exit `LEARNING_HORIZON` (20) sessions later, plus the worst dip and whether the
+   stock-session: entry at the next open, exit `LEARNING_HORIZON` (60 since 2026-09-26; was 20) sessions later, plus the worst dip and whether the
    protective stop would have been hit. Only matured sessions are labelled; nothing looks ahead.
 2. **Setup memory** (`src/learning/setups.py`, fed to the agent's learning step when `LLM_LEARNING=true`). "How did setups like
    this one (trend shape, RSI, ADX, volume) turn out, across all stocks?" Guardrails: silent below `LEARNING_MIN_SAMPLES`
@@ -250,3 +250,195 @@ halves, expectancy > +0.10% per trade, still positive with slippage doubled. **N
 halves** (about -0.25% per trade, -0.35% with doubled slippage). Before slippage the rule's gross edge is about -0.05% per
 trade: there is nothing to filter, and costs (~0.11% fees + 0.10% slippage per round trip) turn zero into a steady loss.
 Live paper so far agrees (19 trades, -1.7%). Conclusion: tuning this rule is not the answer.
+
+## Does the entry rule beat holding the stocks? Two more pre-declared tests (2026-09-26)
+Both use the live configuration (Rs 20,000, 10 positions, flat 5%, 15% stop, MA200 trend exit, delivery filter as in
+the live default), Nifty 500 daily bars (today's members, so survivorship bias inflates every row equally with the
+basket), a constant 0.75 AI stand-in confidence, and the same four gates fixed before running: beats the equal-weight
+basket net of costs; positive in both halves; positive at 2x slippage; at least 40 trades. Scripts:
+research_entry_filters.py and research_price_floor.py (removed 2026-09-26 after the tests failed; these tables are the record). Neither simulator models circuit limits.
+
+**1. Extra entry gates (ADX >= 35, 12-1 momentum > 0, both).** 0 of 9 candidate x window combinations passed.
+
+| Window | Basket | Baseline | ADX>=35 | Mom>0 | Both |
+|---|---|---|---|---|---|
+| Full, 2017-10..2026-09 | +534.7% | +156.6% | +178.5% | +153.8% | +153.3% |
+| Last 3y | +77.4% | +65.6% | +13.0% | +65.6% | +13.2% |
+| Last 3y + delivery | +77.4% | +48.9% | +18.8% | +47.8% | +19.1% |
+
+ADX>=35 improves trade quality over the full period (win rate 33%->42%, profit factor 2.02->2.46) but is far worse over
+the last 3 years and turns negative in the second half. The momentum floor is close to a no-op: the scanner already ranks
+by that momentum, so nearly every candidate has positive 12-1 momentum. Conclusion: the entry rule is not the fix.
+
+**2. Lower price floor (Rs 100 -> Rs 50 / Rs 30).** Prompted by liquid low-priced PSU stocks such as NBCC (Rs 82, Rs 37cr/day,
+1.5% daily volatility) and IRFC (Rs 80, Rs 57cr/day, 1.0%), which pass every filter except the price floor. 0 of 6
+combinations passed.
+
+| Window | Basket | Rs 100 (live) | Rs 50 | Rs 30 |
+|---|---|---|---|---|
+| Full | +534.7% | +156.6% | +183.1% | +193.9% |
+| Last 3y | +77.4% | +65.6% | +45.9% | +47.9% |
+| Last 3y + delivery | +77.4% | +48.9% | +45.6% | +47.7% |
+
+A lower floor helps over the full period and hurts over the last 3 years, so the effect is not stable. Left at Rs 100.
+Sub-Rs 20 stocks were deliberately not tested: circuit-limit risk is unmodelled and grows as price falls.
+
+**Reading both together.** The bot holds at most 10 names; the basket holds everything, so in a broad rally any
+concentrated rule lags it whatever the filter. Filters change which trades are taken, not that structural gap. Further
+tests should also report Sharpe and maximum drawdown next to "beats the basket".
+
+## Sector strength and market breadth as entry gates (2026-09-26)
+research_sector_breadth.py (removed 2026-09-26 after the test failed), same live configuration, universe and four gates as above, plus Sharpe and maximum
+drawdown reported (not gated). Three variants fixed in advance: sector strong (its NSE "Industry" group's 6-month return
+beats the universe's), sector strong + stock leads its group, and breadth >= 50% (at least half of stocks above their own
+200-day average). Sectors are NSE's 20 coarse industries as labelled today. **0 of 9 combinations beat the basket.**
+
+| Window / variant | Return | Sharpe | Max drawdown |
+|---|---|---|---|
+| Full: basket | +534.7% | 1.23 | -45.8% |
+| Full: baseline / sector strong / +leader / breadth | +156.6% / +169.7% / +166.9% / +160.5% | 1.00 / 1.09 / 1.07 / 1.18 | -26.7% / -26.6% / -24.7% / -18.1% |
+| Last 3y: basket | +77.4% | 1.19 | -21.2% |
+| Last 3y: baseline / sector / +leader / breadth | +65.6% / +41.7% / +38.0% / +47.2% | 1.42 / 1.03 / 0.95 / 1.30 | -13.5% / -13.3% / -15.7% / -10.1% |
+| Last 3y + delivery: baseline / sector / +leader / breadth | +48.9% / +50.6% / +39.1% / +47.2% | 1.31 / 1.41 / 1.16 / 1.39 | -13.8% / -8.0% / -10.7% / -10.7% |
+
+Sector strength is inconsistent (slightly better over the full period, worse over the last 3 years without the delivery
+filter, better with it). The breadth gate is a defensive filter: it kept the full-period return about the same while cutting
+maximum drawdown from -26.7% to -18.1% and lifting Sharpe from 1.00 to 1.18, but over the last 3 years it gave up return
+and Sharpe (1.42 -> 1.30) and sat out most of the second half (+0.0%). Read as a lead, not a result: the risk-adjusted bar
+was not declared beforehand, so it cannot be adopted on this run. Note the baseline already beats the basket on Sharpe and
+drawdown over the last 3 years (1.42 vs 1.19, -13.5% vs -21.2%) and only trails on raw return.
+
+## Idle cash and the cash sweep (2026-09-26)
+**Finding.** 10 positions x 5% caps the bot at ~50% invested. On the 9-year Nifty 500 run it was 45% invested on average
+(all 10 slots full 84% of days; ~97 stocks pass the scanner on a typical day, so capacity, not candidates, is the limit),
+and the simulator paid nothing on the rest. Fees were ~23% of starting capital over 9 years on Rs 20,000 (the fixed
+Rs 15.93 charge per sale on Rs 1,000 positions). Exploratory exit/sizing variants (20% stop, no stop, no target, 16
+positions, 8 x 10%) each helped one window and hurt the other; removing the +100% target hurt both. Exits left as they are.
+
+**Change.** `CASH_YIELD_PCT` (default 0 = off): idle paper cash earns that annual rate, standing in for a liquid mutual
+fund held outside demat (no DP charge or STT on redemption; instant redemption up to Rs 50,000). Implemented in the paper
+broker (credited per elapsed day, before every cash movement, included in the ledger reconciliation), the backtest
+simulator and the holdout reserve (so their drift stays like for like). `--report` now also shows the invested share,
+interest earned, the max drawdown so far and the Nifty 50 over the same period.
+
+**Test** (`scripts/research_cash_sweep.py`, pre-declared; judged at a deliberately low 3.5%): must beat the no-sweep run on
+return, Sharpe and drawdown on every window and stay positive at 2x slippage. **Passed on both universes, every window.**
+
+| Universe / window | No sweep | Sweep 3.5% | Basket |
+|---|---|---|---|
+| Nifty 500, full | +156.6%, Sh 1.00, DD -26.7% | +183.8%, 1.12, -23.5% | +534.7%, 1.23, -45.8% |
+| Nifty 500, last 3y | +65.6%, 1.42, -13.5% | +73.9%, 1.57, -12.8% | +77.4%, 1.19, -21.2% |
+| Nifty 500, last 3y + delivery | +48.9%, 1.31, -13.8% | +55.2%, 1.50, -11.5% | +77.4%, 1.19, -21.2% |
+| All NSE, full | +159.2%, 0.98, -31.3% | +194.6%, 1.13, -27.4% | +474.7%, 1.15, -60.3% |
+| All NSE, last 3y | +40.4%, 0.95, -19.8% | +48.4%, 1.09, -18.9% | +54.0%, 0.85, -30.7% |
+| All NSE, last 3y + delivery | +50.4%, 1.28, -13.4% | **+69.8%, 1.64, -11.2%** | +54.0%, 0.85, -30.7% |
+
+Not modelled: tax on fund gains, a varying rate, a one-day redemption delay. At 5% the full-period NSE return is almost
+identical to 3.5% (sizing follows equity, so trades differ): the effect is robust, the exact number is not.
+
+**Universe matters.** The live scanner covers all ~2,300 NSE stocks; every earlier test used today's Nifty 500. On the
+full NSE list the basket is weaker (last 3y +54.0%, Sharpe 0.85, vs +77.4%, 1.19 on the Nifty 500) and the live setup
+with the delivery filter and the sweep beats it outright, on raw return as well. That is the first window in which the
+bot beats the basket on every measure; it is one window, and delisted stocks are still missing (survivorship remains).
+Earlier "fails vs the basket" results were measured on the Nifty 500 and should be re-read with this in mind.
+
+## The three entry-side tests re-run on all NSE stocks (2026-09-26)
+Same scripts and pre-declared gates, `--universe nse` (2,317 stocks, the list the live scanner actually scans), no cash
+sweep (so they compare with the Nifty 500 runs above). Basket: full +474.7%; last 3y +54.0% (Sharpe 0.85, DD -30.7%).
+
+| Variant | Full 9y | Last 3y | Last 3y + delivery (live setup) |
+|---|---|---|---|
+| Baseline (live scanner) | +159.2% | +40.4% | +50.4% |
+| ADX >= 35 | +110.1% | +23.8% | +18.3% |
+| 12-1 momentum > 0 | +117.2% | +40.4% | **+59.0% (passes all 4)** |
+| ADX >= 35 and momentum > 0 | +89.5% | +23.8% | +21.0% |
+| Price floor Rs 50 | +100.5% | +45.3% | +40.1% |
+| Price floor Rs 30 | +125.6% | +51.7% | +44.5% |
+| Sector strong | **+213.1%** (Sh 1.20, DD -22.6%) | **+61.6% (passes all 4)** | +33.2% |
+| Sector strong + stock leads | +128.8% | **+62.0% (passes all 4)** | +52.2% |
+| Breadth >= 50% | +81.4% | +29.8% | +30.0% |
+
+**Every variant fails the pre-declared rule** (pass on every window). Four single-window passes, each contradicted in
+another window. The universe changes the answers: ADX >= 35 helped the full period on the Nifty 500 and hurts
+everywhere on NSE; the lower price floor helped the full period on the Nifty 500 and hurts it on NSE; the breadth gate's
+drawdown benefit on the Nifty 500 is gone on NSE (worse in every window). Sector variants are confounded: only 737 of
+2,317 stocks carry an NSE industry label (Total Market list), so they also restrict the bot to larger, liquid stocks.
+Nothing changed in the live configuration. Conclusion stands and is now firmer: price-derived entry filters are
+unstable across universes and periods; further entry work needs genuinely new information (results calendar, insider
+and corporate disclosures), not more transformations of price.
+
+## Free-data inventory for Indian equities (Step 4, Phase 0; 2026-09-26)
+Probed NSE's public JSON endpoints (www.nseindia.com/api/...) with a few dozen paced requests. They answered without
+a session cookie; 5 of 5 repeated calls succeeded. The homepage returned 403, so NSE's terms of use could not be read
+from here: check them before relying on these endpoints in the running bot.
+
+| Data | Endpoint | Free? | History | Verdict |
+|---|---|---|---|---|
+| Board meetings (results dates) | corporate-board-meetings | yes | back to at least 2012 | **Best source.** Purpose field says "Results"/"Financial Results"; results meetings are announced a median 8-10 days ahead, 99-100% at least 2 days ahead, and the intimation timestamp is recorded, so "results within N days" can be backtested with no lookahead |
+| Upcoming meetings | event-calendar | yes | forward-looking | For the live bot: which stocks report in the next days |
+| Insider trades (SEBI PIT) | corporates-pit | yes | 2016 to Jan 2026 | **Gap:** Jun-Aug 2026 return 0 rows though Jan 2026 has 720. Fine for a historical event study, not yet reliable for live use |
+| Announcements | corporate-announcements | yes | back to at least 2017 | ~13,000 a month, mostly routine ("Trading Window", meeting notices). Text for a later AI-reading experiment; noisy |
+| Corporate actions | corporates-corporateActions | yes | back to at least 2017 | Dividends, splits, bonuses with ex-dates |
+| Quarterly results figures | corporates-financial-results | inconsistent | - | 0 rows recently, 41 in Sep 2021, 1,642 in Sep 2017: unreliable, do not build on it |
+| Bulk / block deals | historical/bulk-deals | no | - | Returns a web page, not data; a snapshot endpoint gives today only |
+
+Next: the results calendar is the one to test first (point-in-time, deep history, forward-looking live feed).
+
+**NSE terms of use (read 2026-09-26, www.nseindia.com/static/nse-terms-of-use). This overrides the "Next" line above.**
+They state: "User is prohibited to conduct any systematic or automated data collection activities (including scraping,
+data mining, data extraction and data harvesting)"; content may not be "stored ... in an electronic retrieval system
+... without prior written permission of NSE"; and the data may not be used "for any gaming, virtual trading or
+simulation activities under any circumstances whatsoever". So the results-calendar feature must NOT be built on NSE's
+website API without NSE's permission. The same terms already bear on existing code that downloads from NSE websites
+automatically: the daily delivery bhavcopy (src/data/delivery.py, nsearchives.nseindia.com) and the NSE equity list
+(src/data/india.py, archives.nseindia.com); and the whole project is a paper-trading simulation. Index constituent
+lists come from niftyindices.com (NSE Indices Ltd), whose terms were not checked. Not legal advice: the user decides.
+Compliant routes: files the user downloads by hand from NSE and gives to the bot; a licensed data vendor or NSE's own
+data products; a broker API whose terms allow this use; or written permission from NSE.
+**Done (2026-09-26):** the bot and every research script now read NSE files that a person downloads in a browser into
+`nse_files/` (NSE_FILES_DIR; git-ignored; mounted read-only in Docker): the stock list (EQUITY_L.csv, fallback
+ind_nifty500list.csv), the index lists, and the daily bhavcopy files. No code downloads from nseindia.com or
+niftyindices.com any more (a test enforces it). Startup refuses to run the whole-market scan without the stock list and
+says what to download; the delivery filter switches off, with a warning, when its newest file is over 7 days old (it
+used to keep ranking on whatever data it last had). Stored NSE content was deleted from research_cache. Cost: the
+delivery filter, which helped the live setup in the NSE tests, now needs a file saved by hand each trading day. The
+"virtual trading or simulation" clause still concerns the project as a whole; only a licensed source or NSE's
+permission settles that. The results-calendar test is on hold for the same reason.
+**Revised the same day:** a daily hand-saved file is not workable, so the stock list now comes from Yahoo Finance's NSE
+screener automatically (same source as every price; checked on 2026-09-26 to cover all 2,317 NSE EQ-series stocks,
+pre-cut to stocks trading at least half the liquidity floor). A hand-saved EQUITY_L.csv still takes priority; the
+intraday universe is a saved Nifty 100 list or else the 100 most-traded stocks by value (Yahoo). The delivery filter has no permitted automatic
+source and is now OFF by default (DELIVERY_FILTER=false). Yahoo's screener also gives a next-results date for ~82% of
+liquid stocks: a possible live-only source for the results-calendar idea, with no history to backtest it on.
+
+## Experiment 1: which live rule destroys the momentum edge? (2026-09-26)
+`scripts/research_decomposition.py` walks from pure 12-1 momentum to the live setup one rule at a time, in the event
+simulator with fees and slippage, on all NSE stocks. Benchmark: an equal-weight basket of the INVESTABLE universe (price
+>= Rs 100, >= Rs 10 crore/day, known the day before): +318.5% full period (Sharpe 0.94), +56.9% last 3 years (0.89).
+Earlier tests used every listed stock, including ones the bot can never trade (+474.7%), which overstated the bar.
+
+Chain at Rs 10 lakh, 10 x 10% (fully invested). CAGR / Sharpe, full period | last 3y:
+- S0 pure momentum, monthly top 10: 21.2% / 0.81 | 10.5% / 0.49 (max DD -48% | -44%)
+- S3 + uptrend, RSI < 70, volatility <= 4% filters (monthly): 22.7% / 0.91 | 23.2% / 0.89
+- S4 live holding rule (daily buys, MA200 exit): 18.0% / 0.79 | 15.4% / 0.66
+- S7 + 15% stop, +100% target, halts = the live rules at full size: **21.1% / 0.95 | 24.0% / 0.97** (basket 17.6% | 16.4%)
+- S8 the live account (Rs 20,000, 10 x 5%): 11.0% / 0.95 | 10.9% / 0.86 (max DD -31% | -20%)
+
+**Reading.** The live rules, fully invested, beat the investable basket in both windows (+3.5% and +7.6% a year) at equal
+or better Sharpe. The live account keeps the Sharpe but earns half, because it is half in cash (the cash sweep recovers
+part of this); the small account's fixed per-sale charges and the affordability rule cost the rest.
+
+**Leave-one-out and confirmation.** In the chain, dropping the uptrend filter or the RSI cap met the pre-declared
+"harmful" rule. A stricter confirmation, declared before running (live account, both universes, both windows, both
+halves, 2x slippage, drawdown within 5 points), **overturned both**: without the uptrend filter the live account trades
+three times as often and CAGR falls 11.0% -> 3.1% (max DD -49%); dropping the RSI cap helps on NSE and on the Nifty 500
+full period but hurts the Nifty 500 last 3 years (17.8% -> 10.1%, Sharpe 1.39 -> 0.83). **Nothing changed.** Lessons:
+judge rule changes at the live account size and on both universes, never only at a research account; compare with the
+investable basket.
+
+## Learning memory horizon: 20 -> 60 sessions (2026-09-26)
+The decision memory judged similar setups by their 20-session outcome, but live-setup trades are held far longer. On the
+backtest's live-setup trades (Rs 20,000 account, 2017-2026): median hold 74 sessions (all NSE) and 65 (Nifty 500). How
+well each forward window ranks the trades' real results (rank correlation): 5 sessions +0.30 / +0.44, 20 sessions
++0.53 / +0.62, **60 sessions +0.66 / +0.69**. LEARNING_HORIZON is now 60 (the outcome labels already record 5, 20 and
+60; any other value is refused). Cost: 60-session outcomes take ~3 months to mature, so the memory stays silent longer.

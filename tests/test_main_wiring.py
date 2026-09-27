@@ -84,8 +84,13 @@ def test_holdout_flag_returns_a_callable_hook():
 
     from src.database import make_session_factory
 
-    hook = main.build_holdout_callback(SimpleNamespace(sessions=make_session_factory("sqlite:///:memory:")))
+    from src.config import Settings
+
+    hook = main.build_holdout_callback(SimpleNamespace(sessions=make_session_factory("sqlite:///:memory:"),
+                                                       settings=Settings(cash_yield_pct=0.05)))
     assert callable(hook)
+    reserve = next(c.cell_contents for c in hook.__closure__ if type(c.cell_contents).__name__ == "HoldoutReserve")
+    assert reserve.cash_yield == 0.05  # the reserve earns what the paper account earns, so their drift is like for like
 
 
 def test_the_live_kit_downloads_a_stock_once_per_session_not_every_cycle(monkeypatch, tmp_path):

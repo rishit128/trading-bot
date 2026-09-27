@@ -1,0 +1,7 @@
+# Real-portfolio agent (python -m src.portfolio); not needed by the paper bot or its Docker image.
+# After installing: python -m playwright install chromium
+-r requirements.txt
+playwright==1.63.0
+keyring==25.7.0
+# Only used when PORTFOLIO_SECRET_BACKEND=aws (the AWS deployment; local Windows use stays on keyring above).
+boto3==1.43.103

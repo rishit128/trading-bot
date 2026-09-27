@@ -2,7 +2,8 @@ import pandas as pd
 import pytest
 
 from src.data.indicators import build_snapshot, compute_rsi
-from src.engine.strategy import combine
+from src.engine.enums import Role
+from src.engine.strategy import combine_signals
 from src.llm import AgentSignal
 
 
@@ -42,6 +43,12 @@ def test_snapshot_needs_200_bars():
 
 def sig(action, conf=0.8):
     return AgentSignal(action=action, confidence=conf, reasoning="r")
+
+
+def combine(technical, sentiment):
+    """The live two-agent setup: technical leads, sentiment can only confirm or veto."""
+    return combine_signals({"technical": technical, "sentiment": sentiment},
+                           {"technical": Role.LEAD, "sentiment": Role.ADVISOR})
 
 
 def test_technical_hold_stays_hold():

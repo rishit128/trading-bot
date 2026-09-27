@@ -68,7 +68,7 @@ def test_backtest_fill_equals_paper_fill_off_the_same_next_open():
     signals = {"A": {pd.Timestamp("2024-01-02"): ("BUY", 0.9),
                      pd.Timestamp("2024-01-04"): ("SELL", 0.9)}}  # decided at the 2024-01-02 close; exited later
 
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:  # Windows: SQLite may still hold the file
         broker = _paper_broker(entry_open, td)  # paper executed at the same next open
         sig_price = float(df.loc["2024-01-02", "Close"])
         fill = broker.buy_with_bracket("A", 100, sig_price, LIMITS.stop_loss_pct, LIMITS.take_profit_pct)
@@ -92,7 +92,7 @@ def test_sell_signal_fill_is_slippage_widened_in_both_paths():
     signals = {"A": {pd.Timestamp("2024-01-02"): ("BUY", 0.9), pd.Timestamp("2024-01-03"): ("SELL", 0.9)}}
     sell_open = float(df.loc["2024-01-04", "Open"])
 
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:  # Windows: SQLite may still hold the file
         broker = _paper_broker(sell_open, td)
         sig_price = float(df.loc["2024-01-02", "Close"])
         buy_fill = broker.buy_with_bracket("A", 100, sig_price, LIMITS.stop_loss_pct, LIMITS.take_profit_pct)
@@ -133,7 +133,7 @@ def test_the_admitted_divergence_is_exactly_the_overnight_gap():
     evening_close = 100.0  # what the paper sees right after the decision close
     next_open = float(df.loc["2024-01-03", "Open"])  # 101.0, a 1% overnight move in the same direction
     gap = next_open / evening_close - 1
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:  # Windows: SQLite may still hold the file
         broker = _paper_broker(evening_close, td)
         sig_price = float(df.loc["2024-01-02", "Close"])
         fill = broker.buy_with_bracket("A", 100, sig_price, LIMITS.stop_loss_pct, LIMITS.take_profit_pct)

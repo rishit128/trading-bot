@@ -176,8 +176,19 @@ def test_delivery_filter_returns_none_when_unavailable_or_empty():
 def test_delivery_filter_uses_the_latest_available_day_on_or_before_as_of():
     dates = pd.bdate_range("2026-08-01", periods=15)  # >= min_days (10) so the rolling average is defined
     deliv = delivery_frame(dates, {"HIGH": [80.0] * 15, "LOW": [20.0] * 15})
-    ok = delivery_filter(date(2026, 12, 1), load_delivery=lambda years: deliv)  # far after the data ends
+    assert dates[-1].date() == date(2026, 8, 21)
+    ok = delivery_filter(date(2026, 8, 25), load_delivery=lambda years: deliv)  # a weekend and a day after the data
     assert ok == {"HIGH"}
+
+
+def test_delivery_filter_is_off_rather_than_run_on_stale_files():
+    """The files are downloaded by hand now; if they stop being refreshed the filter must switch off, not keep ranking
+    on a month-old picture."""
+    dates = pd.bdate_range("2026-08-01", periods=15)
+    deliv = delivery_frame(dates, {"HIGH": [80.0] * 15, "LOW": [20.0] * 15})
+    assert delivery_filter(date(2026, 8, 28), load_delivery=lambda years: deliv) == {"HIGH"}  # 7 days old: still used
+    assert delivery_filter(date(2026, 8, 29), load_delivery=lambda years: deliv) is None  # 8 days old: off
+    assert delivery_filter(date(2026, 12, 1), load_delivery=lambda years: deliv) is None
 
 
 def test_screener_applies_the_delivery_filter_when_enabled():
@@ -189,7 +200,7 @@ def test_screener_applies_the_delivery_filter_when_enabled():
         return df[df.index.get_level_values(0).isin(symbols)]
 
     # GOOD2 passes the trend/liquidity screen too, but only GOOD clears the delivery filter (above the day's median).
-    dates = pd.bdate_range("2026-08-01", periods=20)
+    dates = pd.bdate_range(end="2026-09-18", periods=20)  # recent files: the filter switches off on stale ones
     deliv = delivery_frame(dates, {"GOOD": [80.0] * 20, "GOOD2": [20.0] * 20})
     s = UniverseScreener(listing, fetch, CFG, today=lambda: date(2026, 9, 21), use_delivery_filter=True,
                          delivery_loader=lambda years: deliv)

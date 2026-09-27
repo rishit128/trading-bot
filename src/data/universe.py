@@ -137,20 +137,31 @@ def above_median_delivery(avg: pd.DataFrame, as_of: date) -> Optional[set]:
     return set(row[row > row.median()].dropna().index)
 
 
+DELIVERY_LOOKBACK_YEARS = 0.25  # ~3 months of files: enough for the 20-session average, without reading years of files
+MAX_DELIVERY_AGE_DAYS = 7  # newest file older than this (calendar days) = the filter is off, not run on stale data
+
+
 def delivery_filter(as_of: date, load_delivery: Optional[Callable] = None, window: int = 20,
                     min_days: int = 10) -> Optional[set]:
     """Symbols whose 20-day average NSE delivery % is above that day's cross-sectional median, or None when delivery
-    data is unavailable (any failure disables the filter for the day rather than blocking the scan).
+    data is unavailable or stale (the filter is then off for the day rather than blocking the scan). The data is the
+    hand-downloaded bhavcopy files (src.data.delivery); without recent ones the filter stays off.
 
     Research finding (STRATEGY.md, 2026-09-22): combined with 12-1 month momentum ranking (the live default), this
     added ~14%/yr over the same-window equal-weight basket in a single 3-year test. Promising, not proven."""
     load = load_delivery or default_load_delivery
     try:
-        deliv = load(years=3)
+        deliv = load(years=DELIVERY_LOOKBACK_YEARS)
     except Exception as e:
         log.warning("delivery filter unavailable, screening without it today: %s", type(e).__name__)
         return None
     if deliv.empty:
+        log.warning("delivery filter off today: no NSE bhavcopy files found (see README, 'Files you download')")
+        return None
+    newest = pd.Timestamp(deliv.index.max()).date()
+    if (as_of - newest).days > MAX_DELIVERY_AGE_DAYS:
+        log.warning("delivery filter off today: the newest bhavcopy file is from %s, more than %d days old",
+                    newest, MAX_DELIVERY_AGE_DAYS)
         return None
     return above_median_delivery(delivery_average(deliv, window, min_days), as_of)
 

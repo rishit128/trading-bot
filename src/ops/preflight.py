@@ -55,6 +55,23 @@ def telegram_check(token: str, get: Callable = httpx.get) -> str:
     return "bot @" + str((r.json().get("result") or {}).get("username"))
 
 
+def nse_stock_list_check() -> str:
+    """The NSE stock list is available: Yahoo's, or a hand-saved one (the scanner has nothing to scan without it)."""
+    from src.data.india import load_nse_symbols
+
+    return f"{len(load_nse_symbols())} stocks"
+
+
+def delivery_files_check() -> str:
+    """How recent the hand-downloaded bhavcopy files are (the delivery filter is off without recent ones)."""
+    from src.data.delivery import bhavcopy_dir, load_delivery
+
+    deliv = load_delivery(years=0.25)
+    if deliv.empty:
+        raise RuntimeError(f"no bhavcopy files in {bhavcopy_dir()}: the delivery filter will be off")
+    return f"newest file {deliv.index.max().date()} ({len(deliv)} days)"
+
+
 def format_results(results: Sequence[CheckResult]) -> str:
     """Human-readable list of check outcomes."""
     return "\n".join(f"  {'OK  ' if r.ok else ('FAIL' if r.critical else 'WARN')} {r.name}: {r.detail}" for r in results)
@@ -77,6 +94,10 @@ def build_checks(settings, broker, env: Mapping[str, str], get: Callable = httpx
         ("Broker (" + label + ")", True, lambda: broker_check(broker, label)),
         ("Market data (Yahoo)", False, lambda: market_data_check(download, "^NSEI")),
     ]
+    if settings.universe == "market":
+        checks.append(("NSE stock list", True, nse_stock_list_check))
+    if settings.delivery_filter:
+        checks.append(("NSE delivery files", False, delivery_files_check))
     if env.get("TELEGRAM_BOT_TOKEN"):
         checks.append(("Telegram bot", False, lambda: telegram_check(env["TELEGRAM_BOT_TOKEN"], get)))
     return checks

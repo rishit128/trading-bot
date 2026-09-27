@@ -61,3 +61,18 @@ def test_a_veto_is_recognised_from_the_reasoning_and_model_fields_are_loaded(tmp
         s.commit()
     (row,) = load_judged(sessions, 20)
     assert row.model == "m1" and row.rule_alignment == "agree"
+
+
+def test_ai_vs_rule_recovers_the_mechanical_call_from_alignment():
+    from src.learning.mistakes import Judged, ai_vs_rule
+
+    def j(action, alignment, source="agents"):
+        return Judged("X", "2026-09-01", action, 0.7, source, "r", 0.0, False, rule_alignment=alignment)
+
+    assert ai_vs_rule(j("BUY", "agree")) == "rule BUY, AI bought"
+    assert ai_vs_rule(j("HOLD", "deviate")) == "rule BUY, AI passed"
+    assert ai_vs_rule(j("SELL", "deviate")) == "rule BUY, AI passed"
+    assert ai_vs_rule(j("BUY", "deviate")) == "rule passed, AI bought"
+    assert ai_vs_rule(j("HOLD", "agree")) == "both passed"
+    assert ai_vs_rule(j("SELL", "agree", source="trend_exit")) == "n/a"  # a rule-based exit is not an AI call
+    assert ai_vs_rule(j("HOLD", None)) == "n/a"  # no alignment recorded (fail-safe HOLD, older rows)

@@ -41,7 +41,7 @@ def reconcile_paper(sessions, fees=None, cash: Optional[float] = None) -> dict:
     spent = sum(t.qty * t.entry_price + t.fees for t in trades) + sum(
         p.qty * p.avg_price + fees(Action.BUY, p.qty * p.avg_price) for p in positions)
     received = sum(t.qty * t.exit_price for t in trades)
-    expected = acct.initial_cash - spent + received
+    expected = acct.initial_cash - spent + received + (acct.interest_earned or 0.0)  # cash-sweep interest, if any
     recorded = cash if cash is not None else acct.cash
     if abs(expected - recorded) > TOLERANCE:
         findings.append(f"cash does not tie: rebuilt {expected:,.2f} vs recorded {recorded:,.2f}")

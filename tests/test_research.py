@@ -275,19 +275,11 @@ def test_loader_uses_the_disk_cache_until_refreshed(tmp_path):
     assert len(calls) == 2 * n
 
 
-def test_index_constituents_come_from_niftyindices():
-    from types import SimpleNamespace
+def test_index_constituents_come_from_the_hand_downloaded_list(tmp_path):
+    from src.data.india import load_index_symbols
 
-    from src.data.india import fetch_index_symbols
-
-    seen = {}
-
-    def get(url, **kw):
-        seen["url"] = url
-        return SimpleNamespace(text="Company Name,Industry,Symbol,Series,ISIN Code\nA,X,ABB,EQ,1\nB,Y,TCS,EQ,2\n",
-                               raise_for_status=lambda: None)
-
-    assert fetch_index_symbols(50, get) == ["ABB", "TCS"] and "nifty50list" in seen["url"]
+    (tmp_path / "ind_nifty50list.csv").write_text("Company Name,Industry,Symbol,Series,ISIN Code\nA,X,ABB,EQ,1\nB,Y,TCS,EQ,2\n")
+    assert load_index_symbols(50, tmp_path) == ["ABB", "TCS"]
 
 
 # ------------------------------------------------------------------ gaps found by mutation testing

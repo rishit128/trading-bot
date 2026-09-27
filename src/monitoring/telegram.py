@@ -3,7 +3,7 @@ import html
 import logging
 import threading
 import time
-from typing import Callable, Optional
+from typing import Callable, Mapping, Optional, Tuple
 
 import httpx
 
@@ -95,9 +95,13 @@ class Notifier:
             return False
 
 
-def handle_command(text: str, control, broker, settings, intraday=None) -> str:
-    """Turn a command text into a reply, applying pause/resume/rebase as needed."""
+def handle_command(text: str, control, broker, settings, intraday=None,
+                   extra: Optional[Mapping[str, Tuple[str, Callable[[], str]]]] = None) -> str:
+    """Turn a command text into a reply, applying pause/resume/rebase as needed. `extra` adds commands:
+    {"/name": (help line, handler)}."""
     cmd = (text or "").strip().split()[0].split("@")[0].lower() if (text or "").strip() else ""
+    if extra and cmd in extra:
+        return extra[cmd][1]()
     if cmd == "/pause":
         control.set_paused(True)
         return "Trading PAUSED. No new orders will be placed. Existing broker stop/target orders stay active."
@@ -135,14 +139,18 @@ def handle_command(text: str, control, broker, settings, intraday=None) -> str:
         day = f"{(p.equity / p.start_of_day_equity - 1):+.2%} today" if p.start_of_day_equity else "n/a"
         head = f"⚡ <b>INTRADAY account</b>\n💰 Equity <b>{cur}{p.equity:,.2f}</b> ({day})\n💵 Cash {cur}{p.cash:,.2f}\n\n"
         return Html(head + format_positions(held, cur))
-    return HELP
+    return HELP + "".join(f"\n{name} - {line}" for name, (line, _) in (extra or {}).items())
 
 
 class CommandListener:
     """Long-polls Telegram and answers commands, but only from the one authorised chat."""
 
-    def __init__(self, token: str, chat_id: str, respond: Callable[[str], str], client: Optional[httpx.Client] = None):
-        self.token, self.chat_id, self.respond = token, str(chat_id), respond
+    def __init__(self, token: str, chat_id: str, respond: Callable[[str], str], client: Optional[httpx.Client] = None,
+                 intercept: Optional[Callable[[str], Optional[str]]] = None):
+        """`intercept` sees each authorised message first. It returns None to leave the message to `respond`, or a
+        reply ("" for none) when it consumed the message; a consumed message is deleted from the chat (it may be a
+        one-time password)."""
+        self.token, self.chat_id, self.respond, self.intercept = token, str(chat_id), respond, intercept
         self.http = client or httpx.Client(timeout=40)
         self.offset = 0
         self._stop = threading.Event()
@@ -158,6 +166,14 @@ class CommandListener:
             if str(msg.get("chat", {}).get("id")) != self.chat_id:
                 log.warning("ignored telegram message from unauthorised chat")
                 continue
+            if self.intercept is not None:
+                taken = self.intercept(msg.get("text", ""))
+                if taken is not None:
+                    self._delete(msg.get("message_id"))
+                    if taken:
+                        self.http.post(f"{API}/bot{self.token}/sendMessage", json=_payload(self.chat_id, taken))
+                    handled += 1
+                    continue
             try:
                 reply = self.respond(msg.get("text", ""))
             except Exception as e:
@@ -166,6 +182,12 @@ class CommandListener:
             self.http.post(f"{API}/bot{self.token}/sendMessage", json=_payload(self.chat_id, reply))
             handled += 1
         return handled
+
+    def _delete(self, message_id) -> None:
+        try:
+            self.http.post(f"{API}/bot{self.token}/deleteMessage", json={"chat_id": self.chat_id, "message_id": message_id})
+        except httpx.HTTPError as e:
+            log.warning("telegram delete failed: %s", type(e).__name__)
 
     def run(self) -> None:
         """Poll until stopped, surviving errors."""

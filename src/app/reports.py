@@ -29,15 +29,58 @@ def print_candidates(settings: Settings) -> None:
               f"rsi={c.rsi:4.1f} traded/day={cur}{c.avg_traded_value / 1e6:9,.1f}M")
 
 
+def equity_risk(points) -> Optional[dict]:
+    """Max drawdown so far and the start date, from (timestamp, equity) points in time order (one per cycle). None when
+    there is no history yet."""
+    points = list(points)
+    if not points:
+        return None
+    peak, worst = points[0][1], 0.0
+    for _, equity in points:
+        peak = max(peak, equity)
+        worst = min(worst, equity / peak - 1 if peak > 0 else 0.0)
+    return {"since": points[0][0], "max_drawdown": worst}
+
+
+def _nifty_return_since(since) -> Optional[float]:
+    """Nifty 50's return since `since` (best effort: None when offline or Yahoo fails)."""
+    try:
+        import yfinance as yf
+
+        df = yf.download("^NSEI", start=since.date().isoformat(), progress=False, auto_adjust=True, timeout=15)
+        close = df["Close"].squeeze().dropna()
+        return float(close.iloc[-1] / close.iloc[0] - 1) if len(close) > 1 else None
+    except Exception:
+        return None
+
+
 def print_report(settings: Settings, database_url: Optional[str] = None) -> None:
-    """Print a paper account's summary (default: the swing account; pass a database URL for another account)."""
-    s = make_paper_broker(settings, database_url).summary()
+    """Print a paper account's summary (default: the swing account; pass a database URL for another account): return,
+    trades and fees, plus how much of the money is actually invested, the worst drawdown so far, idle-cash interest,
+    and the Nifty 50 over the same weeks -- raw return alone flatters or hides too much (STRATEGY.md, 2026-09-26)."""
+    from sqlalchemy import select
+
+    from src.database import EquityRecord
+
+    broker = make_paper_broker(settings, database_url)
+    s = broker.summary()
     cur = settings.currency
     win = f"{s['win_rate']:.0%}" if s["win_rate"] is not None else "n/a"
     print(f"Paper account ({settings.market.upper()}): started {cur}{s['initial_cash']:,.0f} -> equity {cur}{s['equity']:,.0f} "
           f"({s['return_pct']:+.2%})\ncash {cur}{s['cash']:,.0f} | open positions {s['open_positions']} | closed trades "
           f"{s['closed_trades']} (win rate {win}) | realized net P&L {cur}{s['realized_net_pnl']:,.0f} | fees paid "
           f"{cur}{s['fees_paid']:,.0f}\nexits: {s['exits']}")
+    invested = 1 - s["cash"] / s["equity"] if s["equity"] > 0 else 0.0
+    with broker.sessions() as db:
+        points = [(r.created_at, r.equity) for r in db.scalars(select(EquityRecord).order_by(EquityRecord.created_at))]
+    risk = equity_risk(points)
+    line = f"invested {invested:.0%} of equity | idle-cash interest {cur}{s['interest_earned']:,.0f}"
+    if risk is not None:
+        line += f" | max drawdown so far {risk['max_drawdown']:.1%} since {risk['since']:%d %b %Y}"
+        nifty = _nifty_return_since(risk["since"])
+        if nifty is not None:
+            line += f" | Nifty 50 over the same period {nifty:+.2%}"
+    print(line)
 
 
 def print_positions(settings: Settings, database_url: Optional[str] = None) -> None:

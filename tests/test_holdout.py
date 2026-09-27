@@ -93,3 +93,18 @@ def test_reserve_reports_history_and_drift_without_touching_paper():
     # a fresh reserve with nothing decided still yields a zero-safety mark, not a crash
     empty = HoldoutReserve(_factory(), _fetch, initial_cash=100_000.0)
     assert empty.mark()["decisions"] == 0 and empty.mark()["equity"] == 100_000.0
+
+
+def test_a_decision_whose_day_has_no_matching_bar_earns_no_fictitious_cash_yield_interest():
+    """A's bars are priced (2026-09-01..30), but the decision's own day (2026-08-15) is not in that index - e.g. a
+    fresh BUY made before that day's bar was posted. `bars` is non-empty even though `signals` ends up empty; the
+    reserve must report a flat mark (nothing replayed), never let idle-cash yield compound from day one of the whole
+    fetched history as if that day were the start of a real position."""
+    sessions = _factory()
+    with sessions() as s:
+        s.add(PaperAccountRecord(id=1, cash=100_000.0, initial_cash=100_000.0))
+        _decision(s, "A", "BUY", 0.80, created=datetime(2026, 8, 15, 5, 30, tzinfo=timezone.utc))
+        s.commit()
+    reserve = HoldoutReserve(sessions, _fetch, initial_cash=100_000.0, cash_yield=0.20)  # a generous rate to expose it
+    m = reserve.mark()
+    assert m["decisions"] == 0 and m["closed_trades"] == 0 and m["equity"] == 100_000.0

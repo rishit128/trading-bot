@@ -124,6 +124,10 @@ class PaperAccountRecord(Base):
     day: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     day_start_equity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     last_mark: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Cash sweep (idle cash earning a liquid-fund rate): when interest was last credited, and the running total, so the
+    # ledger reconciliation can still rebuild cash from the fills.
+    interest_accrued_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    interest_earned: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class PaperPositionRecord(Base):

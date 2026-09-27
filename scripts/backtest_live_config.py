@@ -23,9 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.app.wiring import screen_config  # noqa: E402
 from src.config import load_settings  # noqa: E402
-from src.data.universe import MOMENTUM_BARS, delivery_average  # noqa: E402
+from src.data.universe import MOMENTUM_BARS  # noqa: E402
 from src.data.price_history import load_index_close, load_ohlc_universe  # noqa: E402
-from src.research.live_backtest import (DEFAULT_CONFIDENCE, equal_weight_basket, ranked_candidates,  # noqa: E402
+from src.research.live_backtest import (DEFAULT_CONFIDENCE, delivery_average_or_none, equal_weight_basket,
+                                        ranked_candidates,  # noqa: E402
                                         research_setup, run_live_config, summarize_run)
 
 BIG = 1_000_000.0
@@ -76,8 +77,7 @@ def main():
                (f"last {args.recent_years}y", close.index[-1] - pd.DateOffset(years=args.recent_years))]
     deliv = None
     if settings.delivery_filter:
-        from src.data.delivery import load_delivery
-        deliv = delivery_average(load_delivery(years=3))
+        deliv = delivery_average_or_none(3)
 
     for name, start in periods:
         start = close.index[close.index.searchsorted(start)]

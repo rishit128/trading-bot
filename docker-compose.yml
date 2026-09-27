@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     volumes:
       - bot_data:/data
+      # NSE files you download in a browser (stock list, index lists, bhavcopy); see README, "Files you download"
+      - ./nse_files:/app/nse_files:ro
     # Phase 5: paper trading in the built-in Indian simulator (no real money, no broker account involved).
     # Check progress any time:   docker compose exec trading-bot python main.py --report
     # For a dry run (decisions only, no simulated trades), remove "--live" below.

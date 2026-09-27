@@ -74,7 +74,7 @@ def test_every_consumer_of_the_rules_uses_this_module_not_its_own_copy():
     for path in list((root / "src").rglob("*.py")) + [root / "main.py"]:
         if path.name == "rules.py" or "indicators" in path.name:
             continue
-        for number, line in enumerate(path.read_text().splitlines(), 1):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             code = line.split("#")[0]
             if any(re.search(pattern, code) for pattern in banned) and not code.strip().startswith(('"', "'", "f\"", "f'")):
                 offenders.append(f"{path.relative_to(root)}:{number}: {line.strip()[:90]}")

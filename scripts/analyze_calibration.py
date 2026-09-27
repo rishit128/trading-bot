@@ -30,7 +30,6 @@ from src.research.calibration import (  # noqa: E402
 )
 
 MAYBE_OPEN_WINDOW_SECONDS = 86400  # a decision and its opening fill land within the same day
-Pair = tuple  # (confidence, win=0/1)
 
 
 def _aware(dt):

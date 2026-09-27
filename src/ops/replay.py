@@ -10,10 +10,10 @@ from src.agents.technical import TechnicalAgent
 from src.agents.base import ADVISOR, LEAD
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord
+from src.engine.agent_signal import AgentSignal
 from src.engine.enums import Action, DecisionSource
 from src.engine.rules import trend_broken
 from src.engine.strategy import TREND_EXIT_PREFIX, combine_signals
-from src.llm import AgentSignal
 
 DEFAULT_ROLES = {"technical": LEAD, "sentiment": ADVISOR}
 

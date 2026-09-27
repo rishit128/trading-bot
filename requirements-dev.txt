@@ -2,6 +2,7 @@
 
 # Testing
 pytest==8.3.3
+keyring==25.7.0  # the real-portfolio agent's unit tests (its browser tests skip without playwright)
 pyflakes==3.4.0
 pytest-cov==5.0.0
 flake8==7.1.1

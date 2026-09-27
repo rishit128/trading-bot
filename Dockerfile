@@ -14,6 +14,7 @@ COPY src ./src
 RUN useradd --create-home bot && mkdir /data && chown bot /data
 USER bot
 ENV DATABASE_URL=sqlite:////data/trading.db
+ENV INTRADAY_DATABASE_URL=sqlite:////data/intraday.db
 VOLUME /data
 
 # Indian market, dry run (decisions only), every 30 minutes while NSE is open. Analysis uses completed daily bars and

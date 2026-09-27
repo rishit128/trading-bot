@@ -11,12 +11,9 @@ their level, no circuit limits), max 10 positions of 5% each so the strategy is 
 the LLM agent: only whether the rule the scanner and agent are built around has an edge net of costs."""
 import argparse
 import dataclasses
-import io
 import sys
 from pathlib import Path
 
-import httpx
-import pandas as pd
 import yfinance as yf
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -24,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.research.backtest import (TIME_LIMITED, ExitPolicy, analyze_trades, buy_and_hold_curve, curve_metrics, rule_signals, simulate,  # noqa: E402
                           trade_metrics)
 from src.config import load_settings  # noqa: E402
-from src.data.india import NIFTY_LISTS, _HEADERS  # noqa: E402
+from src.data.india import load_index_symbols  # noqa: E402
 from src.engine.costs import india_delivery_fees  # noqa: E402
 
 
@@ -67,7 +64,7 @@ def main():
     ap.add_argument("--exits", action="store_true", help="compare exit styles and analyse the bot's losses")
     args = ap.parse_args()
 
-    symbols = pd.read_csv(io.StringIO(httpx.get(NIFTY_LISTS[args.index], headers=_HEADERS, timeout=30).text))["Symbol"].tolist()
+    symbols = load_index_symbols(args.index)  # the hand-downloaded index list (see README, "Files you download")
     nifty = download(["^NSEI"], args.years)["^NSEI"]
     calendar = nifty.index[-args.lookback:]
     raw = download([s + ".NS" for s in symbols], args.years)

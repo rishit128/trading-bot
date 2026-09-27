@@ -34,6 +34,22 @@ python scripts/replay_decision.py --last 5   # what the AI saw and said for rece
 python -m pytest               # offline tests (no network, no keys)
 ```
 
+## Files you download (optional)
+
+NSE's terms of use (nseindia.com and niftyindices.com, read 2026-09-26) prohibit "systematic or automated data
+collection" without written consent, so the bot never downloads from those sites. **Nothing here is required**: the
+stock list comes from Yahoo Finance automatically, like every price. Files saved by hand into `nse_files`
+(`NSE_FILES_DIR`, git-ignored), keeping NSE's file names, are used when present:
+
+| File | From | Used for |
+|---|---|---|
+| `EQUITY_L.csv` | nseindia.com, Market Data, "Securities available for trading", equity segment | NSE's own stock list instead of Yahoo's |
+| `ind_nifty500list.csv`, `ind_nifty100list.csv`, `ind_nifty50list.csv` | niftyindices.com, the index's page, index constituents | research scripts; the intraday universe (else the 100 most-traded stocks, from Yahoo); a last-resort stock list |
+| `bhavcopy/sec_bhavdata_full_DDMMYYYY.csv` | nseindia.com, All Reports, "Full Bhavcopy and Security Deliverable data" | the delivery filter (`DELIVERY_FILTER=true`, off by default): needs a file each trading day and switches itself off when the newest is over 7 days old |
+
+NSE's terms also say its data may not be used "for any gaming, virtual trading or simulation activities": that concerns
+this paper-trading bot as a whole, and only a licensed data source or NSE's written permission settles it (STRATEGY.md).
+
 ## How it works
 
 ```
@@ -123,7 +139,26 @@ docker compose down              # stop (the database volume, and so your paper 
 ```
 `docker-compose.yml` runs with `--live` (simulated trades in the paper broker, never real money); remove `--live` for
 decisions only. **Phase 5 = leave this running for ~4 weeks**, then judge it with the checks below. The image is non-root, contains no
-secrets (`.env` is passed at runtime) and has telemetry off. No cloud deployment is set up; any Docker host works.
+secrets (`.env` is passed at runtime) and has telemetry off. Any Docker host works.
+
+### AWS deployment (paper bot + the real-portfolio agent, running 24/7)
+
+```
+aws configure          # or `aws sso login`; your keys never pass through this repo or an AI assistant
+./deploy/deploy.sh      # provisions one EC2 instance (Mumbai, t3.small, a static IP) and deploys this checkout to it
+```
+One image (`Dockerfile.aws`) runs both: the paper bot, and — since `/portfolio` is wired into the same Telegram
+listener — the read-only agent for your real Integrated account, with Chromium included. Two things differ from the
+Windows setup: `PORTFOLIO_SECRET_BACKEND=aws` puts your mobile/MPIN in one AWS Secrets Manager secret (KMS-encrypted;
+the instance's IAM role can only read/write that one secret — see `deploy/ec2-secrets-policy.json`), since there is no
+Windows Credential Manager on Linux; and `PORTFOLIO_NO_SANDBOX=true` swaps Chromium's own OS sandbox for Docker's
+container isolation (a container does not have the capability that sandbox needs). Nothing else about the agent
+changes: still read-only, still asks for the OTP on Telegram, still never places an order.
+
+`deploy.sh` is idempotent (re-running it updates the running instance rather than making a new one) and opens SSH
+(port 22) only from the IP you ran it from — nothing else is exposed; the bot only ever makes outbound calls. The first
+run prints a one-time command to save your Integrated login into Secrets Manager (`python -m src.portfolio setup`,
+run on the instance, same as the local flow) — the mobile/MPIN never travels through this script or through git.
 
 ## Phase 5 checks (after ~4 weeks of paper trading)
 
@@ -136,6 +171,66 @@ Expect it to NOT beat the index: the entry signal is unproven. Weeks of paper tr
 
 Create a bot with @BotFather, message it once from a **private chat**, put `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
 in `.env`. Alerts for orders, failures, risk halts, AI outages, scan failures; commands `/status /positions /pause /resume /rebase` work only from that chat. Tested against a mocked Telegram API only.
+
+## Real portfolio (read-only, Integrated India)
+
+A separate LangGraph agent that logs in to the Integrated web portal, reads what it shows, analyses it, and logs out:
+
+    fetch (login, OTP on Telegram, read pages, logout) -> extract holdings -> analyse -> AI note -> report
+
+It **never places, modifies or cancels orders and never moves money**: after login it only opens a fixed list of read
+pages by address, clicks nothing, and a network guard aborts any request that looks like a transaction (order, sell,
+payout, pledge, redeem, ...). It imports none of the trading code; only `src/app/portfolio_agent.py` wires it in.
+
+- **Secrets** (mobile number, MPIN, customer ID) live only in Windows Credential Manager, not in `.env`, files, logs or git.
+- **OTP** through the **same Telegram bot** as the trading bot. Send `/portfolio` to the running bot; it asks for the
+  OTP, and its listener hands your 4-digit reply to the agent and deletes it from the chat. Only your chat counts, only
+  within 3 minutes; reply `cancel` to abort. When the trading bot is not running, `python main.py --portfolio` polls the
+  bot itself (do not use it while the trading bot runs: one bot can have only one reader; it stops and says so).
+- **One attempt per run.** A wrong OTP stops the run; a failed MPIN step blocks further runs until you run `setup`
+  again, so a scheduled run can never lock the account.
+- **Numbers are deterministic**: holdings are read from the page's tables/data, and weights, concentration and loss flags
+  are plain arithmetic. The free AI model only writes a short note from **symbols, weights and returns**: no
+  quantities, amounts, names or account IDs, and it is told not to recommend trades.
+- **Step-by-step on Telegram**: OTP submitted, MPIN entered, logged in, each page read (and any write request the page
+  tried that the guard blocked), logged out, then the report.
+- **The report** comes as separate, formatted Telegram messages (bold headers, bold key figures) — each opens and
+  closes its own formatting, so a long section splitting across several messages never leaves a tag half-open:
+  1. **Summary:** value, cost, unrealised and booked P&L, dividends over the last 12 months, cash, market-cap mix,
+     best and weakest stock.
+  2. **Every holding**, as its own card: 🟢/🔴 return marker, shares, average buy price, price now, cost → value,
+     P&L, weight, and history (bought, sold, booked profit, dividends).
+  3. **Analysis:** gainers, weakest, concentration, sectors, market caps, flags — always followed by a line making
+     clear the flags are informational only; this agent never recommends or places a trade.
+  4. **Income and tax:** each dividend, this year's sales, short-term lots with the days until they turn long-term,
+     and recent transactions. Mergers and demergers are labelled as such, not as trades.
+  5. **The AI note:** it is checked, and dropped if it is an error, a complaint or trading advice.
+  6. **The run:** pages and tabs read, what the guard stopped (in plain words), logout, time taken, where the files
+     are, and — always — a "👉 Next:" line saying exactly what (if anything) you need to do now.
+
+  Progress messages during login are numbered ("Step 3/5 — OTP submitted..."), so you always know where a run stands.
+  A failed run states why in plain language and what to do about it (retry, re-run setup, log out yourself, ...).
+  Every stock, sector or note that came from the portal or the AI is HTML-escaped before being sent, so a name like
+  "Balmer Lawrie & Company Ltd" can never break the formatting or the message.
+
+  Numbers come from the portal's own statements (Portfolio/Present, HoldingsTurnings, Dividend, RealizedGainLoss,
+  StatementOfTransaction), read field by field in `src/portfolio/statements.py`.
+- **Everything read stays on this PC** under `portfolio_data/` (git-ignored); the plain-text copy saved there
+  (`report.txt`) has the formatting tags stripped back out, so it reads cleanly in a text editor too.
+
+```
+pip install -r requirements-portfolio.txt && python -m playwright install chromium   # already done on this PC
+python -m src.portfolio setup              # mobile, MPIN, customer ID -> Windows Credential Manager
+python -m src.portfolio check              # what is stored, masked
+/portfolio                                 # on Telegram, while the trading bot runs
+python main.py --portfolio --show          # or: without the trading bot (--otp-from terminal, --no-ai)
+python -m src.portfolio forget [--profile]  # delete the stored details (and the browser profile)
+```
+
+Tested against a local fake of the portal (`tests/test_portfolio_portal.py`) that reproduces the portal's page flow and
+element IDs, with a planted order request the guard must stop. Also run and verified against the real account: login,
+every page and tab, the guard blocking the portal's own automatic requests, and a correct read of real holdings,
+dividends, sales and lots.
 
 ## Backtests
 
@@ -263,6 +358,16 @@ cross-module private imports. Prompt text is versioned: change a prompt and `tes
 
 `scripts/test_openrouter_api.py` tries each configured AI model with a real call (safe); `python main.py --check` tests keys and connectivity.
 
+Operational checks on the paper account (read-only):
+- `scripts/reconcile_paper.py` rebuilds the cash from the recorded fills and checks every approved decision has an order; exits non-zero on any mismatch.
+- `scripts/analyze_mistakes.py` judges every analysed stock against what then happened, including whether the AI's calls beat the plain rule's.
+- `scripts/analyze_patterns.py` shows which entry conditions the closed trades actually won on.
+
+Research on history:
+- `scripts/research_cash_sweep.py` the idle-cash sweep test behind `CASH_YIELD_PCT` (`--universe nse` for all NSE stocks).
+- `scripts/research_decomposition.py` pure momentum to the live setup one rule at a time (`--confirm`: the live-account check on both universes).
+- `scripts/validate_walk_forward.py SYMBOL` walk-forward, out-of-sample check of one decision phase (DET, +LLM, ... FULL).
+
 ## Project layout
 
 ```
@@ -283,4 +388,5 @@ src/intraday/           opening-range-breakout strategy (pure functions) and the
 src/monitoring/         Telegram alerts and commands
 src/app/                wiring.py (market wiring, paper-broker factory), reports.py (--report/--positions/--screen/--graph),
                         intraday_cli.py
+src/portfolio/          the READ-ONLY LangGraph agent for the real Integrated India account (wired in by app/portfolio_agent.py)
 ```

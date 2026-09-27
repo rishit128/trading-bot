@@ -36,6 +36,10 @@ class PaperBroker:
     fees: Callable[[str, float], float] = india_delivery_fees
     slippage: float = SLIPPAGE
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+    # Annual rate idle cash earns (a liquid mutual fund sweep: direct plan held outside demat, so no DP charge or STT
+    # when redeemed). 0 = cash earns nothing, the original behaviour. Credited per elapsed calendar day, like the
+    # backtest (src.research.backtest.simulate's cash_yield).
+    cash_yield: float = 0.0
 
     def __post_init__(self):
         self._lock = threading.RLock()
@@ -54,12 +58,28 @@ class PaperBroker:
         with self.sessions() as s:
             return s.get(PaperPositionRecord, symbol) is not None
 
+    def _accrue_interest(self, acct: PaperAccountRecord) -> None:
+        """Credit idle cash with the sweep rate for the time since the last credit (no-op when cash_yield is 0).
+
+        The first call only starts the clock: interest is never back-dated to before the sweep was switched on."""
+        if self.cash_yield <= 0:
+            return
+        now = self.now_fn()
+        if acct.interest_accrued_at is not None and acct.cash > 0:
+            days = (now - _utc(acct.interest_accrued_at)).total_seconds() / 86400
+            if days > 0:
+                interest = acct.cash * ((1 + self.cash_yield) ** (days / 365) - 1)
+                acct.cash += interest
+                acct.interest_earned = (acct.interest_earned or 0.0) + interest
+        acct.interest_accrued_at = now
+
     def portfolio(self) -> Portfolio:
-        """Settle any hit stops/targets, then value the account at live prices."""
+        """Settle any hit stops/targets, credit idle-cash interest, then value the account at live prices."""
         with self._lock:
             self._settle_exits()
             with self.sessions() as s:
                 acct = s.get(PaperAccountRecord, 1)
+                self._accrue_interest(acct)
                 positions = s.scalars(select(PaperPositionRecord)).all()
                 values, qtys = {}, {}
                 for p in positions:
@@ -90,6 +110,7 @@ class PaperBroker:
                 acct = s.get(PaperAccountRecord, 1)
                 if s.get(PaperPositionRecord, symbol) is not None:
                     raise ValueError(f"{symbol}: position already open")
+                self._accrue_interest(acct)  # interest on the balance as it stood until now, before it changes
                 if cost > acct.cash:
                     raise ValueError(f"insufficient cash: need {cost:.2f}, have {acct.cash:.2f}")
                 acct.cash -= cost
@@ -127,6 +148,7 @@ class PaperBroker:
             proceeds = qty * price
             fees = self.fees(Action.SELL, proceeds)
             entry_fees = self.fees(Action.BUY, qty * pos.avg_price)
+            self._accrue_interest(acct)  # before the proceeds land, so they earn nothing for time they were not held
             acct.cash += proceeds - fees
             s.add(PaperTradeRecord(symbol=symbol, qty=qty, entry_price=pos.avg_price, exit_price=price,
                                    opened_at=pos.opened_at, closed_at=now, reason=reason, fees=fees + entry_fees,
@@ -214,4 +236,5 @@ class PaperBroker:
                 "closed_trades": len(trades), "win_rate": (len(wins) / len(trades)) if trades else None,
                 "realized_net_pnl": sum(t.net_pnl for t in trades), "fees_paid": fees,
                 "exits": {r: sum(1 for t in trades if t.reason == r) for r in ("STOP", "TARGET", "SIGNAL")},
+                "interest_earned": acct.interest_earned or 0.0,
             }

@@ -12,8 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import load_settings  # noqa: E402
 from src.database import make_session_factory  # noqa: E402
-from src.learning.mistakes import (breakdown, confidence_bucket, fmt, group_stats, load_judged, missed_gains,  # noqa: E402
-                                   worst_calls)
+from src.learning.mistakes import (ai_vs_rule, breakdown, confidence_bucket, fmt, group_stats, load_judged,  # noqa: E402
+                                   missed_gains, worst_calls)
 
 
 def main():
@@ -47,6 +47,10 @@ def main():
         print(fmt(g))
     print("\n=== by agreement with the mechanical rule ===")
     for g in breakdown(judged, lambda j: j.rule_alignment or "unknown", floor):
+        print(fmt(g))
+    print("\n=== does the AI add anything over the plain rule? ===")
+    print("(the AI earns its place only if 'rule BUY, AI bought' beats 'rule BUY, AI passed' by more than the ± ranges)")
+    for g in breakdown([j for j in judged if ai_vs_rule(j) != "n/a"], ai_vs_rule, floor):
         print(fmt(g))
     print("\n=== worst BUYs (mistakes of commission) ===")
     for j in worst_calls(judged, "BUY"):

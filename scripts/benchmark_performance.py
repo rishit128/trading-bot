@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agents.technical import TechnicalAgent, ReflectionChain, ReflectionStage  # noqa: E402
+from src.agents.technical.phases import apply_reflection  # noqa: E402
 from src.agents.history import PatternStats, history_stats  # noqa: E402
 from src.config import load_settings  # noqa: E402
 from src.data.indicators import Snapshot  # noqa: E402
@@ -86,8 +87,7 @@ def main():
     bench("build reflection prompt", lambda: TechnicalAgent.build_reflection_prompt(BASE, "RELIANCE", "s"), n)
     chain = reflect_chain()
     base = AgentSignal(action="BUY", confidence=0.75, reasoning="r")
-    agent = TechnicalAgent(llm=None)  # _apply_reflection is instance-only; none of the LLM path is touched here
-    bench("reflect chain monotonic+humility", lambda: agent._apply_reflection(base, chain), n)
+    bench("reflect chain monotonic+humility", lambda: apply_reflection(base, chain), n)
     avg_prompt_len = sum(len(p) for p in prompts) / len(prompts)
     print(f"\naverage prompt bytes: {avg_prompt_len:.0f} (the per-stock constant cost is the data, not the template)")
 

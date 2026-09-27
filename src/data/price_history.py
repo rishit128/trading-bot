@@ -9,7 +9,7 @@ from typing import Callable, List, Optional, Tuple
 
 import pandas as pd
 
-from src.data.india import SUFFIX, fetch_index_symbols
+from src.data.india import SUFFIX, load_index_symbols, load_nse_symbols
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ def load_universe(index: int = 500, years: int = 10, cache_dir: Path = Path("res
     if cache.exists() and not refresh:
         return pickle.loads(cache.read_bytes())
     download = download or _default_download
-    symbols = symbols if symbols is not None else fetch_index_symbols(index)
+    symbols = symbols if symbols is not None else load_index_symbols(index)
     end = today().isoformat()
     start = (today() - timedelta(days=int(years * 365.25))).isoformat()
     closes, volumes = {}, {}
@@ -134,8 +134,27 @@ def load_ohlc_universe(index: int = 500, years: int = 10, cache_dir: Path = Path
     cache = cache_dir / f"ohlc_nifty{index}_{years}y.pkl"
     if cache.exists() and not refresh:
         return pickle.loads(cache.read_bytes())
+    symbols = symbols if symbols is not None else load_index_symbols(index)
+    return _download_ohlc(symbols, years, cache, cache_dir, download, chunk, today)
+
+
+def load_ohlc_nse(years: int = 10, cache_dir: Path = Path("research_cache"), refresh: bool = False,
+                  download: Optional[Callable] = None, list_symbols: Optional[Callable[[], List[str]]] = None,
+                  chunk: int = 100, today: Callable[[], date] = date.today) -> dict:
+    """symbol -> daily OHLCV for EVERY NSE main-board stock listed today -- the universe the live scanner actually scans
+    (~2,300), rather than today's Nifty 500. Removes the index-membership part of the survivorship bias (small caps
+    that were never in the index are now included) but not the delisting part: Yahoo has no bars for stocks that have
+    since been delisted, so they are still missing. Cached on disk; the first download takes a while."""
+    cache = cache_dir / f"ohlc_nse_{years}y.pkl"
+    if cache.exists() and not refresh:
+        return pickle.loads(cache.read_bytes())
+    return _download_ohlc((list_symbols or load_nse_symbols)(), years, cache, cache_dir, download, chunk, today)
+
+
+def _download_ohlc(symbols: List[str], years: int, cache: Path, cache_dir: Path, download: Optional[Callable],
+                   chunk: int, today: Callable[[], date]) -> dict:
+    """Download daily OHLCV for `symbols` in chunks, keep the ones Yahoo has, and cache the dict at `cache`."""
     download = download or _default_download
-    symbols = symbols if symbols is not None else fetch_index_symbols(index)
     end = today().isoformat()
     start = (today() - timedelta(days=int(years * 365.25))).isoformat()
     out = {}

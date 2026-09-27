@@ -140,7 +140,15 @@ def test_broker_and_telegram_checks_report_what_they_found():
 
 def test_build_checks_marks_keys_and_broker_critical_and_covers_the_market():
     india = build_checks(Settings(market="india"), FakeBroker(Portfolio(1, 1)), {"OPENROUTER_API_KEY": "k"}, download=lambda *a, **k: None)
-    assert [(n.split(" (")[0], crit) for n, crit, _ in india] == [("OpenRouter key", True), ("Broker", True), ("Market data", False)]
+    assert [(n.split(" (")[0], crit) for n, crit, _ in india] == [
+        ("OpenRouter key", True), ("Broker", True), ("Market data", False),
+        ("NSE stock list", True)]  # the whole-market scan has nothing to scan without it
+    with_delivery = build_checks(Settings(market="india", delivery_filter=True), FakeBroker(Portfolio(1, 1)), {},
+                                 download=lambda *a, **k: None)
+    assert ("NSE delivery files", False) in [(n, crit) for n, crit, _ in with_delivery]  # without files: just off
+    watchlist = build_checks(Settings(market="india", universe="watchlist", delivery_filter=False), FakeBroker(Portfolio(1, 1)),
+                             {}, download=lambda *a, **k: None)
+    assert not [n for n, _, _ in watchlist if n.startswith("NSE")]
     with_tg = build_checks(Settings(market="india"), FakeBroker(Portfolio(1, 1)), {"TELEGRAM_BOT_TOKEN": "t"}, download=lambda *a, **k: None)
     assert with_tg[-1][0] == "Telegram bot" and with_tg[-1][1] is False
 

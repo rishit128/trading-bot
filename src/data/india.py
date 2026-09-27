@@ -1,13 +1,19 @@
-"""India (NSE) data plumbing: official stock list, bulk daily bars, market clock, intraday feed. All via public sources."""
+"""India (NSE) data plumbing: the stock and index lists, bulk daily bars, market clock, intraday feed.
+
+The stock and index lists are NSE files a person downloads in a browser: the terms of use of nseindia.com and
+niftyindices.com (read 2026-09-26) prohibit "systematic or automated data collection" without written consent, so the
+bot never downloads from those sites itself. It reads the files from NSE_FILES_DIR (default ./nse_files). Prices come
+from Yahoo Finance."""
 import io
 import logging
+import os
 import threading
 import time
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-import httpx
 import pandas as pd
 
 from .retry import retry_call
@@ -17,9 +23,31 @@ log = logging.getLogger(__name__)
 
 IST = ZoneInfo("Asia/Kolkata")
 SUFFIX = ".NS"
-NSE_EQUITY_LIST = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-NIFTY500_LIST = "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"
-_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"}
+EQUITY_LIST_FILE = "EQUITY_L.csv"  # nseindia.com: the equity segment's list of securities available for trading
+INDEX_LIST_FILES: Dict[int, str] = {  # niftyindices.com: each index's page, "download constituents"
+    50: "ind_nifty50list.csv", 100: "ind_nifty100list.csv", 500: "ind_nifty500list.csv"}
+STALE_LIST_DAYS = 60  # an older stock list misses new listings; warn, but still use it
+
+
+class NseFileMissing(RuntimeError):
+    """A file the user downloads by hand from NSE is not in the folder (or is unusable)."""
+
+
+def nse_files_dir() -> Path:
+    """Where the hand-downloaded NSE files live (NSE_FILES_DIR, default ./nse_files)."""
+    return Path(os.getenv("NSE_FILES_DIR", "nse_files"))
+
+
+def read_nse_file(name: str, directory: Optional[Path] = None) -> str:
+    """The text of one hand-downloaded NSE file, or NseFileMissing saying exactly what to download and where."""
+    path = (directory or nse_files_dir()) / name
+    if not path.exists():
+        raise NseFileMissing(f"{path} not found: download {name} from NSE's website in a browser and save it there "
+                             "(the bot never downloads from NSE sites itself; see README, 'Files you download')")
+    age = (time.time() - path.stat().st_mtime) / 86400
+    if age > STALE_LIST_DAYS:
+        log.warning("%s is %.0f days old: download a fresh copy so new listings are included", path, age)
+    return path.read_text(encoding="utf-8-sig")
 
 
 def _parse_symbols(csv_text: str) -> List[str]:
@@ -30,33 +58,111 @@ def _parse_symbols(csv_text: str) -> List[str]:
     return sorted(df["SYMBOL"].astype(str).str.strip().unique())
 
 
-def fetch_nse_symbols(get: Callable = httpx.get) -> List[str]:
-    """Every NSE main-board EQ-series stock (~2,300). Falls back to the Nifty 500 if NSE's archive is unreachable."""
-    for name, url in (("NSE equity list", NSE_EQUITY_LIST), ("Nifty 500 list", NIFTY500_LIST)):
+# Yahoo lists other NSE segments under the same exchange code: SME platform ("-SM"), InvITs ("-IV") and a few series
+# tickers. Real main-board symbols can contain hyphens too (BAJAJ-AUTO, NAM-INDIA, KLBRENG-B), so only these exact
+# suffixes are dropped. NSE's own dummy "NSETEST" tickers are dropped as well.
+YAHOO_EXCLUDED_SUFFIXES = ("-SM", "-IV", "-BL", "-RR", "-E1")
+
+
+def yahoo_nse_symbols(min_traded_value: float = 0.0, top: Optional[int] = None,
+                      screen: Optional[Callable] = None, page: int = 250, pause: float = 0.5) -> List[str]:
+    """NSE main-board stocks from Yahoo Finance's screener (the same source as every price the bot uses). No manual step and no request to NSE's sites. Compared with NSE's own list on 2026-09-26 it
+    covered all 2,317 EQ-series stocks; it also includes some trade-to-trade (BE) stocks, which the scanner's own
+    liquidity, volatility and trend filters then judge like any other. ETFs, SME and other segments are dropped.
+
+    `min_traded_value` drops stocks whose Yahoo 3-month average daily value is below HALF of it (a cheap pre-cut that
+    keeps the daily bar download small; the scanner applies the exact rule on the bars). A stock Yahoo gives no volume
+    for is kept, never guessed away. `top` keeps the N most traded by average daily value (100 stands in for the
+    Nifty 100). Not by market cap: Yahoo leaves it empty for some of the largest stocks (RELIANCE and TCS on
+    2026-09-26), which sorts them near the end of the list."""
+    if screen is None:
+        import yfinance as yf
+        from yfinance import EquityQuery
+
+        query = EquityQuery("eq", ["exchange", "NSI"])
+
+        def screen(offset):
+            return yf.screen(query, size=page, offset=offset, sortField="intradaymarketcap", sortAsc=False)
+    quotes: list = []
+    while True:
+        r = retry_call(lambda: screen(len(quotes)), attempts=3, delay=2.0, what="Yahoo NSE stock list")
+        got = r.get("quotes", [])
+        quotes += got
+        if not got or len(quotes) >= r.get("total", 0):
+            break
+        time.sleep(pause)
+    kept = []
+    for q in quotes:
+        sym = str(q.get("symbol", ""))
+        if not sym.endswith(SUFFIX):
+            continue
+        sym = sym[:-len(SUFFIX)]
+        if sym.endswith(YAHOO_EXCLUDED_SUFFIXES) or "NSETEST" in sym:
+            continue
+        # Yahoo types ETFs as equities too. Funds carry no financial reporting currency: measured 2026-09-26, missing on
+        # all 309 named ETFs/BeES but on only 10 of NSE's 2,317 EQ stocks (2 of them liquid). Stocks, not funds.
+        if not q.get("financialCurrency"):
+            continue
+        volume, price = q.get("averageDailyVolume3Month"), q.get("regularMarketPrice")
+        value = volume * price if volume and price else None
+        if min_traded_value and value is not None and value < min_traded_value / 2:
+            continue
+        kept.append((sym, value or 0.0))
+    if top is not None:
+        kept = sorted(kept, key=lambda k: k[1], reverse=True)[:top]
+    return [sym for sym, _ in kept]
+
+
+def load_nse_symbols(directory: Optional[Path] = None, min_traded_value: float = 0.0,
+                     yahoo: Optional[Callable[[float], List[str]]] = None) -> List[str]:
+    """The stocks the whole-market scan covers. A hand-saved EQUITY_L.csv wins when present (NSE's own list); otherwise
+    Yahoo's NSE list, fetched automatically; the hand-saved Nifty 500 file is the last resort. Raises NseFileMissing (a
+    RuntimeError, so the pipeline's scan-failure alert fires) when none of them is usable."""
+    try:
+        return _nse_symbols_from_files(directory, (EQUITY_LIST_FILE,))
+    except NseFileMissing:
+        pass
+    try:
+        symbols = (yahoo or (lambda mtv: yahoo_nse_symbols(mtv)))(min_traded_value)
+        if len(symbols) > 100:
+            log.info("Yahoo NSE list: %d symbols", len(symbols))
+            return symbols
+        log.warning("Yahoo's NSE list returned only %d symbols; ignoring it", len(symbols))
+    except Exception as e:
+        log.warning("Yahoo's NSE list unavailable (%s: %s)", type(e).__name__, e)
+    return _nse_symbols_from_files(directory, (INDEX_LIST_FILES[500],))
+
+
+def _nse_symbols_from_files(directory: Optional[Path], names) -> List[str]:
+    """The first usable stock list among the hand-saved files `names`."""
+    for name in names:
         try:
-            r = get(url, headers=_HEADERS, timeout=30, follow_redirects=True)
-            r.raise_for_status()
-            symbols = _parse_symbols(r.text)
-            if len(symbols) > 100:
-                log.info("%s: %d symbols", name, len(symbols))
-                return symbols
-        except Exception as e:
-            log.warning("%s unavailable (%s: %s)", name, type(e).__name__, e)
-    raise RuntimeError("could not load an NSE stock list from NSE or niftyindices.com")
+            symbols = _parse_symbols(read_nse_file(name, directory))
+        except NseFileMissing:
+            continue
+        except Exception as e:  # a half-saved or wrong file: say so and try the next one
+            log.warning("%s could not be read (%s: %s)", name, type(e).__name__, e)
+            continue
+        if len(symbols) > 100:
+            log.info("%s: %d symbols", name, len(symbols))
+            return symbols
+        log.warning("%s lists only %d symbols; ignoring it", name, len(symbols))
+    raise NseFileMissing(f"no NSE stock list: Yahoo's list was unavailable and there is no usable {' or '.join(names)} "
+                         f"in {directory or nse_files_dir()} (a hand-saved copy from NSE's website works too)")
 
 
-NIFTY_LISTS = {
-    50: "https://www.niftyindices.com/IndexConstituent/ind_nifty50list.csv",
-    100: "https://www.niftyindices.com/IndexConstituent/ind_nifty100list.csv",
-    500: NIFTY500_LIST,
-}
-
-
-def fetch_index_symbols(index: int = 500, get: Callable = httpx.get) -> List[str]:
-    """Constituents of a Nifty index as NSE symbols (today's membership, so historical tests carry survivorship bias)."""
-    r = get(NIFTY_LISTS[index], headers=_HEADERS, timeout=30, follow_redirects=True)
-    r.raise_for_status()
-    return _parse_symbols(r.text)
+def load_index_symbols(index: int = 500, directory: Optional[Path] = None) -> List[str]:
+    """Constituents of a Nifty index as NSE symbols, from its hand-downloaded list (today's membership, so historical
+    tests carry survivorship bias). Raises NseFileMissing (not a raw parsing error) both when the file is absent and
+    when it is present but unusable (half-saved, an HTML error page saved with a .csv extension, ...), so a caller's
+    NseFileMissing fallback (e.g. run_intraday's Yahoo fallback) is never bypassed by a malformed file."""
+    name = INDEX_LIST_FILES[index]
+    text = read_nse_file(name, directory)  # NseFileMissing here already, if the file is absent
+    try:
+        return _parse_symbols(text)
+    except Exception as e:  # a half-saved or wrong file: same treatment as load_nse_symbols' own file reading
+        raise NseFileMissing(f"{name} could not be read ({type(e).__name__}: {e}); "
+                             "download a fresh copy from NSE's website") from e
 
 
 def yf_bar_fetcher(lookback_days: int = 400, download: Optional[Callable] = None,

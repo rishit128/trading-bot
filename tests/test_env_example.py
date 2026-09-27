@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-EXAMPLE = (ROOT / ".env.example").read_text()
+EXAMPLE = (ROOT / ".env.example").read_text(encoding="utf-8")
 SOURCES = [ROOT / "main.py"] + sorted((ROOT / "src").rglob("*.py"))
 SECRETS = {"OPENROUTER_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}
 COMPUTED_DEFAULTS = {"WATCHLIST"}
@@ -17,7 +17,7 @@ LINE = re.compile(r"^(#\s*)?([A-Z][A-Z0-9_]+)=([^\s#]*)", re.M)
 def read_by_code():
     names = set()
     for path in SOURCES:
-        for a, b in READ.findall(path.read_text()):
+        for a, b in READ.findall(path.read_text(encoding="utf-8")):
             names.add(a or b)
     return names
 
@@ -51,7 +51,7 @@ def test_documented_defaults_are_the_defaults_in_the_source():
     """Compare each shown default with the literal default written next to its os.getenv/_float call."""
     shown, checked = documented(), 0
     for path in SOURCES:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         for name, default in re.findall(r"""(?:getenv|environ\.get)\(\s*["']([A-Z0-9_]+)["']\s*,\s*["']([^"']*)["']""", text):
             if name in COMPUTED_DEFAULTS:
                 continue  # built from per-market data, not a literal: covered by the end-to-end test below

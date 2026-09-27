@@ -12,7 +12,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.data.india import IST, SUFFIX, fetch_index_symbols  # noqa: E402
+from src.data.india import IST, SUFFIX, load_index_symbols  # noqa: E402
 from src.intraday import strategy as st  # noqa: E402
 
 
@@ -59,7 +59,7 @@ def main():
     ap.add_argument("--capital", type=float, default=1_000_000.0)
     ap.add_argument("--max-positions", type=int, default=5)
     args = ap.parse_args()
-    symbols = fetch_index_symbols(args.index)
+    symbols = load_index_symbols(args.index)
     data = download_5m(symbols, args.days)
     print(f"{len(data)} of {len(symbols)} Nifty {args.index} stocks with 5-minute data")
 

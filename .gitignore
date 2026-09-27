@@ -16,3 +16,12 @@ logs/
 research_results.csv
 .coverage
 htmlcov/
+
+# NSE files downloaded by hand: NSE content, not ours to commit or redistribute
+nse_files/
+
+# Real-portfolio agent: the account's data and browser profile stay on this PC
+portfolio_data/
+
+# AWS deployment: the SSH private key deploy/deploy.sh creates must never be committed
+deploy/*.pem

@@ -9,6 +9,7 @@ from src.agents.history import PatternStats
 from src.agents.sentiment import SentimentAgent
 from src.agents.technical import (CONTEXT_SCHEMA, COT_SCHEMA, LEARNING_SCHEMA, REFLECT_SCHEMA, TechnicalAgent, mechanical_action,
                                   mechanical_baseline)
+from src.agents.technical.prompts import simple_prompt
 from src.data.indicators import Snapshot
 from src.data.market_context import MarketContext
 from src.engine.agent_signal import AgentSignal
@@ -31,7 +32,7 @@ def fingerprint() -> str:
                            vix=18.0, vix_percentile=0.85, vs_index_6m=0.05, beta_6m=1.2)
     out = {"schemas": {n: json.dumps(v, sort_keys=True) for n, v in
                        (("cot", COT_SCHEMA), ("learn", LEARNING_SCHEMA), ("ctx", CONTEXT_SCHEMA), ("refl", REFLECT_SCHEMA))}}
-    out["prompts"] = {s.symbol: {"cot": TechnicalAgent.build_prompt(s), "simple": TechnicalAgent.build_simple_prompt(s),
+    out["prompts"] = {s.symbol: {"cot": TechnicalAgent.build_prompt(s), "simple": simple_prompt(s),
                                  "baseline": mechanical_baseline(s), "action": str(mechanical_action(s))} for s in snaps}
     out["prompts"]["learning"] = TechnicalAgent.build_learning_prompt(base, "UP", stats, "P>MA50+MA50>MA200|RSI50")
     market_stats = PatternStats(41, 0.46, 6.5, -3.2, 1.9, 20, 20, 0.5, scope="market",

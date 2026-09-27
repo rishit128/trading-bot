@@ -24,6 +24,7 @@ from sqlalchemy import func, select
 from src.agents.history import PatternStats, pattern_id
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord, OutcomeRecord
+from src.learning.outcomes import HORIZONS
 
 log = logging.getLogger(__name__)
 
@@ -83,6 +84,8 @@ class SetupMemory:
                  ttl_seconds: float = 600.0, clock: Callable[[], float] = time.monotonic):
         if min_samples < 1 or horizon < 1:
             raise ValueError("horizon and min_samples must be >= 1")
+        if horizon not in HORIZONS:  # only these are labelled; any other would leave the memory silent forever
+            raise ValueError(f"horizon must be one of the labelled horizons {HORIZONS}, got {horizon}")
         self.sessions, self.horizon, self.min_samples = sessions, horizon, min_samples
         self.cost, self.ttl, self.clock = round_trip_cost, ttl_seconds, clock
         self._cache: Dict[Optional[str], Tuple[float, List[_Row]]] = {}

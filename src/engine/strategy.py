@@ -72,8 +72,3 @@ def combine_signals(signals: Mapping[str, Optional[AgentSignal]], roles: Mapping
         return Decision(action, _mean(confidences), f"{label} and {' and '.join(advisors)} agree {action}: {reasons}")
     return Decision(action, _mean(confidences), f"{label} {action}: {reasons}")
 
-
-def combine(technical: AgentSignal, sentiment: Optional[AgentSignal]) -> Decision:
-    """The original two-agent rule, kept as a convenience wrapper."""
-    return combine_signals({"technical": technical, "sentiment": sentiment},
-                           {"technical": Role.LEAD, "sentiment": Role.ADVISOR})

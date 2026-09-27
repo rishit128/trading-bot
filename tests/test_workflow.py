@@ -3,20 +3,73 @@ import threading
 import time
 
 import pytest
+from langgraph.types import RetryPolicy
 from sqlalchemy import select
 
-from src.agents.base import ADVISOR, LEAD
+from src.agents.base import ADVISOR, LEAD, AgentContext
 from src.config import RiskLimits, Settings
 from src.data.indicators import Snapshot
+from src.data.retry import is_transient_data_error
 from src.database import DecisionRecord, OrderRecord, make_session_factory
 from src.engine.risk_engine import Portfolio
 from src.llm import AgentSignal
 from src.pipeline import TradingPipeline
+from src.workflow import build_analysis_graph
 from tests.test_llm_and_pipeline import FakeBroker, StubAgent, make_pipeline, signal_for
 
 
 def stub(name, fn, role=LEAD):
     return StubAgent(fn, name, role)
+
+
+class _AnalysisOnlyServices:
+    """The minimal CycleServices surface build_analysis_graph needs, for a graph-level test of fetch_data's own
+    RetryPolicy (SNAPSHOT_RETRY) without paying for a full TradingPipeline/database."""
+
+    def __init__(self, snapshot_fn, agents):
+        self.agents = agents
+        self._snapshot_fn = snapshot_fn
+
+    def snapshot(self, symbol):
+        return self._snapshot_fn(symbol)
+
+    def agent_context(self, symbol, snapshot):
+        return AgentContext(symbol, snapshot, headlines=lambda: [], market=lambda: None)
+
+
+FAST_RETRY = RetryPolicy(max_attempts=2, initial_interval=0.01, backoff_factor=1.0, jitter=False,
+                         retry_on=is_transient_data_error)
+
+
+# ---------------------------------------------------------------- fetch_data's RetryPolicy (SNAPSHOT_RETRY)
+def test_a_transient_snapshot_failure_is_retried_and_recovers(tmp_path):
+    calls = []
+
+    def flaky(symbol):
+        calls.append(symbol)
+        if len(calls) == 1:
+            raise ConnectionError("dropped connection")
+        return Snapshot(symbol, 100.0, 98.0, 95.0, 60.0, 1000)
+
+    graph = build_analysis_graph(_AnalysisOnlyServices(flaky, {"technical": stub("technical", lambda s: signal_for("BUY"))}),
+                                 snapshot_retry=FAST_RETRY)
+    out = graph.invoke({"symbol": "AAPL"})
+    assert len(calls) == 2  # failed once, retried once, succeeded
+    assert out["signals"]["technical"].action == "BUY"
+
+
+def test_a_definite_data_error_is_not_retried(tmp_path):
+    calls = []
+
+    def always_stale(symbol):
+        calls.append(symbol)
+        raise ValueError(f"{symbol}: last bar is stale")
+
+    graph = build_analysis_graph(_AnalysisOnlyServices(always_stale, {"technical": stub("technical", lambda s: signal_for("BUY"))}),
+                                 snapshot_retry=FAST_RETRY)
+    with pytest.raises(ValueError, match="stale"):
+        graph.invoke({"symbol": "AAPL"})
+    assert len(calls) == 1  # a definite fact about the data must not cost a second attempt
 
 
 # ---------------------------------------------------------------- structure

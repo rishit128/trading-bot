@@ -16,7 +16,7 @@ Each later phase is optional (`use_learning`, `use_context`, `use_reflect`). A p
 result - the base signal is never replaced by a fail-safe - and the analysis degrades to a HOLD only if the very first
 call fails. The confidence change a single phase may make is capped at `max_adjustment` so no single call moves it far."""
 import logging
-from typing import List, Optional, Tuple
+from typing import Optional
 
 from src.agents.base import LEAD, AgentContext, fail_safe_hold
 from src.agents.history import PatternStats, pattern_id
@@ -45,7 +45,6 @@ class TechnicalAgent:
     # The exact prompt text for each call. Kept reachable from the agent because a stored decision rebuilds the prompt it
     # was shown (replay) and tests fingerprint it; the wording itself lives in `prompts`.
     build_prompt = staticmethod(prompts.cot_prompt)
-    build_simple_prompt = staticmethod(prompts.simple_prompt)
     build_learning_prompt = staticmethod(prompts.learning_prompt)
     build_context_prompt = staticmethod(prompts.context_prompt)
     build_reflection_prompt = staticmethod(prompts.reflection_prompt)
@@ -140,6 +139,45 @@ class TechnicalAgent:
                       reasoning=f"{base.reasoning} [reflection {verdict}: {steps[-1][2]} (critic conviction {critic_confidence:.2f})]",
                       degraded=base.degraded, details=details)
 
+    def _run_learning(self, ctx: AgentContext, current: AgentSignal, state: dict) -> AgentSignal:
+        """Decision-memory phase: adjust from the closed-trade record of similar setups, once there's enough of it.
+        `state["stats"]` is kept (only when the sample-size gate passes) for the reflection phase's summary."""
+        if self.history_fn is None:
+            return current
+        try:
+            stats = self.history_fn(ctx.snapshot)
+        except Exception as e:
+            log.warning("history lookup failed for %s: %s", ctx.symbol, e)
+            return current
+        if stats is None or stats.sample_size < self.min_pattern_sample:
+            return current
+        state["stats"] = stats
+        return self._learn(ctx, current, stats)
+
+    def _run_context(self, ctx: AgentContext, current: AgentSignal, state: dict) -> AgentSignal:
+        """Market-context phase: adjust only for a notable regime (risk-off or euphoric). `state["market"]` is kept
+        even when the regime is not notable (or the call is already HOLD), so the audit trail and the reflection
+        phase's summary always see the regime the call faced, whether or not it changed anything."""
+        market = state["market"] = self._market(ctx)
+        if market is None or not market.is_notable() or current.action == Action.HOLD:
+            return current
+        return self._context(ctx, current, market)
+
+    def _run_reflection(self, ctx: AgentContext, current: AgentSignal, state: dict) -> AgentSignal:
+        """Reflection phase: a self-critique veto. Skipped once a prior phase already left the call degraded or HOLD."""
+        if current.degraded or current.action == Action.HOLD:
+            return current
+        return self._reflect(ctx, current, phases.refinement_summary(ctx, current, state, state.get("market")))
+
+    def _enabled_phases(self):
+        """The refinement phases that run this call, in order. A new phase is added here only -- analyze() itself
+        never needs to change."""
+        return [phase for enabled, phase in (
+            (self.use_learning, self._run_learning),
+            (self.use_context, self._run_context),
+            (self.use_reflect, self._run_reflection),
+        ) if enabled]
+
     def analyze(self, ctx: AgentContext) -> AgentSignal:
         """Return the AI's signal, or a fail-safe HOLD flagged as degraded if every model fails on the FIRST call."""
         try:
@@ -150,29 +188,7 @@ class TechnicalAgent:
         if current.degraded or current.action == Action.HOLD:
             return current  # nothing to refine from history/market; the fail-safe must never pretend otherwise
         state: dict = {}
-        market = None
-        if self.use_learning and self.history_fn is not None:
-            try:
-                stats = self.history_fn(ctx.snapshot)
-            except Exception as e:
-                log.warning("history lookup failed for %s: %s", ctx.symbol, e)
-                stats = None
-            if stats is not None and stats.sample_size >= self.min_pattern_sample:
-                current = self._learn(ctx, current, stats)
-                state["stats"] = stats
-        if self.use_context:
-            market = self._market(ctx)
-            if market is not None and market.is_notable() and current.action != Action.HOLD:
-                current = self._context(ctx, current, market)
-                state["market"] = market
-        if self.use_reflect and not current.degraded and current.action != Action.HOLD:
-            current = self._reflect(ctx, current, phases.refinement_summary(ctx, current, state, market))
-        phases.stamp_refinements(ctx, current, market)
+        for phase in self._enabled_phases():
+            current = phase(ctx, current, state)
+        phases.stamp_refinements(ctx, current, state.get("market"))
         return current
-
-    # Thin wrappers kept for the tests and tools that drive these two rules directly.
-    _clamp_adjustment = staticmethod(phases.clamp_adjustment)
-
-    def _apply_reflection(self, base: AgentSignal, out: ReflectionChain) -> Tuple[List[Tuple[str, float, str]], float]:
-        """The critic's conviction chain with the monotone rule and the humility discount enforced (see phases)."""
-        return phases.apply_reflection(base, out)

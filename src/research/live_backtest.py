@@ -25,8 +25,8 @@ import pandas as pd
 from src.research.backtest import Result, curve_metrics, simulate
 from src.config import RiskLimits
 from src.data.indicators import MIN_BARS
-from src.data.universe import (MOMENTUM_BARS, Candidate, ScreenConfig, above_median_delivery, rank, screen_arrays,
-                               select_candidates)
+from src.data.universe import (MOMENTUM_BARS, Candidate, ScreenConfig, above_median_delivery, delivery_average, rank,
+                               screen_arrays, select_candidates)
 from src.engine.costs import SLIPPAGE
 from src.engine.costs import india_delivery_fees
 
@@ -66,6 +66,19 @@ def ranked_candidates(close: pd.DataFrame, volume: pd.DataFrame, dates: Sequence
     return out
 
 
+def delivery_average_or_none(years: float = 3) -> Optional[pd.DataFrame]:
+    """The 20-day delivery average from the hand-downloaded bhavcopy files, or None (with a note) when there are none,
+    so a script skips its delivery-filter window instead of silently running it without the filter."""
+    from src.data.delivery import bhavcopy_dir, load_delivery
+
+    deliv = load_delivery(years=years)
+    if deliv.empty:
+        print(f"no NSE bhavcopy files in {bhavcopy_dir()}: skipping the delivery-filter window "
+              "(see README, 'Files you download')")
+        return None
+    return delivery_average(deliv)
+
+
 def make_buy_source(ranked: Dict[pd.Timestamp, List[Candidate]], cfg: ScreenConfig,
                     confidence: float = DEFAULT_CONFIDENCE):
     """The entry feed for `simulate`: the day's affordable top candidates in rank order, each at the stand-in confidence."""
@@ -89,18 +102,20 @@ def run_live_config(bars: Dict[str, pd.DataFrame], limits: RiskLimits, cfg: Scre
                     delivery_avg: Optional[pd.DataFrame] = None,
                     fees: Callable[[str, float], float] = india_delivery_fees, slippage: float = SLIPPAGE,
                     ranked: Optional[Dict[pd.Timestamp, List[Candidate]]] = None,
-                    start: Optional[pd.Timestamp] = None) -> LiveRun:
+                    start: Optional[pd.Timestamp] = None, cash_yield: float = 0.0) -> LiveRun:
     """Run the live entry/exit/sizing/cost rules over `bars` (symbol -> OHLCV frame) from `capital`.
 
     `ranked` lets several account sizes reuse one (slow) scan, since the ranking does not depend on the account.
-    `start` reports the equity curve from that date on (bars before it are only history for the 200-day average)."""
+    `start` reports the equity curve from that date on (bars before it are only history for the 200-day average).
+    `cash_yield` is the annual rate idle cash earns (see `simulate`); it accrues only from `start`."""
     if ranked is None:
         close = pd.DataFrame({s: df["Close"] for s, df in bars.items()}).sort_index()
         volume = pd.DataFrame({s: df["Volume"] for s, df in bars.items()}).sort_index()
         dates = list(close.index if dates is None else dates)
         ranked = ranked_candidates(close, volume, dates, cfg, delivery_avg)
     result = simulate(bars, {}, limits, start_equity=capital, fees=fees, slippage=slippage,
-                      buy_source=make_buy_source(ranked, cfg, confidence))
+                      buy_source=make_buy_source(ranked, cfg, confidence), cash_yield=cash_yield,
+                      cash_yield_from=start)
     if start is not None:
         result = Result(result.equity.loc[start:], [t for t in result.trades if t.entry_date >= start], result.open_at_end)
     return LiveRun(result, capital, limits)

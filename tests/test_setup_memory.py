@@ -175,3 +175,15 @@ def test_control_flags_round_trip_and_overwrite(tmp_path):
 def test_a_break_even_result_is_not_a_win_in_the_baseline_or_the_match(tmp_path):
     stats = SetupMemory(seed(tmp_path, many(30, ROUND_TRIP_COST)), min_samples=30).stats(snap())
     assert stats.win_rate == 0.0 and stats.baseline_win_rate == 0.0
+
+
+def test_a_horizon_that_is_never_labelled_is_refused_rather_than_left_silent(tmp_path):
+    """Only 5, 20 and 60 sessions are labelled; e.g. 40 would make the memory find nothing, forever, without a word."""
+    import pytest
+
+    from src.database import make_session_factory
+
+    sessions = make_session_factory(f"sqlite:///{tmp_path / 'h.db'}")
+    with pytest.raises(ValueError, match="labelled horizons"):
+        SetupMemory(sessions, horizon=40)
+    assert SetupMemory(sessions, horizon=60).horizon == 60

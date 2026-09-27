@@ -17,6 +17,8 @@ START_EQUITY = 100_000.0
 SignalTable = Dict[str, Dict[pd.Timestamp, Tuple[str, float]]]  # symbol -> date -> (action, confidence)
 # (signal day, account state at the fill day's open) -> ordered (symbol, confidence) BUY picks, best first
 BuySource = Callable[[pd.Timestamp, Portfolio], Sequence[Tuple[str, float]]]
+# (signal day, held symbol) -> True to sell it at the next open, e.g. it dropped out of a momentum portfolio's top N
+ExitSource = Callable[[pd.Timestamp, str], bool]
 
 
 
@@ -70,8 +72,17 @@ class Result:
 def simulate(bars: Dict[str, pd.DataFrame], signals: SignalTable, limits: RiskLimits,
              start_equity: float = START_EQUITY, exits: ExitPolicy = LIVE_EXITS,
              fees: Optional[Callable[[str, float], float]] = None, slippage: float = 0.0,
-             buy_source: Optional[BuySource] = None) -> Result:
+             buy_source: Optional[BuySource] = None, cash_yield: float = 0.0,
+             cash_yield_from: Optional[pd.Timestamp] = None, exit_source: Optional[ExitSource] = None) -> Result:
     """Replay signals through the real risk engine: next-open fills, stop/target levels off the signal-day close.
+
+    `cash_yield` is the annual rate idle cash earns (a liquid-fund sweep; 0 = cash earns nothing, the old behaviour). It
+    accrues per calendar day between bars, before that day's trading, the same way the paper broker accrues it.
+    `cash_yield_from` starts the accrual at that date, so a warm-up stretch (history only, no trading) earns nothing
+    and cannot show up as a gain in a curve reported from the real start.
+
+    `exit_source(signal_day, symbol)` returning True sells that held position at the next open, like a SELL signal.
+    It lets a rebalanced strategy (e.g. hold the top N by momentum) be run through the same fills and costs.
 
     `slippage` is charged adversarially (buy higher, sell lower) on market fills only; stop/target exits hit at their
     exact levels. `fees` mirrors the paper broker's schedule (india_delivery_fees) for net-of-cost parity (D1/D2).
@@ -143,6 +154,8 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: SignalTable, limits: RiskLi
 
     for i, day in enumerate(calendar):
         prev = calendar[i - 1] if i else None
+        if cash_yield and prev is not None and cash > 0 and (cash_yield_from is None or prev >= cash_yield_from):
+            cash *= (1 + cash_yield) ** ((day - prev).days / 365)
         peak, halted_since = drawdown_pause(peak, prev_equity, halted_since, day, limits.max_drawdown_pct,
                                             limits.drawdown_pause_days)
 
@@ -152,6 +165,8 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: SignalTable, limits: RiskLi
                     continue
                 sig = signals.get(sym, {}).get(prev)
                 if exits.trend_exit and prev in ma200[sym].index and trend_broken(float(bars[sym].loc[prev, "Close"]), ma200[sym].loc[prev]):
+                    sig = (Action.SELL, 1.0)
+                if exit_source is not None and exit_source(prev, sym):
                     sig = (Action.SELL, 1.0)
                 if sig and sig[0] == Action.SELL and engine.evaluate(Action.SELL, sig[1], sym, 1.0, portfolio_at(day, "Open")).approved:
                     fill = float(bars[sym].loc[day, "Open"]) * (1 - slippage)

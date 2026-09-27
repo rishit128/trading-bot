@@ -4,7 +4,8 @@
     errors.py    LLMUnavailable (what callers catch) and the failure kinds the client reacts to
     parsing.py   tolerant extraction of the JSON object from an answer, and provider error details
 
-The names callers need are re-exported here (`AgentSignal` too, for the many modules that import it from `src.llm`)."""
+The names callers need are re-exported here. `AgentSignal` is re-exported too (its home is `src.engine.agent_signal`;
+production code imports it from there directly, but tests widely import it from here for convenience)."""
 from src.engine.agent_signal import AgentSignal
 from src.llm.client import RETRY_HINT, SIGNAL_SCHEMA, LLMClient
 from src.llm.errors import FORMAT, PERMANENT, TRANSIENT, TRUNCATED, LLMUnavailable

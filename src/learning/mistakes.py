@@ -80,6 +80,19 @@ def confidence_bucket(j: Judged) -> str:
     return "<0.70" if j.confidence < 0.70 else "0.70-0.80" if j.confidence < 0.80 else ">=0.80"
 
 
+def ai_vs_rule(j: Judged) -> str:
+    """Where the AI's call sits against the mechanical entry rule it was shown. The mechanical rule only ever says BUY or
+    HOLD, so it is recovered from `rule_alignment` + the AI's action. The AI adds value only if, among stocks the rule
+    would BUY, the ones it bought beat the ones it passed on; otherwise its filtering is noise. Rows without a recorded
+    alignment (rule-based exits, fail-safe HOLDs, older rows) are 'n/a'."""
+    if j.source not in (None, "agents") or j.rule_alignment not in ("agree", "deviate"):
+        return "n/a"
+    rule_buy = (j.action == "BUY") == (j.rule_alignment == "agree")
+    if rule_buy:
+        return "rule BUY, AI bought" if j.action == "BUY" else "rule BUY, AI passed"
+    return "rule passed, AI bought" if j.action == "BUY" else "both passed"
+
+
 def worst_calls(judged: Sequence[Judged], action: str, count: int = 10) -> List[Judged]:
     """The calls that hurt most: the lowest-return BUYs (mistakes of commission)."""
     return sorted((j for j in judged if j.action == action), key=lambda j: j.net_return)[:count]

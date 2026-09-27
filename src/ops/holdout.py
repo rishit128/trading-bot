@@ -51,6 +51,7 @@ class HoldoutReserve:
     min_confidence: float = DEFAULT_MIN_CONFIDENCE
     slippage: float = SLIPPAGE  # only market fills pay it (buy high, sell low); see engine/costs.py
     fees: Callable[[str, float], float] = india_delivery_fees
+    cash_yield: float = 0.0  # match the paper account's CASH_YIELD_PCT, or the drift between the two is not like for like
     starting_cash: float = field(init=False, default=0.0)  # the resolved starting balance (initial_cash, or the paper account's)
 
     def __post_init__(self):
@@ -90,9 +91,14 @@ class HoldoutReserve:
 
         equity = self.starting_cash
         trades, open_positions = 0, 0
-        if bars:
+        if signals:  # not `bars`: bars can exist for a symbol whose decision day never matched an index date (e.g. a
+                    # fresh BUY made before that day's bar was posted) - simulating then would let cash_yield accrue
+                    # from day one of the whole fetched history (cash_yield_from=None), a fictitious return for a
+                    # mark that in truth replayed nothing.
+            first_decision = min((day for days in signals.values() for day in days), default=None)
             result = simulate(bars, signals, RiskLimits(min_confidence=self.min_confidence),
-                              start_equity=self.starting_cash, fees=self.fees, slippage=self.slippage)
+                              start_equity=self.starting_cash, fees=self.fees, slippage=self.slippage,
+                              cash_yield=self.cash_yield, cash_yield_from=first_decision)
             if len(result.equity):
                 equity = float(result.equity.iloc[-1])
             trades, open_positions = len(result.trades), result.open_at_end
