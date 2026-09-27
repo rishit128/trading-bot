@@ -1,7 +1,7 @@
 """Wiring shared by the command-line entry point and the reports: the market wiring and the paper-broker factory."""
 import os
 from dataclasses import dataclass
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional
 
 from src.config import Settings
 from src.engine.ports import Broker
@@ -11,13 +11,11 @@ from src.data.universe import ScreenConfig, UniverseScreener
 
 @dataclass
 class MarketWiring:
-    """Everything that differs per market: broker, data functions, universe scanner, and whether news sentiment is available."""
+    """Everything that differs per market: broker, data functions and universe scanner."""
     broker: Broker
     snapshot_fn: Callable
-    headlines_fn: Callable[[str], Sequence[str]]
     screener: Optional[UniverseScreener]
     broker_label: str
-    use_news: bool = True  # registers the sentiment agent; off where no reliable news source exists
     quote_fn: Optional[Callable[[str], float]] = None  # live price at execution time
 
 
@@ -68,10 +66,9 @@ def build_market_wiring(settings: Settings, sessions) -> MarketWiring:
                          cash_yield=settings.cash_yield_pct)
     screener = build_india_screener(settings) if settings.universe == "market" else None
     # Analyse the last COMPLETED session only (stable prompts all day -> cacheable, and matches the backtest), then
-    # size/bracket the order off the live price. No reliable free Indian news source, so no sentiment agent.
+    # size/bracket the order off the live price.
     return MarketWiring(
         broker, cached_per_session(lambda s: fetch_snapshot(s, suffix=SUFFIX, as_of=clock.last_completed_session),
                                    clock.last_completed_session),
-        lambda s: [], screener,
-        "built-in paper simulator", use_news=False, quote_fn=feed.last_price,
+        screener, "built-in paper simulator", quote_fn=feed.last_price,
     )

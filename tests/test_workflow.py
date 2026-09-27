@@ -34,7 +34,7 @@ class _AnalysisOnlyServices:
         return self._snapshot_fn(symbol)
 
     def agent_context(self, symbol, snapshot):
-        return AgentContext(symbol, snapshot, headlines=lambda: [], market=lambda: None)
+        return AgentContext(symbol, snapshot, market=lambda: None)
 
 
 FAST_RETRY = RetryPolicy(max_attempts=2, initial_interval=0.01, backoff_factor=1.0, jitter=False,
@@ -89,9 +89,9 @@ def test_duplicate_agent_names_and_empty_registry_are_rejected(tmp_path):
     pipe, broker, sessions = make_pipeline(tmp_path)
     args = (Settings(risk=RiskLimits()),)
     with pytest.raises(ValueError, match="unique"):
-        TradingPipeline(*args, [stub("x", lambda s: None), stub("x", lambda s: None)], broker, sessions, None, None)
+        TradingPipeline(*args, [stub("x", lambda s: None), stub("x", lambda s: None)], broker, sessions, None)
     with pytest.raises(ValueError, match="at least one agent"):
-        TradingPipeline(*args, [], broker, sessions, None, None)
+        TradingPipeline(*args, [], broker, sessions, None)
 
 
 # ---------------------------------------------------------------- scalability: many agents
@@ -271,7 +271,7 @@ def test_no_quote_is_fetched_for_hold_decisions(tmp_path):
 
 def test_sentiment_veto_flows_through_the_graph_and_is_audited(tmp_path):
     pipe, _, sessions = make_pipeline(tmp_path)
-    pipe.agents["sentiment"] = stub("sentiment", lambda sym, heads: AgentSignal(action="SELL", confidence=0.9, reasoning="bad news"), ADVISOR)
+    pipe.agents["sentiment"] = stub("sentiment", lambda s: AgentSignal(action="SELL", confidence=0.9, reasoning="bad news"), ADVISOR)
     [r] = pipe.run_once()
     assert r.action == "HOLD"
     with sessions() as s:
@@ -291,25 +291,12 @@ def test_analysis_graph_can_be_invoked_directly(tmp_path):
     assert isinstance(out["snapshot"], Snapshot) and set(out["signals"]) == {"technical", "sentiment"}
 
 
-def test_headlines_are_fetched_lazily_only_by_agents_that_ask(tmp_path):
-    fetched = []
-    pipe, _, _ = make_pipeline(tmp_path)
-    pipe.headlines_fn = lambda symbol: fetched.append(symbol) or ["news"]
-    pipe.run_once()  # the default sentiment stub asks for headlines, the technical stub does not
-    assert fetched == ["AAPL"]
-    fetched.clear()
-    pipe.agents.pop("sentiment")
-    pipe.rebuild_graphs()
-    pipe.run_once()
-    assert fetched == []
-
-
 def test_pipeline_with_a_single_lead_agent_and_no_advisors(tmp_path):
     settings = Settings(watchlist=("X",), dry_run=True, risk=RiskLimits())
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'one.db'}")
     pipe = TradingPipeline(settings, [stub("technical", lambda s: signal_for("BUY"))],
                            FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)), sessions,
-                           lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000), lambda sym: [])
+                           lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000))
     assert set(pipe.analysis_graph.get_graph().nodes) == {"__start__", "fetch_data", "agent_technical", "collect", "__end__"}
     assert pipe.run_once()[0].action == "BUY"
 

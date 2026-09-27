@@ -109,7 +109,7 @@ def make_details_pipeline(tmp_path):
                "reasoning_chain": {"trend": "uptrend above MA50", "overbought": "RSI 55 not overbought",
                                    "volume": "volume confirms"}}
     tech = StubAgent(lambda s: Signal_stub(details), "technical", LEAD)
-    sent = StubAgent(lambda sym, heads: None, "sentiment", ADVISOR)
+    sent = StubAgent(lambda s: None, "sentiment", ADVISOR)
     sessions = make_session_factory(f"sqlite:///{tmp_path / 't.db'}")
 
     class FakeBroker:
@@ -129,7 +129,7 @@ def make_details_pipeline(tmp_path):
             return Fill("y", "accepted")
 
     pipe = TradingPipeline(Settings(watchlist=("AAPL",), dry_run=True, risk=RiskLimits()),
-                           [tech, sent], FakeBroker(), sessions, sample_snapshot, lambda sym: [])
+                           [tech, sent], FakeBroker(), sessions, sample_snapshot)
     return pipe, sessions
 
 

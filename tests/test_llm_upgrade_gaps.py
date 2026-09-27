@@ -286,7 +286,7 @@ def test_pipeline_persists_raw_model_rule_alignment_and_falsification(tmp_path):
         Settings(watchlist=("AAPL",), dry_run=True),
         [StubAgent(lambda s: sig, "technical", LEAD)],
         FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)), sessions,
-        lambda sym: SNAP, lambda sym: [],
+        lambda sym: SNAP,
     )
     pipe.run_once()
     with sessions() as s:
@@ -319,7 +319,7 @@ def test_pipeline_stamps_versions_and_replay_exposes_them(tmp_path):
         Settings(watchlist=("AAPL",), dry_run=True),
         [StubAgent(lambda s: sig, "technical", LEAD)],
         FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)), sessions,
-        lambda sym: SNAP, lambda sym: [],
+        lambda sym: SNAP,
     )
     pipe.run_once()
     with sessions() as s:
@@ -338,7 +338,7 @@ def test_pipeline_stamps_the_per_decision_universe_size(tmp_path):
         Settings(watchlist=("AAPL", "MSFT"), dry_run=True),
         [StubAgent(lambda s: sig, "technical", LEAD)],
         FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)), sessions,
-        lambda sym: SNAP, lambda sym: [],
+        lambda sym: SNAP,
     )
     pipe.run_once()
     with sessions() as s:

@@ -50,7 +50,7 @@ def build(tmp_path, dry_run=False, risk=None):
     messages = []
     pipeline = TradingPipeline(
         Settings(watchlist=tuple(UNIVERSE), dry_run=dry_run, risk=risk or RiskLimits(), analysis_workers=3),
-        [StubAgent(decide, "technical", LEAD)], broker, sessions, snapshot, lambda sym: [], notify=messages.append)
+        [StubAgent(decide, "technical", LEAD)], broker, sessions, snapshot, notify=messages.append)
     return pipeline, broker, sessions, messages
 
 

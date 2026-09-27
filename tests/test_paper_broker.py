@@ -251,7 +251,7 @@ def test_works_end_to_end_inside_the_trading_pipeline(tmp_path):
     pipe = TradingPipeline(
         Settings(watchlist=("AAA",), dry_run=False, risk=RiskLimits()),
         [StubAgent(lambda s: AgentSignal(action="BUY", confidence=0.9, reasoning="t"))], broker, sessions,
-        lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000), lambda sym: [],
+        lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000),
     )
     [r] = pipe.run_once()
     assert r.order_status == "filled" and broker.portfolio().position_qty == {"AAA": 500}  # 5% of 1,000,000 / 100

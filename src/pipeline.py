@@ -68,7 +68,6 @@ class TradingPipeline:
         broker: Broker,
         session_factory,
         snapshot_fn: Callable[[str], Snapshot],
-        headlines_fn: Callable[[str], Sequence[str]],
         control=None,
         notify: Optional[Callable[[str], object]] = None,
         universe_fn: Optional[Callable[[Portfolio], Sequence[str]]] = None,
@@ -84,7 +83,6 @@ class TradingPipeline:
         self.broker = broker
         self.sessions = session_factory
         self.snapshot_fn = snapshot_fn
-        self.headlines_fn = headlines_fn
         self.broker_label = broker_label  # a human name for the broker, shown in the start-up banner
         self.risk = RiskEngine(settings.risk, fees=broker.fees if isinstance(broker, ChargesFees) else None)
         self.control = control
@@ -112,8 +110,8 @@ class TradingPipeline:
         return self.snapshot_fn(symbol)
 
     def agent_context(self, symbol: str, snapshot: Snapshot) -> AgentContext:
-        """What an agent is given for one stock. Headlines and market context are lazy: only agents that ask pay for them."""
-        return AgentContext(symbol, snapshot, headlines=lambda: self.headlines_fn(symbol),
+        """What an agent is given for one stock. Market context is lazy: only an agent that asks for it pays for it."""
+        return AgentContext(symbol, snapshot,
                             market=lambda: self.market_context_fn(snapshot) if self.market_context_fn else None)
 
     def open_cycle(self) -> Portfolio:

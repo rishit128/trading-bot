@@ -354,9 +354,9 @@ def test_pipeline_persists_phase_columns(tmp_path):
     pipe = TradingPipeline(
         Settings(watchlist=("AAPL",), dry_run=True),
         [StubAgent(lambda s: detailed_signal(), "technical", LEAD),
-         StubAgent(lambda sym, heads: None, "sentiment", ADVISOR)],
+         StubAgent(lambda s: None, "sentiment", ADVISOR)],
         FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)), sessions,
-        lambda sym: SNAP, lambda sym: [],
+        lambda sym: SNAP,
     )
     pipe.run_once()
     with sessions() as s:
@@ -381,7 +381,7 @@ def test_pipeline_feeds_market_context_to_agents(tmp_path):
     pipe = TradingPipeline(
         Settings(watchlist=("AAPL",), dry_run=True),
         [ag], FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)), sessions,
-        lambda sym: SNAP, lambda sym: [],
+        lambda sym: SNAP,
         market_context_fn=lambda snap: MarketContext(index_above_ma200=False),
     )
     pipe.run_once()

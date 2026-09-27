@@ -10,10 +10,10 @@ def sessions(tmp_path):
     return make_session_factory(f"sqlite:///{tmp_path / 'm.db'}")
 
 
-def test_india_kit_uses_paper_broker_and_disables_unreliable_news(tmp_path):
+def test_india_kit_uses_paper_broker(tmp_path):
     kit = app_kit.build_market_wiring(Settings(market="india", universe="market"), sessions(tmp_path))
     assert isinstance(kit.broker, PaperBroker) and kit.screener is not None
-    assert kit.headlines_fn("RELIANCE") == [] and "simulator" in kit.broker_label
+    assert "simulator" in kit.broker_label
 
 
 def test_india_watchlist_mode_has_no_screener(tmp_path):
@@ -47,7 +47,7 @@ def test_report_prints_paper_account_summary(tmp_path, capsys):
 
 def test_india_kit_analyses_completed_sessions_and_quotes_live(tmp_path):
     kit = app_kit.build_market_wiring(Settings(market="india"), sessions(tmp_path))
-    assert kit.use_news is False and kit.quote_fn is not None
+    assert kit.quote_fn is not None
 
 
 def test_india_pipeline_registers_only_the_technical_agent(monkeypatch, tmp_path):

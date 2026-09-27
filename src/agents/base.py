@@ -5,7 +5,7 @@ An agent has a unique `name` and a `role`:
   * ADVISOR - can only confirm (raising confidence) or veto (opposing a lead). Neutral/absent advisors are ignored.
 `analyze` returns a AgentSignal, or None when the agent has nothing to say (e.g. no news)."""
 from dataclasses import dataclass
-from typing import Callable, Optional, Protocol, Sequence
+from typing import Callable, Optional, Protocol
 
 from src.data.indicators import Snapshot
 from src.engine.enums import Action, Role
@@ -23,11 +23,9 @@ def fail_safe_hold(reason: str) -> AgentSignal:
 
 @dataclass(frozen=True)
 class AgentContext:
-    """What an agent is given: the symbol, its indicator snapshot, and a lazy headline fetcher."""
+    """What an agent is given: the symbol and its indicator snapshot."""
     symbol: str
     snapshot: Snapshot
-    # Lazy, so only agents that need news pay for fetching it (and they fetch it in parallel with the others).
-    headlines: Callable[[], Sequence[str]] = lambda: []
     # Lazy market context (index regime / VIX / relative strength); None when it is unavailable or not wired up.
     market: Callable[[], Optional[object]] = lambda: None
 

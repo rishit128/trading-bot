@@ -5,7 +5,6 @@ import logging
 import os
 import sys
 
-from src.agents.sentiment import SentimentAgent
 from src.agents.technical import TechnicalAgent
 from src.learning.jobs import DailyOutcomeLabelling
 from src.learning.setups import SetupMemory
@@ -91,9 +90,9 @@ def build_pipeline(live: bool) -> TradingPipeline:
         llm, use_cot=settings.llm_cot, use_learning=settings.llm_learning, use_context=settings.llm_context,
         use_reflect=settings.llm_reflect, history_fn=make_history_fn(sessions),
         max_adjustment=settings.llm_max_adjust,
-    )] + ([SentimentAgent(llm)] if kit.use_news else [])
+    )]
     pipeline = TradingPipeline(
-        settings, agents, kit.broker, sessions, kit.snapshot_fn, kit.headlines_fn, control=control, notify=notify,
+        settings, agents, kit.broker, sessions, kit.snapshot_fn, control=control, notify=notify,
         universe_fn=kit.screener.symbols_for if kit.screener else None, quote_fn=kit.quote_fn,
         market_context_fn=market_context, broker_label=kit.broker_label,
     )

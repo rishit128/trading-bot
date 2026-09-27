@@ -87,7 +87,7 @@ must agree) or `advisor` (can only confirm or veto). Register it and the graph g
 ```python
 class FundamentalsAgent:
     name, role = "fundamentals", "advisor"
-    def analyze(self, ctx):                 # ctx.symbol, ctx.snapshot, ctx.headlines()
+    def analyze(self, ctx):                 # ctx.symbol, ctx.snapshot, ctx.market()
         return AgentSignal(action="BUY", confidence=0.7, reasoning="...")   # or None to abstain
 
 pipeline.agents["fundamentals"] = FundamentalsAgent()
@@ -343,7 +343,10 @@ cross-module private imports. Prompt text is versioned: change a prompt and `tes
 - **No demonstrated entry edge** (see status). Every historical test uses today's index members, which inflates results
   (~9 points/yr measured); the AI agent itself has never been tested on Indian stocks (the plain rule stands in for it).
 - The -20% drawdown halt lapses after `DRAWDOWN_PAUSE_DAYS` (30) days, when the peak is rebased; set it to 0 for the old behaviour where only recovery or `/rebase` ends it.
-- **India has no news sentiment** (no reliable free source: Yahoo returned other companies' articles). Technical agent only.
+- **No news-sentiment agent.** It was tried and removed (2026-09-27): Yahoo's news for NSE tickers returned other
+  companies' articles and unrelated crypto/macro noise (e.g. "RELIANCE.NS" pulled a US steel company's news), so there
+  is no reliable free Indian source to feed one. Technical agent only; see "Adding another AI agent" above if a
+  trustworthy source ever turns up.
 - **The paper broker is optimistic**: stops fill at the stop price, no circuit-limit modelling (a stock locked at its
   lower circuit may not let you exit), fixed 0.05% slippage, cost rates are approximations and change.
 - **No real Indian broker integration.** Automated real-money trading in India is subject to SEBI/exchange rules and
@@ -374,8 +377,8 @@ Research on history:
 main.py                 argument parsing and the swing bot's wiring (build_pipeline, preflight)
 src/                    the application core: config, pipeline (the cycle's services), workflow (the LangGraph graphs),
                         runner, control, results, versions, logging_setup
-src/agents/             AI agents: technical/ (agent, prompts, schemas, phases), sentiment.py, history.py (decision
-                        memory), base.py (the agent protocol)
+src/agents/             AI agents: technical/ (agent, prompts, schemas, phases), history.py (decision memory),
+                        base.py (the agent protocol)
 src/llm/                the OpenRouter client for unreliable free models: client, parsing, errors
 src/engine/             the domain, with no I/O of its own: rules (entry filter, trend exit), risk_engine, strategy,
                         enums, agent_signal (the typed audit trail), costs (fees + slippage), ports (broker / price feed /

@@ -76,7 +76,7 @@ def build(tmp_path, limits=None):
 
     alerts = []
     pipeline = TradingPipeline(Settings(watchlist=tuple(TAPE), dry_run=False, risk=limits or RiskLimits()),
-                               [StubAgent(decide, "technical", LEAD)], broker, sessions, snapshot, lambda s: [],
+                               [StubAgent(decide, "technical", LEAD)], broker, sessions, snapshot,
                                notify=alerts.append)
     return sim, broker, pipeline, sessions, alerts
 
