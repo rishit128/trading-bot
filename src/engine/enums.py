@@ -46,3 +46,11 @@ class DecisionSource(StrEnum):
     """Who produced a decision: the AI agents, or a deterministic rule that overrides them."""
     AGENTS = "agents"
     TREND_EXIT = "trend_exit"
+
+
+class SignalOutcome(StrEnum):
+    """What the intraday engine did with a breakout, as recorded in `intraday_signals.outcome`."""
+    ENTERED = "ENTERED"
+    SKIPPED = "SKIPPED"    # not bought, for a stated reason (too dear for the account, no cash, no risk budget)
+    DRY_RUN = "DRY_RUN"    # a signal in a mode that places no orders
+    FAILED = "FAILED"      # the broker refused the order

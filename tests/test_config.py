@@ -140,3 +140,41 @@ def test_an_unlabelled_learning_horizon_is_rejected_at_startup_not_deep_inside_s
     monkeypatch.setenv("LEARNING_HORIZON", "30")
     with pytest.raises(ValueError, match="learning_horizon"):
         load_settings()
+
+
+# -- the intraday engine's own sizing settings --------------------------------------------------------------------------
+def test_intraday_settings_have_their_own_defaults_and_do_not_follow_the_swing_ones(monkeypatch):
+    for name in ("INTRADAY_RISK_PCT", "INTRADAY_MAX_POSITION_PCT", "INTRADAY_MAX_POSITIONS", "INTRADAY_UNIVERSE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MAX_POSITION_PCT", "0.05")
+    monkeypatch.setenv("MAX_OPEN_POSITIONS", "10")
+    s = load_settings()
+    assert (s.intraday_risk_pct, s.intraday_max_position_pct, s.intraday_max_positions) == (0.005, 0.20, 5)
+    assert s.intraday_universe == ()
+
+
+def test_intraday_settings_are_read_from_the_environment(monkeypatch):
+    monkeypatch.setenv("INTRADAY_RISK_PCT", "0.01")
+    monkeypatch.setenv("INTRADAY_MAX_POSITION_PCT", "0.25")
+    monkeypatch.setenv("INTRADAY_MAX_POSITIONS", "4")
+    monkeypatch.setenv("INTRADAY_UNIVERSE", " reliance, tcs ,,infy ")
+    s = load_settings()
+    assert (s.intraday_risk_pct, s.intraday_max_position_pct, s.intraday_max_positions) == (0.01, 0.25, 4)
+    assert s.intraday_universe == ("RELIANCE", "TCS", "INFY")
+
+
+@pytest.mark.parametrize("name,value", [
+    ("INTRADAY_RISK_PCT", "0"), ("INTRADAY_RISK_PCT", "5"),            # 5 meaning 5%
+    ("INTRADAY_MAX_POSITION_PCT", "20"), ("INTRADAY_MAX_POSITIONS", "0"),
+])
+def test_bad_intraday_settings_refuse_to_start(monkeypatch, name, value):
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError):
+        load_settings()
+
+
+def test_intraday_positions_cannot_add_up_to_more_than_the_account(monkeypatch):
+    monkeypatch.setenv("INTRADAY_MAX_POSITIONS", "6")
+    monkeypatch.setenv("INTRADAY_MAX_POSITION_PCT", "0.20")  # 120%: leverage the paper broker does not have
+    with pytest.raises(ValueError, match="leverage"):
+        load_settings()

@@ -44,7 +44,7 @@ stock list comes from Yahoo Finance automatically, like every price. Files saved
 | File | From | Used for |
 |---|---|---|
 | `EQUITY_L.csv` | nseindia.com, Market Data, "Securities available for trading", equity segment | NSE's own stock list instead of Yahoo's |
-| `ind_nifty500list.csv`, `ind_nifty100list.csv`, `ind_nifty50list.csv` | niftyindices.com, the index's page, index constituents | research scripts; the intraday universe (else the 100 most-traded stocks, from Yahoo); a last-resort stock list |
+| `ind_nifty500list.csv`, `ind_nifty100list.csv`, `ind_nifty50list.csv` | niftyindices.com, the index's page, index constituents | research scripts; the intraday universe (else Yahoo's top 100 by traded value, labelled as such); a last-resort stock list |
 | `bhavcopy/sec_bhavdata_full_DDMMYYYY.csv` | nseindia.com, All Reports, "Full Bhavcopy and Security Deliverable data" | the delivery filter (`DELIVERY_FILTER=true`, off by default): needs a file each trading day and switches itself off when the newest is over 7 days old |
 
 NSE's terms also say its data may not be used "for any gaming, virtual trading or simulation activities": that concerns
@@ -386,8 +386,9 @@ src/engine/             the domain, with no I/O of its own: rules (entry filter,
 src/data/               NSE list, Yahoo data, indicators, universe scanner, market context, price history, delivery %, retry
 src/database/           models, session (open + upgrade a file), migrations
 src/ops/                operational tools: holdout reserve, decision replay, ledger reconciliation, start-up checks
-src/research/           the simulator (backtest.py), live-configuration backtest, ablation, walk-forward, calibration
-src/intraday/           opening-range-breakout strategy (pure functions) and the 5-minute engine
+src/research/           the simulator (backtest.py), live-configuration backtest, ablation, walk-forward, calibration; for the
+                        intraday rule: intraday_replay (the live engine over stored bars), intraday_audit, intraday_hypotheses
+src/intraday/           opening-range-breakout rule (one numpy core), risk-based sizing, the 5-minute engine, the universe selector
 src/monitoring/         Telegram alerts and commands
 src/app/                wiring.py (market wiring, paper-broker factory), reports.py (--report/--positions/--screen/--graph),
                         intraday_cli.py

@@ -6,6 +6,7 @@ import pytest
 from src.app import intraday_cli, reports
 from src.config import Settings
 from src.data.universe import Candidate
+from src.database import make_session_factory
 from tests.test_paper_broker import FakeClock, FakeFeed
 
 
@@ -13,7 +14,6 @@ from tests.test_paper_broker import FakeClock, FakeFeed
 def account(tmp_path, monkeypatch):
     """A paper account on disk with one closed trade and one open position, priced by a scripted feed."""
     import src.data.india as india
-    from src.database import make_session_factory
     from src.engine.paper_broker import PaperBroker
     from tests.test_paper_broker import T0
 
@@ -79,21 +79,33 @@ def test_graph_command_draws_all_three_workflows(capsys):
 
 def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     started, alerts = {}, []
-    broker = SimpleNamespace(clock=FakeClock())
+    broker = SimpleNamespace(clock=FakeClock(), sessions=make_session_factory("sqlite://"))
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
     monkeypatch.setattr(intraday_cli, "make_paper_broker", lambda settings, url, fees=None: broker)
-    monkeypatch.setattr(intraday_cli, "load_index_symbols", lambda index: ["AAA", "BBB", "CCC"])
+    monkeypatch.setattr(intraday_cli, "select_universe",
+                        lambda explicit: (["AAA", "BBB", "CCC"], "Nifty 100 (hand-saved NSE file)"))
+    monkeypatch.setenv("INTRADAY_RISK_PCT", "0.01")
+    monkeypatch.setenv("INTRADAY_MAX_POSITION_PCT", "0.25")
+    monkeypatch.setenv("INTRADAY_MAX_POSITIONS", "4")
     monkeypatch.setattr(intraday_cli, "Notifier", lambda token, chat: SimpleNamespace(send=alerts.append))
     monkeypatch.setattr(intraday_cli.IntradayEngine, "run_loop", lambda self: started.update(engine=self))
     intraday_cli.run_intraday(live=True)
     engine = started["engine"]
     assert engine.live is True and engine.universe == ["AAA", "BBB", "CCC"] and engine.notify is not None
+    # its own INTRADAY_* sizing, not the swing settings; and the universe's source is passed on so it is recorded daily
+    assert (engine.risk_pct, engine.max_position_pct, engine.max_positions) == (0.01, 0.25, 4)
+    assert engine.universe_source == "Nifty 100 (hand-saved NSE file)"
+    assert engine.archive is not None and engine.archive.sessions is broker.sessions   # finished sessions are kept for research
     out = capsys.readouterr().out
-    assert "3 Nifty 100 stocks" in out and "PAPER ORDERS" in out and "LOST money" in out
+    assert "3 stocks [Nifty 100 (hand-saved NSE file)]" in out and "PAPER ORDERS" in out and "no edge" in out
+    assert "risk 1.00% of equity per trade" in out and "cap 25%" in out
     assert alerts == ["[INTRADAY] started: PAPER ORDERS (separate intraday account)"]
     intraday_cli.run_intraday(live=False)
     assert started["engine"].live is False and "DRY RUN" in capsys.readouterr().out
+    monkeypatch.setenv("INTRADAY_ARCHIVE", "false")
+    intraday_cli.run_intraday(live=True)
+    assert started["engine"].archive is None
 
 
 def test_intraday_launcher_refuses_an_invalid_configuration(monkeypatch):

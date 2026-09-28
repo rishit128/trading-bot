@@ -25,6 +25,13 @@ WAL for SQLite, and returns a session factory. **No code writes raw DDL at runti
 - `equity_history` — account equity at the start of each cycle (drawdown-limit source).
 - `holdout_marks` — the independent holdout reserve's valuation history (see `docs/holdout.md`).
 - `control_flags` — runtime switches (`/pause`, etc.).
+- `intraday_signals` (intraday account) — every opening-range breakout the engine saw and what it did with it:
+  `ENTERED`, `SKIPPED` (with the reason, e.g. one share costs more than a position may), `DRY_RUN` or `FAILED`, with the
+  levels, volume ratio and `system_version` (`src.versions.INTRADAY_VERSION`). Append-only.
+- `intraday_universe` (intraday account) — the stocks scanned each day and where the list came from.
+- `intraday_bars` (intraday account) — every finished session's 5-minute bars for the intraday universe, saved by the engine after
+  the close (`INTRADAY_ARCHIVE`). Yahoo keeps only ~60 sessions, so this is the only way to test an intraday rule on more.
+  Idempotent to write; read with `scripts/intraday_archive.py status`, backfill with `... refresh`. About 7,500 rows a session.
 
 ## Migration order
 

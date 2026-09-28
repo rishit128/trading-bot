@@ -442,3 +442,76 @@ backtest's live-setup trades (Rs 20,000 account, 2017-2026): median hold 74 sess
 well each forward window ranks the trades' real results (rank correlation): 5 sessions +0.30 / +0.44, 20 sessions
 +0.53 / +0.62, **60 sessions +0.66 / +0.69**. LEARNING_HORIZON is now 60 (the outcome labels already record 5, 20 and
 60; any other value is refused). Cost: 60-session outcomes take ~3 months to mature, so the memory stays silent longer.
+
+
+## Intraday audit and Phase 0 repairs (2026-09-28, system version orb-v2)
+A from-scratch review of the intraday engine (`scripts/audit_intraday.py`, `src/research/intraday_audit.py`; 5,800
+stock-sessions of Nifty 100 5-minute bars, 2026-07-07..09-25). **The rule has no edge**, and the previous live and paper
+evidence was not measuring what it claimed.
+
+**Edge.** Live rule: 2,622 trades, gross -0.048% / net -0.254% per trade (±0.03%). Entering at a RANDOM time with the same
+stop, target and exits: gross -0.066% / net -0.272%. The signal's edge over random is +0.018% per trade: noise. VWAP adds
+nothing (identical trades), and the volume filter does not help (dropping it: gross -0.032%). No entry-time, volume,
+gap, breadth or range bucket is profitable net of costs. Costs (~0.106% fees + 0.10% slippage per round trip) turn a
+zero-edge rule into a steady loss. Today's low signal count is the market, not a fault: 6 to 11 breakouts against a
+historical median of 47 a day.
+
+**Defects found and repaired (orb-v1 -> orb-v2).**
+1. *Paper stop/target replay dropped almost every bar's range.* Each check consumed the bar in progress, so a stop breached
+   later in that bar was never seen (only each bar's first ~20 seconds were checked). Now every bar after the buy is
+   replayed in full: the forming bar is examined but only marked checked once finished (`PaperBroker._settle_exits`; also
+   the swing account's stops). Effect on the sample's average was small (-0.050% vs -0.048%), but the protection was
+   weaker than documented.
+2. *Sizing borrowed the swing 5%*, so a Rs 20,000 account could not buy any stock above Rs 985: 63% of the backtest's
+   signals were silently skipped and burned the stock for the day. Intraday now has its own `INTRADAY_*` settings, sized
+   by risk (0.5% of equity per trade) under a 20% position cap, cash only; a skip is explained and recorded.
+3. *The traded universe was not the tested one*: live used Yahoo's top 100 by traded value, which shares 44 names with the
+   Nifty 100 (it adds recently listed stocks). One selector (`src/intraday/universe.py`) now serves the engine and the
+   scripts, records its source daily, and labels the fallback. The scripts had also lost their symbol loader.
+4. *No record of skipped signals*: `intraday_signals` and `intraday_universe` now store every breakout, its outcome and
+   its reason.
+5. *No guard for a broken opening range* (a missing or late first bar builds the range from the wrong bars): such stocks are
+   skipped. Bars from a previous session are never traded. A position left over from an earlier day is closed at the next
+   session's first cycle.
+
+Replayed on the last cached session through the real engine on a Rs 20,000 account: 6 of 7 signals entered (1 to 29
+shares each), 1 skipped with its reason, flat at the close.
+
+**What this does not change.** The rule still has no edge. Phase 0 makes the paper account measure honestly; results before
+2026-09-28 belong to orb-v1 and should not be pooled with orb-v2.
+
+### Intraday Phase 1: one simulation path, and history that grows (2026-09-28)
+- **The backtest is the live engine.** `src/research/intraday_replay.py` runs `IntradayEngine.step()` every five minutes of every
+  stored session against a real `PaperBroker`, so sizing, skips, stops, targets, the daily-loss halt, the square-off, fees and
+  slippage are the live code paths (the old backtest had its own simulator and ignored account size). Assumptions a replay
+  cannot avoid: the bar in progress shows only its open at each cycle; fills at that open plus 0.05%; stops/targets fill at their
+  level; volume is final. **Result on all 58 archived sessions, Rs 20,000, live settings: -14.3%** (380 trades, win rate 34%,
+  32 targets / 106 stops / 242 squared off, 121 signals skipped (in the last 8 sessions every skip was a share dearer than the
+  position cap), Sharpe -8.5, max drawdown -14.3%,
+  28% profitable days, -1,463 first half / -1,399 second half). It agrees with the per-trade audit (about -0.25% a trade).
+- **The rule is written once.** `first_breakout` (numpy) is used by the live engine and every research script; a test pins it
+  to a plain bar-by-bar loop on random sessions and to every boundary of the rule. Vectorising it, with a leaner replay feed, made a replayed session about 3x faster (12 s to 4 s).
+- **History beyond Yahoo's 59 sessions.** The engine now saves each finished session's 5-minute bars (`intraday_bars`, one
+  session a day, `INTRADAY_ARCHIVE`); `scripts/intraday_archive.py` shows, backfills and imports. Nothing was invented: it only
+  starts growing from now, so the tests below get stronger with time (about 125 sessions in six months).
+
+### Intraday Phase 2: do any other ideas work? (2026-09-28)
+Pre-declared in `src/research/intraday_hypotheses.py` before any result was seen, run by `scripts/research_intraday.py`: five
+fixed rules plus the live rule as a control, each against a random-timing or random-side null; a candidate needs >= 300 trades,
+net t >= 2.6 (per-date clustered), both halves positive, still positive at double slippage, and to beat its null (t >= 2.6).
+
+| idea | trades | gross | net | net t |
+|---|---|---|---|---|
+| control: the live ORB long | 2,622 | -0.048% | -0.254% | -7.4 |
+| H1 ORB short | 2,807 | -0.005% | -0.211% | -6.2 |
+| H2 gap-and-go | 92 | +0.069% | -0.137% | -1.7 |
+| H3 gap fade | 157 | +0.054% | -0.152% | -1.6 |
+| H4 first-hour momentum | 945 | +0.032% | -0.174% | -4.4 |
+| H5 last-half-hour momentum | 2,070 | +0.003% | -0.203% | -13.6 |
+
+**No candidates. The kill criterion applies: no rule tested is worth running intraday.** Every idea earns about nothing before
+costs (best +0.07%) and costs are ~0.2% a round trip. The harness is not blind: a test plants a 1.2% late-day continuation and it
+is flagged as a candidate, and the same market without it is not. Limits, stated plainly: 58 sessions is one market regime; with
+that many dates an edge smaller than ~0.35% net per trade would not be detectable (though any edge that small could not pay
+0.2% of costs either); H2 and H3 had too few trades (92, 157) to judge. Re-run `scripts/research_intraday.py` as the archive
+grows; if a longer archive still shows nothing, retire the intraday engine.

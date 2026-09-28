@@ -25,3 +25,4 @@ portfolio_data/
 
 # AWS deployment: the SSH private key deploy/deploy.sh creates must never be committed
 deploy/*.pem
+deploy/*.pem.pub

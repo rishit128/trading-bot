@@ -2,7 +2,12 @@
 
 Simplifications, all optimistic and worth remembering: fills happen at the latest 5-minute close plus a fixed slippage;
 stop/target exits fill at the stop/target level (or the bar open on a gap) with no slippage; no circuit-limit modelling
-(a real stock locked at its lower circuit may not let you sell at your stop)."""
+(a real stock locked at its lower circuit may not let you sell at your stop).
+
+Stop/target replay: every 5-minute bar after the buy has its full high/low examined. The bar still forming is examined
+too (its highs and lows so far are real prints, so a breach is not delayed) but is only marked as checked once it has
+finished, so the rest of its range is seen next time. The bar the buy happened in is never examined: it also holds
+prints from before the fill."""
 import logging
 import threading
 import uuid
@@ -10,11 +15,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, List, Optional, Tuple
 
+import pandas as pd
 from sqlalchemy import func, select
 
 from src.engine.costs import SLIPPAGE, india_delivery_fees
 from src.engine.enums import Action, OrderStatus
-from src.engine.ports import Fill, MarketClock, PriceFeed
+from src.engine.ports import BAR, Fill, MarketClock, PriceFeed
 from src.database import PaperAccountRecord, PaperPositionRecord, PaperTradeRecord
 from src.engine.risk_engine import Portfolio
 
@@ -24,6 +30,16 @@ log = logging.getLogger(__name__)
 def _utc(dt: datetime) -> datetime:
     """SQLite returns naive datetimes; everything we store is UTC, so make them aware before comparing to market data."""
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _newest_finished(bars: pd.DataFrame, now: datetime) -> Optional[datetime]:
+    """Start time (UTC) of the newest bar that had finished by `now`, or None when every bar is still in progress."""
+    newest: Optional[datetime] = None
+    for ts in bars.index:
+        start = _utc(ts.to_pydatetime()).astimezone(timezone.utc)
+        if start + BAR <= now and (newest is None or start > newest):
+            newest = start
+    return newest
 
 
 @dataclass
@@ -160,7 +176,8 @@ class PaperBroker:
             s.commit()
 
     def _settle_exits(self) -> None:
-        """Replay 5-minute bars since each position was last checked to see whether its stop or target was hit."""
+        """Replay the 5-minute bars since each position was last checked to see whether its stop or target was hit."""
+        now = _utc(self.now_fn())
         with self.sessions() as s:
             positions = [(p.symbol, p.qty, p.stop, p.target, _utc(p.last_checked))
                          for p in s.scalars(select(PaperPositionRecord))]
@@ -189,10 +206,12 @@ class PaperBroker:
                 log.info("paper %s hit on %s at %.2f", reason, symbol, exit_price)
                 self._close(symbol, qty, exit_price, reason)
             else:
-                with self.sessions() as s:
-                    pos = s.get(PaperPositionRecord, symbol)
-                    pos.last_checked = self.now_fn()
-                    s.commit()
+                finished = _newest_finished(bars, now)  # the bar still forming is looked at again next time
+                if finished is not None:
+                    with self.sessions() as s:
+                        pos = s.get(PaperPositionRecord, symbol)
+                        pos.last_checked = finished
+                        s.commit()
 
     def holdings(self) -> List[dict]:
         """Open positions in detail: buy date and price, live price, profit or loss (amount and %), stop level."""

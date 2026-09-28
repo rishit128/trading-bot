@@ -127,6 +127,15 @@ class Settings:
     # rank correlation, STRATEGY.md 2026-09-26). Must be one of the labelled horizons (src.learning.outcomes.HORIZONS).
     learning_horizon: int = 60
     learning_min_samples: int = 30  # independent observations a setup label needs before the memory speaks at all  # largest confidence change one refinement phase may make (review doc 2.4)
+    # The intraday engine (its own paper account) is sized by RISK, not by the swing settings above: a position is the
+    # smaller of "the stop-out costs intraday_risk_pct of equity" and "at most intraday_max_position_pct of equity", cash
+    # only (no leverage). Borrowing the swing 5% left a Rs 20,000 account unable to buy any stock above Rs 985, silently
+    # skipping 63% of the breakouts the strategy had been tested on (STRATEGY.md, intraday audit 2026-09-28).
+    intraday_risk_pct: float = 0.005
+    intraday_max_position_pct: float = 0.20
+    intraday_max_positions: int = 5
+    intraday_universe: tuple = ()  # explicit symbols; empty = the Nifty 100 file if saved, else Yahoo's top 100 by traded value
+    intraday_archive: bool = True  # save every finished session's 5-minute bars (Yahoo keeps only ~60 sessions)
     risk: RiskLimits = field(default_factory=RiskLimits)
 
     def __post_init__(self):
@@ -153,6 +162,13 @@ class Settings:
             raise ValueError(f"cash_yield_pct must be an annual fraction in [0, 0.15], e.g. 0.05, got {self.cash_yield_pct}")
         if not 0 < self.max_daily_volatility < 1:
             raise ValueError("max_daily_volatility must be a fraction in (0, 1), e.g. 0.04")
+        for name in ("intraday_risk_pct", "intraday_max_position_pct"):
+            if not 0 < getattr(self, name) <= 1:
+                raise ValueError(f"{name} must be a fraction in (0, 1], got {getattr(self, name)}")
+        if self.intraday_max_positions < 1:
+            raise ValueError(f"intraday_max_positions must be >= 1, got {self.intraday_max_positions}")
+        if self.intraday_max_positions * self.intraday_max_position_pct > 1.0:
+            raise ValueError("intraday_max_positions x intraday_max_position_pct cannot exceed 100% of equity (no leverage)")
 
 
 def load_settings() -> Settings:
@@ -207,5 +223,10 @@ def load_settings() -> Settings:
         llm_max_adjust=_float("LLM_MAX_ADJUST", 0.15),
         learning_horizon=int(_float("LEARNING_HORIZON", 60)),
         learning_min_samples=int(_float("LEARNING_MIN_SAMPLES", 30)),
+        intraday_risk_pct=_float("INTRADAY_RISK_PCT", 0.005),
+        intraday_max_position_pct=_float("INTRADAY_MAX_POSITION_PCT", 0.20),
+        intraday_max_positions=int(_float("INTRADAY_MAX_POSITIONS", 5)),
+        intraday_universe=tuple(x.strip().upper() for x in os.getenv("INTRADAY_UNIVERSE", "").split(",") if x.strip()),
+        intraday_archive=os.getenv("INTRADAY_ARCHIVE", "true").strip().lower() != "false",
         risk=risk,
     )

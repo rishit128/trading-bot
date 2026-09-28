@@ -10,6 +10,14 @@ PROMPT_VERSION = "technical-v9"  # v8 + the decision-memory prompt describes mar
 SCHEMA_VERSION = "signal-v1"  # the llm.SIGNAL_SCHEMA output contract, frozen for replay compatibility
 STRATEGY_VERSION = "swing-v1"  # mechanical BUY filter + trend exit + 15% protective stop, sized and gated by the risk engine, paper broker
 
+# The intraday engine (a separate paper account). Recorded with every signal so results can be split by system version.
+#   orb-v1: sizing borrowed from the swing settings (5% of equity), stop/target replay dropped each bar's tail, no record
+#           of skipped signals, universe chosen silently (Nifty 100 file, else Yahoo top-100).
+#   orb-v2: risk-based sizing with a price cap (INTRADAY_*), completed-bar replay, every signal and skip recorded, one
+#           shared universe selector, opening-range integrity guard, stale positions closed at the open, and each
+#           finished session's bars archived (no change to what trades: the vectorised rule is pinned to the old one).
+INTRADAY_VERSION = "orb-v2"
+
 VERSIONS = {
     "feature": FEATURE_VERSION,
     "prompt": PROMPT_VERSION,

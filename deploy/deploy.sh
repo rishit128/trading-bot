@@ -2,9 +2,10 @@
 # Provisions one EC2 instance for the trading bot + real-portfolio agent, and deploys the current checkout to it.
 # Idempotent: re-running reuses whatever already exists (by name/tag) instead of creating duplicates.
 #
-# Needs: AWS CLI configured with credentials that can create IAM roles/policies, security groups, key pairs and EC2
-# instances (an admin or PowerUser-ish IAM user/role) — run `aws configure` (or `aws sso login`) yourself first; this
-# script never asks for or sees your AWS keys. Also needs `ssh`, `scp`, `tar` (all present in Git Bash on Windows).
+# Needs: AWS CLI configured with credentials that can create IAM roles/policies, security groups and EC2 instances,
+# plus ec2-instance-connect:SendSSHPublicKey (used only to recover access if deploy/*.pem is ever lost) — an admin or
+# PowerUser-ish IAM user/role — run `aws configure` (or `aws sso login`) yourself first; this script never asks for or
+# sees your AWS keys. Also needs `ssh`, `scp`, `tar`, `ssh-keygen` (all present in Git Bash on Windows).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -48,38 +49,55 @@ fi
 aws ec2 revoke-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 22 --cidr 0.0.0.0/0 >/dev/null 2>&1 || true
 aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 22 --cidr "$MY_IP" >/dev/null 2>&1 || true
 
-echo "== SSH key pair (private key saved to $KEY_FILE, never uploaded anywhere) =="
+echo "== SSH key pair (local, never registered with AWS as an EC2 key-pair object) =="
+# AWS EC2 "key pairs" only take effect at first boot, baked into the AMI's cloud-init via --key-name. Recreating the
+# AWS-side object later (the old behaviour here) does nothing for an instance already running with the old one, so a
+# lost $KEY_FILE permanently locked you out even though the instance was fine. Instead, authorized_keys is seeded
+# directly: via user-data on first boot below, or via EC2 Instance Connect further down on a later run. Losing
+# $KEY_FILE is then always recoverable without losing the instance or its data.
 if [ ! -f "$KEY_FILE" ]; then
-    aws ec2 delete-key-pair --key-name "$NAME" >/dev/null 2>&1 || true
-    aws ec2 create-key-pair --key-name "$NAME" --query "KeyMaterial" --output text > "$KEY_FILE"
-    chmod 600 "$KEY_FILE"
+    ssh-keygen -t ed25519 -f "$KEY_FILE" -N "" -q -C "$NAME"
 fi
+if [ ! -f "${KEY_FILE}.pub" ]; then
+    # A private key from before this script generated its own (e.g. one AWS previously handed back) has no .pub
+    # alongside it; derive one rather than assume ssh-keygen always created this file.
+    chmod 600 "$KEY_FILE"
+    ssh-keygen -y -f "$KEY_FILE" > "${KEY_FILE}.pub"
+fi
+PUBKEY=$(cat "${KEY_FILE}.pub")
 
 echo "== EC2 instance (Ubuntu 22.04, Docker installed via user-data) =="
 INSTANCE_ID=$(aws ec2 describe-instances \
     --filters Name=tag:Name,Values="$NAME" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
     --query "Reservations[0].Instances[0].InstanceId" --output text)
+INSTANCE_IS_NEW=false
 if [ "$INSTANCE_ID" = "None" ]; then
+    INSTANCE_IS_NEW=true
     AMI_ID=$(aws ec2 describe-images --owners 099720109477 \
         --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" "Name=state,Values=available" \
         --query "sort_by(Images,&CreationDate)[-1].ImageId" --output text)
     INSTANCE_ID=$(aws ec2 run-instances --image-id "$AMI_ID" --instance-type "$INSTANCE_TYPE" \
-        --key-name "$NAME" --security-group-ids "$SG_ID" --subnet-id "$SUBNET_ID" \
+        --security-group-ids "$SG_ID" --subnet-id "$SUBNET_ID" \
         --iam-instance-profile "Name=$NAME" \
         --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":20,"VolumeType":"gp3"}}]' \
         --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$NAME}]" \
-        --user-data '#!/bin/bash
+        --user-data "#!/bin/bash
 set -e
+mkdir -p /home/ubuntu/.ssh
+echo '$PUBKEY' >> /home/ubuntu/.ssh/authorized_keys
+chown -R ubuntu:ubuntu /home/ubuntu/.ssh
+chmod 700 /home/ubuntu/.ssh
+chmod 600 /home/ubuntu/.ssh/authorized_keys
 apt-get update -y
 apt-get install -y ca-certificates curl
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \$(. /etc/os-release && echo \$VERSION_CODENAME) stable\" \
     > /etc/apt/sources.list.d/docker.list
 apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-usermod -aG docker ubuntu' \
+usermod -aG docker ubuntu" \
         --query "Instances[0].InstanceId" --output text)
 elif [ "$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query "Reservations[0].Instances[0].State.Name" --output text)" = "stopped" ]; then
     aws ec2 start-instances --instance-ids "$INSTANCE_ID" >/dev/null
@@ -98,6 +116,23 @@ IP=$(aws ec2 describe-addresses --allocation-ids "$EIP_ALLOC" --query "Addresses
 echo "instance: $INSTANCE_ID   static IP: $IP"
 
 SSH="ssh -i $KEY_FILE -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ubuntu@$IP"
+
+if [ "$INSTANCE_IS_NEW" = false ] && ! $SSH -o BatchMode=yes "true" >/dev/null 2>&1; then
+    echo "== $KEY_FILE isn't trusted by the existing instance yet (a new local key was just generated, or this is a"
+    echo "   different machine) -- registering it via EC2 Instance Connect, a one-time temporary key push =="
+    AZ=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query "Reservations[0].Instances[0].Placement.AvailabilityZone" --output text)
+    IC_KEY=$(mktemp -u)  # -u: a name only, not a file -- ssh-keygen would ask to overwrite mktemp's own placeholder
+    ssh-keygen -t ed25519 -f "$IC_KEY" -N "" -q
+    aws ec2-instance-connect send-ssh-public-key --instance-id "$INSTANCE_ID" --instance-os-user ubuntu \
+        --ssh-public-key "file://${IC_KEY}.pub" --availability-zone "$AZ" >/dev/null
+    ssh -i "$IC_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ubuntu@"$IP" \
+        "mkdir -p ~/.ssh && grep -qxF '$PUBKEY' ~/.ssh/authorized_keys 2>/dev/null || echo '$PUBKEY' >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys" \
+        || { echo "Instance Connect push failed -- check that your IAM user/role has ec2-instance-connect:SendSSHPublicKey"; \
+             echo "and that the security group still allows SSH from this machine's IP."; rm -f "$IC_KEY" "${IC_KEY}.pub"; exit 1; }
+    rm -f "$IC_KEY" "${IC_KEY}.pub"
+    echo "   $KEY_FILE is now trusted by the instance."
+fi
+
 echo "== Waiting for SSH and Docker (cloud-init can take a couple of minutes on a fresh instance) =="
 for _ in $(seq 1 40); do
     if $SSH "command -v docker" >/dev/null 2>&1; then break; fi

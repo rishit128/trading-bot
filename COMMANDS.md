@@ -11,18 +11,21 @@ in a terminal with `venv\Scripts\activate` run first, unless a section says othe
 ssh -i deploy/ai-trading-bot-key.pem ubuntu@35.154.232.64                          # log in to the server
 ssh -i deploy/ai-trading-bot-key.pem ubuntu@35.154.232.64 "cd ai-trading-bot && sudo docker compose -f docker-compose.aws.yml logs -f"      # watch it live
 ```
-Once logged in via `ssh` above, run these **on the server**:
+Once logged in via `ssh` above, run these **on the server**. Two containers run: `trading-bot` (the swing bot, every 30
+min, plus the real-portfolio agent) and `intraday-bot` (the opening-range breakout engine, its own paper account).
 ```
 cd ai-trading-bot
-sudo docker compose -f docker-compose.aws.yml ps                              # is it running?
-sudo docker compose -f docker-compose.aws.yml logs -f                         # watch it live (Ctrl+C to stop watching)
+sudo docker compose -f docker-compose.aws.yml ps                              # is it running? (both containers)
+sudo docker compose -f docker-compose.aws.yml logs -f                         # watch both live (Ctrl+C to stop watching)
+sudo docker compose -f docker-compose.aws.yml logs -f intraday-bot            # watch just the intraday engine
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --report        # paper account summary
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --positions     # open positions & history
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --check         # test all connections
+sudo docker compose -f docker-compose.aws.yml exec intraday-bot python main.py --intraday-report  # intraday account status
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio setup  # one-time: save your Integrated login
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio check  # what's saved (masked)
-sudo docker compose -f docker-compose.aws.yml restart                         # restart it
-sudo docker compose -f docker-compose.aws.yml down                            # stop it (history is kept, safe)
+sudo docker compose -f docker-compose.aws.yml restart                         # restart both
+sudo docker compose -f docker-compose.aws.yml down                            # stop both (history is kept, safe)
 ```
 
 ## Telegram (no terminal needed)
@@ -89,6 +92,10 @@ docker compose down              # stop (the database volume, and your paper his
 scripts/test_openrouter_api.py             # tries each configured AI model with a real call (safe)
 scripts/reconcile_paper.py                 # rebuilds cash from recorded fills, flags any mismatch
 scripts/analyze_mistakes.py                # judges every analysed stock against what then happened
+scripts/intraday_archive.py status|refresh|import-cache   # the archive of 5-minute bars (fills itself while the engine runs)
+scripts/backtest_intraday.py               # the LIVE engine replayed over the archived sessions (Rs 20,000 account by default)
+scripts/audit_intraday.py                  # does the intraday rule beat a random entry? which filters add anything?
+scripts/research_intraday.py               # Phase 2: five pre-declared intraday ideas vs a random null, with the kill criterion
 scripts/analyze_patterns.py                # which entry conditions the closed trades actually won on
 scripts/research_cash_sweep.py             # the idle-cash sweep test (--universe nse for all NSE stocks)
 scripts/research_decomposition.py          # pure momentum to the live setup, one rule at a time (--confirm for the live-account check)

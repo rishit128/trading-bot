@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from src.config import Settings
+from src.data.intraday_bars import BarArchive
 from src.engine.ports import Broker
 from src.data.market_data import cached_per_session, fetch_snapshot
 from src.data.universe import ScreenConfig, UniverseScreener
@@ -37,6 +38,13 @@ def build_india_screener(settings: Settings) -> UniverseScreener:
 def intraday_db_url() -> str:
     """The intraday paper account lives in its own database so swing and intraday results never mix."""
     return os.getenv("INTRADAY_DATABASE_URL", "sqlite:///intraday.db")
+
+
+def open_bar_archive() -> BarArchive:
+    """The archive of 5-minute bars kept in the intraday database (see src.data.intraday_bars)."""
+    from src.database import make_session_factory
+
+    return BarArchive(make_session_factory(intraday_db_url()))
 
 
 def make_paper_broker(settings: Settings, database_url: Optional[str] = None, fees: Optional[Callable] = None):

@@ -196,3 +196,55 @@ class OutcomeRecord(Base):
     stop_pct: Mapped[float] = mapped_column(Float)
     labelled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+
+class IntradaySignalRecord(Base):
+    """Every opening-range breakout the intraday engine saw, and what it did with it (entered, skipped and why, dry run).
+    Without this a skipped signal left no trace, and the engine could not be audited or its misses counted."""
+    __tablename__ = "intraday_signals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    day: Mapped[str] = mapped_column(String(10), index=True)  # the session (YYYY-MM-DD, IST)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    bar_time: Mapped[str] = mapped_column(String(32))  # start of the breakout bar, ISO with its IST offset
+    signal_price: Mapped[float] = mapped_column(Float)  # the breakout bar's close
+    stop: Mapped[float] = mapped_column(Float)
+    target: Mapped[float] = mapped_column(Float)
+    range_high: Mapped[float] = mapped_column(Float)
+    range_low: Mapped[float] = mapped_column(Float)
+    volume_ratio: Mapped[float] = mapped_column(Float)  # the breakout bar's volume over the average of the bars before it
+    strength: Mapped[float] = mapped_column(Float)  # 0-1 rescaling of volume_ratio (informational: it no longer sizes anything)
+    outcome: Mapped[str] = mapped_column(String(12))  # ENTERED | SKIPPED | DRY_RUN | FAILED
+    qty: Mapped[int] = mapped_column(Integer, default=0)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # why it was skipped or failed
+    system_version: Mapped[str] = mapped_column(String(16), default="")  # src.versions.INTRADAY_VERSION
+
+
+class IntradayUniverseRecord(Base):
+    """The stocks the intraday engine scanned on a day and where the list came from, so a result can always be tied to the
+    universe it was earned on (a live list and a backtest list that differ make the two incomparable)."""
+    __tablename__ = "intraday_universe"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    day: Mapped[str] = mapped_column(String(10), index=True)
+    source: Mapped[str] = mapped_column(String(160))
+    size: Mapped[int] = mapped_column(Integer)
+    symbols_json: Mapped[str] = mapped_column(Text)
+    system_version: Mapped[str] = mapped_column(String(16), default="")
+
+
+class IntradayBarRecord(Base):
+    """One stored 5-minute bar. Yahoo serves only the last ~60 sessions of 5-minute data, so the intraday engine saves every
+    finished session here: the archive grows a session a day and is the only way to test an intraday rule on more than
+    two months of history. One row per (symbol, bar start); `day` is the IST session date, for cheap per-day queries."""
+    __tablename__ = "intraday_bars"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)  # the bar's start time (UTC)
+    day: Mapped[str] = mapped_column(String(10), index=True)
+    open: Mapped[float] = mapped_column(Float)
+    high: Mapped[float] = mapped_column(Float)
+    low: Mapped[float] = mapped_column(Float)
+    close: Mapped[float] = mapped_column(Float)
+    volume: Mapped[float] = mapped_column(Float)

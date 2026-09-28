@@ -173,8 +173,8 @@ def test_bars_are_not_rechecked_after_being_processed(tmp_path):
     feed.bars["AAA"] = bar(10, 100.0, 104.0, 99.0, 101.0)
     now[0] = T0 + timedelta(hours=1)
     broker.portfolio()
-    with sessions() as s:
-        assert s.get(PaperPositionRecord, "AAA").last_checked.replace(tzinfo=timezone.utc) == now[0]
+    with sessions() as s:  # checked through the last FINISHED bar (its start time), so nothing at or before it is replayed again
+        assert s.get(PaperPositionRecord, "AAA").last_checked.replace(tzinfo=timezone.utc) == T0 + timedelta(minutes=10)
 
 
 def test_bars_before_entry_cannot_trigger_a_stop(tmp_path):
@@ -327,3 +327,63 @@ def test_reconciliation_still_ties_out_with_interest_in_the_cash(tmp_path):
     broker.portfolio()
     result = reconcile_paper(sessions, fees=no_fees)
     assert not [f for f in result["findings"] if "cash" in f], result["findings"]
+
+
+# -- stop/target replay: every bar's full range is examined, once it has finished ---------------------------------------
+def replay_broker(tmp_path):
+    """Bought at 09:30:00 IST (T0) with a 99.0 stop and a 105.0 target."""
+    broker, feed, clock, now, sessions = make(tmp_path)
+    broker.buy_with_bracket("AAA", 10, 100.0, 0.01, 0.05)
+    return broker, feed, now, sessions
+
+
+def last_checked(sessions):
+    with sessions() as s:
+        return s.get(PaperPositionRecord, "AAA").last_checked.replace(tzinfo=timezone.utc)
+
+
+def test_a_breach_in_the_tail_of_a_bar_is_caught_once_the_bar_has_finished(tmp_path):
+    """Regression: the bar in progress at the last look used to be dropped for good, so a stop breached later in that same
+    bar was never seen (only each bar's first ~20 seconds were checked)."""
+    broker, feed, now, _ = replay_broker(tmp_path)
+    feed.bars["AAA"] = bar(5, 100.5, 100.8, 100.2, 100.6)          # the 09:35 bar, forming: nothing wrong yet
+    now[0] = T0 + timedelta(minutes=5, seconds=20)
+    assert len(broker.portfolio().positions) == 1
+    feed.bars["AAA"] = bar(5, 100.5, 100.8, 98.4, 100.6)           # the same bar, finished: it dipped to 98.4 mid-bar
+    now[0] = T0 + timedelta(minutes=10, seconds=20)
+    assert broker.portfolio().positions == {}
+    [t] = broker.trade_history()
+    assert t["reason"] == "STOP" and t["exit_price"] == pytest.approx(99.0)
+
+
+def test_a_bar_still_forming_is_examined_so_a_breach_is_not_delayed(tmp_path):
+    broker, feed, now, _ = replay_broker(tmp_path)
+    feed.bars["AAA"] = bar(5, 100.5, 100.8, 98.4, 98.9)            # already through the stop, though the bar is not over
+    now[0] = T0 + timedelta(minutes=5, seconds=20)
+    assert broker.portfolio().positions == {}
+    assert broker.trade_history()[0]["reason"] == "STOP"
+
+
+def test_a_bar_is_only_marked_as_checked_once_it_has_finished(tmp_path):
+    broker, feed, now, sessions = replay_broker(tmp_path)
+    feed.bars["AAA"] = pd.concat([bar(5, 100.5, 100.8, 100.2, 100.6), bar(10, 100.6, 100.9, 100.3, 100.7),
+                                  bar(15, 100.7, 100.9, 100.4, 100.8)])
+    now[0] = T0 + timedelta(minutes=15, seconds=20)                # 09:35 and 09:40 have finished, 09:45 is forming
+    broker.portfolio()
+    assert last_checked(sessions) == T0 + timedelta(minutes=10)    # the NEWEST finished bar: not "now", not the forming one
+    now[0] = T0 + timedelta(minutes=17)
+    broker.portfolio()
+    assert last_checked(sessions) == T0 + timedelta(minutes=10)    # nothing new has finished: unchanged
+    now[0] = T0 + timedelta(minutes=20, seconds=20)
+    broker.portfolio()
+    assert last_checked(sessions) == T0 + timedelta(minutes=15)    # 09:45 finished
+
+
+def test_prices_printed_before_the_buy_never_trigger_the_stop(tmp_path):
+    """The bar the buy happened in also contains prints from before the fill; it is skipped, the next bar is the first one."""
+    broker, feed, now, _ = replay_broker(tmp_path)
+    now[0] = T0 + timedelta(seconds=20)
+    feed.bars["AAA"] = bar(0, 100.0, 100.4, 90.0, 100.2)            # the entry bar: a 90.0 low from before we owned it
+    assert len(broker.portfolio().positions) == 1
+    now[0] = T0 + timedelta(minutes=6)
+    assert len(broker.portfolio().positions) == 1

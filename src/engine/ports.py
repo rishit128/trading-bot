@@ -4,7 +4,7 @@ A broker, a price feed and a market clock used to be typed `object` and probed w
 misspelled method surfaced at run time, in the middle of a cycle. Now the required surface is a Protocol (checked by mypy)
 and each OPTIONAL broker capability is its own Protocol the pipeline tests for explicitly with `isinstance`."""
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Protocol, Tuple, runtime_checkable
 
 import pandas as pd
@@ -21,8 +21,15 @@ class Fill:
     avg_price: Optional[float] = None
 
 
+BAR = timedelta(minutes=5)  # the length of the intraday bars every feed here serves (Yahoo interval "5m")
+
+
 class PriceFeed(Protocol):
-    """Prices for a symbol: the latest, and the bars since a moment (to replay stops and targets)."""
+    """Prices for a symbol: the latest, and the bars since a moment (to replay stops and targets).
+
+    `bars_since` returns the bars that START after `since`, indexed by their start time. The newest one may still be
+    forming (Yahoo serves the bar in progress with only the highs, lows and volume traded so far), so a caller must not
+    treat the last row as finished."""
     def last_price(self, symbol: str) -> float: ...
     def bars_since(self, symbol: str, since: datetime) -> pd.DataFrame: ...
 

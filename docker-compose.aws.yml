@@ -1,9 +1,11 @@
-# The AWS deployment: the paper trading bot AND the real-portfolio agent (Playwright + Chromium) in one container.
-# Run on the EC2 instance with: docker compose -f docker-compose.aws.yml up -d --build
+# The AWS deployment: the swing paper bot, the intraday paper bot, and the real-portfolio agent (Playwright +
+# Chromium) all built from one image, as TWO containers (locally, scripts/start_bots.sh runs the same two commands as
+# separate background processes; this is that split, in Compose). Run on the EC2 instance with:
+#   docker compose -f docker-compose.aws.yml up -d --build
 #
 # .env on the instance needs only: OPENROUTER_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (never the Integrated
 # mobile/MPIN — those go into AWS Secrets Manager, set once by running `python -m src.portfolio setup` inside the
-# container: docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio setup).
+# trading-bot container: docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio setup).
 # The instance's IAM role needs secretsmanager:GetSecretValue/PutSecretValue/CreateSecret/DeleteSecret scoped to the
 # one secret named ai-trading-bot/integrated-portfolio (see deploy/ec2-secrets-policy.json).
 services:
@@ -19,6 +21,21 @@ services:
     # Check progress any time:  docker compose -f docker-compose.aws.yml exec trading-bot python main.py --report
     # For a dry run (decisions only, no simulated trades), remove "--live" below.
     command: ["python", "main.py", "--loop", "30", "--live"]
+
+  intraday-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.aws
+    env_file: .env
+    restart: unless-stopped
+    # Its own paper account (INTRADAY_DATABASE_URL, set in Dockerfile.aws), in the same /data volume as trading-bot's
+    # trading.db but a different file, so both containers can share bot_data without clashing. No portfolio_data: the
+    # real-portfolio agent is wired into the --loop process only (main.py), not the --intraday one.
+    volumes:
+      - bot_data:/data
+    # Check progress any time:  docker compose -f docker-compose.aws.yml exec intraday-bot python main.py --intraday-report
+    # For signals-only (no simulated trades), remove "--live" below. See STRATEGY.md: this rule has not shown an edge.
+    command: ["python", "main.py", "--intraday", "--live"]
 
 volumes:
   bot_data:
