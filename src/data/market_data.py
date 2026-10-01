@@ -8,7 +8,7 @@ import pandas as pd
 import yfinance as yf
 
 from src.data.retry import retry_call
-from src.data.indicators import MAX_STALE_DAYS, Snapshot, StaleDataError, build_snapshot
+from src.data.indicators import MAX_STALE_DAYS, BarNotReadyError, Snapshot, StaleDataError, build_snapshot
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +35,8 @@ def fetch_snapshot(symbol: str, suffix: str = "", as_of: Optional[Callable[[], d
         raise StaleDataError(f"{symbol}: last bar {snap.bar_date} is more than {MAX_STALE_DAYS} days before {expected} (suspended?)")
     if snap.volume <= 0:
         raise StaleDataError(f"{symbol}: last bar {snap.bar_date} shows zero volume (no trading)")
+    if as_of is not None and snap.bar_date is not None and date.fromisoformat(snap.bar_date) < expected:
+        raise BarNotReadyError(f"{symbol}: waiting for the {expected} bar (latest published: {snap.bar_date})")
     return snap
 
 

@@ -13,6 +13,11 @@ class StaleDataError(ValueError):
     """The latest bar is too old, or shows no trading: refuse to analyse rather than act on a dead price."""
 
 
+class BarNotReadyError(StaleDataError):
+    """The data source has not published the last completed session's bar yet (Yahoo posts NSE daily bars late, often
+    hours after the close). Not a fault: wait and ask again next cycle instead of deciding on an older bar."""
+
+
 @dataclass(frozen=True)
 class Snapshot:
     """Indicator values for one stock as of its last completed bar."""

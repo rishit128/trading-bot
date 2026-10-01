@@ -187,3 +187,96 @@ def test_a_horizon_that_is_never_labelled_is_refused_rather_than_left_silent(tmp
     with pytest.raises(ValueError, match="labelled horizons"):
         SetupMemory(sessions, horizon=40)
     assert SetupMemory(sessions, horizon=60).horizon == 60
+
+
+# ---------------------------------------------------------------- setups rebuilt from price history (LEARNING_SEED)
+def add_history(sessions, observations, horizon=20):
+    """observations: (symbol, bar_date, gross_return, exit_date) setups rebuilt from history."""
+    from src.database import SetupObservationRecord
+
+    with sessions() as s:
+        for symbol, bar_date, gross, exit_date in observations:
+            s.add(SetupObservationRecord(symbol=symbol, bar_date=bar_date, horizon=horizon, exit_date=exit_date, gross_return=gross,
+                                         snapshot_json=json.dumps(snap_dict(symbol=symbol, bar_date=bar_date))))
+        s.commit()
+
+
+def history(n, gross, bar_date="2024-01-08", exit_date="2024-02-05"):
+    return [(f"H{i}", bar_date, gross, exit_date) for i in range(n)]
+
+
+def test_seeded_history_is_ignored_unless_switched_on(tmp_path):
+    sessions = seed(tmp_path, [])
+    add_history(sessions, history(40, 0.10))
+    assert SetupMemory(sessions, min_samples=30).stats(snap()) is None
+    stats = SetupMemory(sessions, min_samples=30, use_history=True).stats(snap())
+    assert stats.sample_size == 40 and stats.win_rate == 1.0
+
+
+def test_seeded_history_only_counts_for_the_memory_horizon(tmp_path):
+    sessions = seed(tmp_path, [])
+    add_history(sessions, history(40, 0.10), horizon=60)
+    assert SetupMemory(sessions, horizon=20, min_samples=30, use_history=True).stats(snap()) is None
+
+
+def test_seeded_history_is_point_in_time_too(tmp_path):
+    sessions = seed(tmp_path, [])
+    add_history(sessions, history(40, 0.10, exit_date="2024-02-05"))
+    memory = SetupMemory(sessions, min_samples=30, use_history=True)
+    assert memory.stats(snap(), as_of=date(2024, 2, 4)) is None  # none had finished yet
+    assert memory.stats(snap(), as_of=date(2024, 2, 5)).sample_size == 40
+
+
+def test_the_bots_own_observation_wins_its_stock_week_over_a_rebuilt_one(tmp_path):
+    own = [(f"H{i}", "2025-01-06", {}, -0.10, "2025-02-03") for i in range(30)]
+    sessions = seed(tmp_path, own)
+    add_history(sessions, history(30, 0.10, bar_date="2025-01-07", exit_date="2025-02-04"))  # same stocks, same week
+    stats = SetupMemory(sessions, min_samples=30, use_history=True).stats(snap())
+    assert stats.sample_size == 30 and stats.win_rate == 0.0  # the real calls, not the rebuilt ones
+
+
+# ---------------------------------------------------------------- the weekly learning report
+def test_the_weekly_report_is_sent_once_per_week_and_again_the_next_week(tmp_path):
+    from src.learning.jobs import WeeklyLearningReport
+
+    sessions = seed(tmp_path, [])
+    sent, today = [], [date(2026, 10, 5)]  # a Monday
+    report = WeeklyLearningReport(sessions, Control(sessions), sent.append, today=lambda: today[0])
+    report()
+    today[0] = date(2026, 10, 9)  # same week
+    report()
+    today[0] = date(2026, 10, 12)  # next week
+    report()
+    assert len(sent) == 2 and sent[0].startswith("Weekly learning report")
+
+
+def test_the_report_says_plainly_when_nothing_has_matured(tmp_path):
+    from src.learning.jobs import learning_report
+
+    text = learning_report(seed(tmp_path, []))
+    assert "nothing matured yet" in text and "Outcomes labelled: 5 sessions 0, 20 sessions 0, 60 sessions 0" in text
+
+
+def test_the_report_compares_the_ais_calls_with_the_rules_once_enough_have_matured(tmp_path):
+    from src.learning.jobs import learning_report
+
+    sessions = seed(tmp_path, [(f"S{i}", "2025-01-06", {}, 0.05, "2025-02-03") for i in range(30)])
+    with sessions() as s:
+        for d in s.scalars(select(DecisionRecord)):
+            d.decision_source, d.rule_alignment = "agents", "agree"  # rule said BUY and the AI bought
+        s.commit()
+    text = learning_report(sessions, horizon=20, min_samples=30)
+    assert "rule BUY, AI bought" in text and "n=30" in text and "insufficient" not in text.split("rule BUY, AI bought")[1][:40]
+
+
+def test_a_failing_report_never_reaches_the_trading_loop_and_is_retried(tmp_path):
+    from src.learning.jobs import WeeklyLearningReport
+
+    sessions = seed(tmp_path, [])
+
+    def broken(text):
+        raise ConnectionError("telegram down")
+
+    report = WeeklyLearningReport(sessions, Control(sessions), broken, today=lambda: date(2026, 10, 5))
+    assert report() is None
+    assert Control(sessions).get_flag("learning_report_week") is None  # not marked as sent: next cycle tries again

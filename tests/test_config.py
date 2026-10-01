@@ -1,6 +1,6 @@
 import pytest
 
-from src.config import RiskLimits, load_settings
+from src.config import RiskLimits, Settings, load_settings
 
 
 def test_defaults_are_valid():
@@ -178,3 +178,19 @@ def test_intraday_positions_cannot_add_up_to_more_than_the_account(monkeypatch):
     monkeypatch.setenv("INTRADAY_MAX_POSITION_PCT", "0.20")  # 120%: leverage the paper broker does not have
     with pytest.raises(ValueError, match="leverage"):
         load_settings()
+
+
+def test_temperature_defaults_to_zero_and_rejects_nonsense(monkeypatch):
+    monkeypatch.delenv("LLM_TEMPERATURE", raising=False)
+    assert load_settings().llm_temperature == 0.0
+    monkeypatch.setenv("LLM_TEMPERATURE", "0.7")
+    assert load_settings().llm_temperature == 0.7
+    with pytest.raises(ValueError, match="llm_temperature"):
+        Settings(llm_temperature=3.0)
+
+
+def test_seeded_learning_memory_is_off_unless_switched_on(monkeypatch):
+    monkeypatch.delenv("LEARNING_SEED", raising=False)
+    assert load_settings().learning_seed is False
+    monkeypatch.setenv("LEARNING_SEED", "true")
+    assert load_settings().learning_seed is True

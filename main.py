@@ -6,7 +6,7 @@ import os
 import sys
 
 from src.agents.technical import TechnicalAgent
-from src.learning.jobs import DailyOutcomeLabelling
+from src.learning.jobs import DailyOutcomeLabelling, WeeklyLearningReport
 from src.learning.setups import SetupMemory
 from src.app.intraday_cli import run_intraday
 from src.app.portfolio_agent import PortfolioCommand, make_explainer, run_standalone, strip_html
@@ -65,7 +65,8 @@ def build_pipeline(live: bool) -> TradingPipeline:
     def make_history_fn(sessions):
         """Decision-memory hook: how setups like this one turned out across every analysed stock (labelled outcomes). It
         stays silent until enough observations exist; a failure means no adjustment."""
-        memory = SetupMemory(sessions, horizon=settings.learning_horizon, min_samples=settings.learning_min_samples)
+        memory = SetupMemory(sessions, horizon=settings.learning_horizon, min_samples=settings.learning_min_samples,
+                             use_history=settings.learning_seed)
 
         def history(snapshot):
             try:
@@ -243,12 +244,15 @@ def main() -> None:
 
     reserve_callback = build_holdout_callback(pipeline) if args.holdout else None
     labeller = build_outcome_labeller(pipeline)
+    weekly_report = WeeklyLearningReport(pipeline.sessions, pipeline.control, pipeline.notify)
 
     def after_cycle() -> None:
-        """Chores after each cycle: mark the holdout reserve (if enabled) and label matured outcomes (once a day)."""
+        """Chores after each cycle: mark the holdout reserve (if enabled), label matured outcomes (once a day) and send
+        the learning report (once a week)."""
         if reserve_callback is not None:
             reserve_callback()
         labeller()
+        weekly_report()
 
     if args.loop:
         pipeline.notify(f"Trading bot started: {st.market.upper()} {mode}, every {args.loop} min while the market is open.")

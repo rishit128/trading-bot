@@ -347,6 +347,10 @@ cross-module private imports. Prompt text is versioned: change a prompt and `tes
   companies' articles and unrelated crypto/macro noise (e.g. "RELIANCE.NS" pulled a US steel company's news), so there
   is no reliable free Indian source to feed one. Technical agent only; see "Adding another AI agent" above if a
   trustworthy source ever turns up.
+- Splits, bonuses and dividends are applied to paper positions on their ex-dates (Yahoo's corporate actions);
+  fractional entitlements are not paid out.
+- Yahoo publishes NSE daily bars hours after the close: until the last session's bar exists a stock shows as WAIT
+  and is not decided (it used to be decided on a bar two sessions old).
 - **The paper broker is optimistic**: stops fill at the stop price, no circuit-limit modelling (a stock locked at its
   lower circuit may not let you exit), fixed 0.05% slippage, cost rates are approximations and change.
 - **No real Indian broker integration.** Automated real-money trading in India is subject to SEBI/exchange rules and

@@ -223,3 +223,23 @@ def test_top_n_ranks_by_traded_value_so_a_stock_missing_its_market_cap_is_not_lo
     quotes = [q("MID1", 5e8), q("MID2", 4e8), q("SMALL", 1e7), q("RELIANCE", 1.4e10)]  # RELIANCE last, as Yahoo sent it
     got = yahoo_nse_symbols(top=2, screen=lambda offset: {"quotes": quotes if offset == 0 else [], "total": 4}, pause=0)
     assert got == ["RELIANCE", "MID1"]
+
+
+def test_yahoo_corporate_actions_become_ist_ex_dates_with_zero_rows_dropped():
+    from datetime import date
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    from src.data.india import yahoo_corporate_actions
+
+    idx = pd.DatetimeIndex(["2024-10-28 00:00", "2025-01-01 00:00"]).tz_localize("Asia/Kolkata")
+    seen = []
+
+    def ticker(name):
+        seen.append(name)
+        return SimpleNamespace(splits=pd.Series([2.0, 0.0], index=idx), dividends=pd.Series([5.5], index=idx[:1]))
+
+    splits, dividends = yahoo_corporate_actions("RELIANCE", ticker=ticker)
+    assert seen == ["RELIANCE.NS"]
+    assert splits == {date(2024, 10, 28): 2.0} and dividends == {date(2024, 10, 28): 5.5}

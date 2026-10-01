@@ -387,3 +387,101 @@ def test_prices_printed_before_the_buy_never_trigger_the_stop(tmp_path):
     assert len(broker.portfolio().positions) == 1
     now[0] = T0 + timedelta(minutes=6)
     assert len(broker.portfolio().positions) == 1
+
+
+# ---------------------------------------------------------------- splits, bonuses and dividends
+def with_actions(tmp_path, events, **kw):
+    """A broker whose corporate actions come from `events[symbol]` = (splits, dividends); counts the lookups."""
+    broker, feed, clock, now, sessions = make(tmp_path, **kw)
+    lookups = []
+
+    def actions(symbol):
+        lookups.append(symbol)
+        return events.get(symbol, ({}, {}))
+
+    broker.corporate_actions = actions
+    return broker, feed, clock, now, sessions, lookups
+
+
+def test_a_bonus_doubles_the_shares_and_halves_the_stop_instead_of_firing_it_as_a_fake_loss(tmp_path):
+    from datetime import date
+
+    broker, feed, clock, now, sessions, _ = with_actions(tmp_path, {"AAA": ({date(2026, 9, 23): 2.0}, {})})
+    broker.buy_with_bracket("AAA", 10, 100.0, 0.15, 1.0)  # stop 85, target 200, bought 2026-09-21
+    clock.day, now[0] = "2026-09-23", T0 + timedelta(days=2)
+    feed.prices["AAA"] = 50.0  # the ex-date: the split-adjusted price halves
+    feed.bars["AAA"] = bar(2 * 24 * 60 + 5, 50.0, 51.0, 49.0, 50.0)
+    pf = broker.portfolio()
+    with sessions() as s:
+        pos = s.get(PaperPositionRecord, "AAA")
+        assert (pos.qty, pos.avg_price, pos.stop, pos.target) == (20, 50.0, 42.5, 100.0)
+        assert s.scalars(select(PaperTradeRecord)).all() == []  # no stop fired
+    assert pf.equity == pytest.approx(1_000_000.0)  # 20 x 50 = the 1,000 it cost
+
+
+def test_a_split_is_applied_once_however_often_the_account_is_read(tmp_path):
+    from datetime import date
+
+    broker, feed, clock, now, sessions, _ = with_actions(tmp_path, {"AAA": ({date(2026, 9, 23): 2.0}, {})})
+    broker.buy_with_bracket("AAA", 10, 100.0, 0.15, 1.0)
+    clock.day = "2026-09-23"
+    for _ in range(3):
+        broker.portfolio()
+        broker.holdings()
+    with sessions() as s:
+        assert s.get(PaperPositionRecord, "AAA").qty == 20
+
+
+def test_a_split_before_the_position_was_bought_does_not_apply(tmp_path):
+    from datetime import date
+
+    broker, _, clock, _, sessions, _ = with_actions(tmp_path, {"AAA": ({date(2026, 9, 21): 2.0}, {})})
+    broker.buy_with_bracket("AAA", 10, 100.0, 0.15, 1.0)  # bought ON the ex-date: the price was already split
+    clock.day = "2026-09-25"
+    broker.portfolio()
+    with sessions() as s:
+        assert s.get(PaperPositionRecord, "AAA").qty == 10
+
+
+def test_an_odd_ratio_keeps_whole_shares_and_the_cost_basis(tmp_path):
+    from datetime import date
+
+    broker, _, clock, _, sessions, _ = with_actions(tmp_path, {"AAA": ({date(2026, 9, 22): 1.5}, {})})  # a 1:2 bonus
+    broker.buy_with_bracket("AAA", 7, 100.0, 0.15, 1.0)
+    clock.day = "2026-09-22"
+    broker.portfolio()
+    with sessions() as s:
+        pos = s.get(PaperPositionRecord, "AAA")
+        assert pos.qty == 10 and pos.qty * pos.avg_price == pytest.approx(700.0)
+
+
+def test_a_dividend_is_credited_on_its_ex_date_and_the_ledger_still_reconciles(tmp_path):
+    from datetime import date
+    from src.ops.reconciliation import reconcile_paper
+
+    broker, _, clock, _, sessions, _ = with_actions(tmp_path, {"AAA": ({}, {date(2026, 9, 24): 4.0})}, fees=india_delivery_fees)
+    broker.buy_with_bracket("AAA", 10, 100.0, 0.15, 1.0)
+    cash_before = broker.portfolio().cash
+    clock.day = "2026-09-24"
+    assert broker.portfolio().cash == pytest.approx(cash_before + 40.0)
+    assert broker.summary()["dividends_received"] == pytest.approx(40.0)
+    assert not [f for f in reconcile_paper(sessions)["findings"] if "cash" in f]
+
+
+def test_corporate_actions_are_looked_up_at_most_once_an_hour_per_stock(tmp_path):
+    broker, _, _, _, _, lookups = with_actions(tmp_path, {})
+    broker.buy_with_bracket("AAA", 10, 100.0, 0.15, 1.0)
+    clock_now = [0.0]
+    broker.monotonic = lambda: clock_now[0]
+    broker.portfolio()
+    broker.portfolio()
+    clock_now[0] = 3601.0
+    broker.portfolio()
+    assert lookups == ["AAA", "AAA"]
+
+
+def test_an_unreachable_corporate_action_source_never_breaks_the_account(tmp_path):
+    broker, *_ = make(tmp_path)
+    broker.corporate_actions = lambda symbol: (_ for _ in ()).throw(ConnectionError("yahoo down"))
+    broker.buy_with_bracket("AAA", 10, 100.0, 0.15, 1.0)
+    assert broker.portfolio().position_qty == {"AAA": 10}

@@ -75,6 +75,8 @@ def print_report(settings: Settings, database_url: Optional[str] = None) -> None
         points = [(r.created_at, r.equity) for r in db.scalars(select(EquityRecord).order_by(EquityRecord.created_at))]
     risk = equity_risk(points)
     line = f"invested {invested:.0%} of equity | idle-cash interest {cur}{s['interest_earned']:,.0f}"
+    if s.get("dividends_received"):
+        line += f" | dividends {cur}{s['dividends_received']:,.0f}"
     if risk is not None:
         line += f" | max drawdown so far {risk['max_drawdown']:.1%} since {risk['since']:%d %b %Y}"
         nifty = _nifty_return_since(risk["since"])

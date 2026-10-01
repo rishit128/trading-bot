@@ -8,7 +8,8 @@ from sqlalchemy import select
 
 from src.agents.base import ADVISOR, LEAD
 from src.data.india import IndiaClock, IntradayFeed
-from src.data.market_data import fetch_snapshot
+from src.data.indicators import BarNotReadyError, StaleDataError
+from src.data.market_data import cached_per_session, fetch_snapshot
 from src.database import DecisionRecord, make_session_factory
 from src.engine.strategy import combine_signals
 from src.llm import LLMClient, LLMUnavailable, AgentSignal
@@ -196,6 +197,31 @@ def test_snapshot_is_identical_on_every_call_within_a_session():
     a = fetch_snapshot("X", as_of=lambda: cutoff, download=lambda *a, **k: bars)
     b = fetch_snapshot("X", as_of=lambda: cutoff, download=lambda *a, **k: grown)
     assert a == b
+
+
+def test_a_last_session_bar_not_published_yet_waits_instead_of_deciding_on_an_older_bar():
+    bars = daily_bars()  # ends Friday 2026-09-18
+    with pytest.raises(BarNotReadyError, match="waiting for the 2026-09-21 bar"):
+        fetch_snapshot("X", as_of=lambda: date(2026, 9, 21), download=lambda *a, **k: bars)
+
+
+def test_a_waiting_snapshot_is_not_cached_for_the_session_so_the_next_cycle_picks_up_the_late_bar():
+    late = daily_bars()
+    published = pd.concat([late, daily_bars(1).set_axis([late.index[-1] + pd.offsets.BDay(1)])])
+    downloads = iter([late, published])
+    session = date(2026, 9, 21)
+    get = cached_per_session(lambda s: fetch_snapshot(s, as_of=lambda: session, download=lambda *a, **k: next(downloads)),
+                             lambda: session)
+    with pytest.raises(BarNotReadyError):
+        get("X")
+    assert get("X").bar_date == "2026-09-21"
+
+
+def test_a_bar_older_than_the_stale_limit_is_still_a_stale_data_error_not_a_wait():
+    bars = daily_bars()
+    with pytest.raises(StaleDataError) as e:
+        fetch_snapshot("X", as_of=lambda: date(2026, 10, 1), download=lambda *a, **k: bars)
+    assert not isinstance(e.value, BarNotReadyError)  # a suspended stock is a fault worth an alert, not a wait
 
 
 def test_snapshot_keeps_plain_symbol_and_passes_the_yahoo_suffix():

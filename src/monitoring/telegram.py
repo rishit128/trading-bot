@@ -187,6 +187,8 @@ class CommandListener:
         self.http = client or httpx.Client(timeout=40)
         self.offset = 0
         self._stop = threading.Event()
+        self._conflict_logged_at: Optional[float] = None
+        self._conflict_announced = False
 
     def poll_once(self, timeout: int = 25) -> int:
         """Fetch and answer pending commands from the authorised chat only; returns how many were handled."""
@@ -222,13 +224,42 @@ class CommandListener:
         except httpx.HTTPError as e:
             log.warning("telegram delete failed: %s", type(e).__name__)
 
+    CONFLICT_NOTICE = ("Another program is reading this bot's messages (Telegram reports a polling conflict), so your "
+                       "commands may reach it instead of this bot. If it is not yours, revoke the token in BotFather "
+                       "(/revoke) and put the new one in TELEGRAM_BOT_TOKEN.")
+
+    def _poll_failed(self, e: Exception) -> None:
+        """Log a failed poll usefully. A 409 means another program polls the same token: Telegram gives each update to
+        whichever asked last. That repeats every few seconds, so it is logged at most every 10 minutes and the owner is
+        told once per run, in the chat, since nobody reads the server logs."""
+        if not isinstance(e, httpx.HTTPStatusError):
+            log.warning("telegram poll failed: %s", type(e).__name__)
+            return
+        try:
+            detail = e.response.json().get("description", "")
+        except ValueError:
+            detail = ""
+        if e.response.status_code != 409:
+            log.warning("telegram poll failed: HTTP %s %s", e.response.status_code, detail)
+            return
+        now = time.monotonic()
+        if self._conflict_logged_at is None or now - self._conflict_logged_at >= 600:
+            log.warning("telegram poll conflict (409): another program is polling this bot token (%s)", detail)
+            self._conflict_logged_at = now
+        if not self._conflict_announced:
+            self._conflict_announced = True
+            try:
+                self.http.post(f"{API}/bot{self.token}/sendMessage", json=_payload(self.chat_id, self.CONFLICT_NOTICE))
+            except httpx.HTTPError:
+                log.warning("could not send the polling-conflict notice")
+
     def run(self) -> None:
         """Poll until stopped, surviving errors."""
         while not self._stop.is_set():
             try:
                 self.poll_once()
             except Exception as e:
-                log.warning("telegram poll failed: %s", type(e).__name__)
+                self._poll_failed(e)
                 self._stop.wait(10)
 
     def start(self) -> threading.Thread:

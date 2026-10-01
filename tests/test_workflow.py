@@ -33,6 +33,9 @@ class _AnalysisOnlyServices:
     def snapshot(self, symbol):
         return self._snapshot_fn(symbol)
 
+    def remembered_signals(self, symbol, snapshot):
+        return None
+
     def agent_context(self, symbol, snapshot):
         return AgentContext(symbol, snapshot, market=lambda: None)
 

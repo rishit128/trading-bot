@@ -128,6 +128,7 @@ class PaperAccountRecord(Base):
     # ledger reconciliation can still rebuild cash from the fills.
     interest_accrued_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     interest_earned: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    dividends_received: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # credited on ex-dates, for the ledger
 
 
 class PaperPositionRecord(Base):
@@ -141,6 +142,8 @@ class PaperPositionRecord(Base):
     target: Mapped[float] = mapped_column(Float)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_checked: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Latest split/bonus/dividend ex-date already applied (YYYY-MM-DD); None = none since the position opened.
+    actions_through: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
 
 
 class PaperTradeRecord(Base):
@@ -175,6 +178,21 @@ class HoldoutMark(Base):
     decisions: Mapped[int] = mapped_column(Integer)
     closed_trades: Mapped[int] = mapped_column(Integer)
     open_positions: Mapped[int] = mapped_column(Integer)
+
+
+class SetupObservationRecord(Base):
+    """A setup rebuilt from price history: a stock the live scanner would have ranked on `bar_date`, the snapshot the agent
+    would have seen, and what holding it `horizon` sessions from the next open returned. Seeds the decision memory
+    (LEARNING_SEED) before the bot's own decisions mature; kept apart from `decisions`, which are only real calls."""
+    __tablename__ = "setup_observations"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    bar_date: Mapped[str] = mapped_column(String(10), primary_key=True)
+    horizon: Mapped[int] = mapped_column(Integer, primary_key=True)
+    exit_date: Mapped[str] = mapped_column(String(10))
+    snapshot_json: Mapped[str] = mapped_column(Text)
+    gross_return: Mapped[float] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(16), default="history")
 
 
 class OutcomeRecord(Base):

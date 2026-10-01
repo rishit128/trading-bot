@@ -115,6 +115,25 @@ aws ec2 associate-address --instance-id "$INSTANCE_ID" --allocation-id "$EIP_ALL
 IP=$(aws ec2 describe-addresses --allocation-ids "$EIP_ALLOC" --query "Addresses[0].PublicIp" --output text)
 echo "instance: $INSTANCE_ID   static IP: $IP"
 
+echo "== Backups: a snapshot of the disk every night (00:00 IST), the last 7 kept =="
+# The paper account, every decision and every labelled outcome live on this one disk: months of learning data that
+# cannot be re-created. Data Lifecycle Manager snapshots every volume tagged Backup=$NAME. (Instance recovery after a
+# host failure needs nothing here: EC2's automatic recovery is on by default for this instance type.)
+VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+    --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" --output text)
+aws ec2 create-tags --resources "$VOLUME_ID" --tags Key=Backup,Value="$NAME" >/dev/null
+aws dlm create-default-role --resource-type snapshot >/dev/null 2>&1 || true
+POLICY_ID=$(aws dlm get-lifecycle-policies --query "Policies[?Description=='$NAME nightly snapshots'].PolicyId | [0]" --output text)
+if [ "$POLICY_ID" = "None" ]; then
+    ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+    aws dlm create-lifecycle-policy --description "$NAME nightly snapshots" --state ENABLED \
+        --execution-role-arn "arn:aws:iam::$ACCOUNT:role/AWSDataLifecycleManagerDefaultRole" \
+        --policy-details '{"PolicyType":"EBS_SNAPSHOT_MANAGEMENT","ResourceTypes":["VOLUME"],
+            "TargetTags":[{"Key":"Backup","Value":"'"$NAME"'"}],
+            "Schedules":[{"Name":"nightly","CopyTags":true,
+                "CreateRule":{"Interval":24,"IntervalUnit":"HOURS","Times":["18:30"]},"RetainRule":{"Count":7}}]}' >/dev/null
+fi
+
 SSH="ssh -i $KEY_FILE -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ubuntu@$IP"
 
 if [ "$INSTANCE_IS_NEW" = false ] && ! $SSH -o BatchMode=yes "true" >/dev/null 2>&1; then
@@ -148,8 +167,14 @@ tar --exclude-vcs --exclude=venv --exclude=__pycache__ --exclude='*.pyc' --exclu
     -czf "$TARBALL" .
 $SSH "mkdir -p ~/$NAME"
 scp -i "$KEY_FILE" -o StrictHostKeyChecking=accept-new "$TARBALL" "ubuntu@$IP:~/${NAME}.tar.gz"
-$SSH "tar -xzf ~/${NAME}.tar.gz -C ~/$NAME && rm ~/${NAME}.tar.gz"
+# Extracting over the old copy never deletes a file removed from the code, so a deleted module would linger and still be
+# importable on the server. Clear the code folders first (.env and the data volumes are untouched).
+$SSH "cd ~/$NAME && rm -rf src scripts tests docs && tar -xzf ~/${NAME}.tar.gz -C ~/$NAME && rm ~/${NAME}.tar.gz"
 rm -f "$TARBALL"
+
+echo "== Watchdog: every 15 minutes, a Telegram message if a bot container is down or silent (and when it is back) =="
+scp -i "$KEY_FILE" -o StrictHostKeyChecking=accept-new deploy/watchdog.sh "ubuntu@$IP:~/bot-watchdog.sh"
+$SSH "chmod +x ~/bot-watchdog.sh && (crontab -l 2>/dev/null | grep -v bot-watchdog; echo '*/15 * * * * \$HOME/bot-watchdog.sh') | crontab -"
 
 if ! $SSH "test -f ~/$NAME/.env"; then
     echo "!! No .env on the instance yet. Copy your OPENROUTER_API_KEY / TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID there:"

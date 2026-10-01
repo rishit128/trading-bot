@@ -109,6 +109,32 @@ class TradingPipeline:
         """The stock's indicator snapshot as of the last completed session."""
         return self.snapshot_fn(symbol)
 
+    def remembered_signals(self, symbol: str, snapshot: Snapshot) -> Optional[Dict[str, Optional[AgentSignal]]]:
+        """The agents' answers already recorded for this stock on this bar, under the same prompt and features, or None.
+
+        A completed bar does not change during the session, so neither should the call. Asking again (after a restart, or
+        when the re-downloaded data differs in the 12th decimal) let a noisy model flip HOLD -> BUY and buy on the flip.
+        A fail-safe HOLD from an AI outage is never reused: that stock is asked again next cycle."""
+        if snapshot.bar_date is None:
+            return None
+        with self.sessions() as s:
+            raw = s.scalar(select(DecisionRecord.signals_json)
+                           .where(DecisionRecord.symbol == symbol, DecisionRecord.bar_date == snapshot.bar_date,
+                                  DecisionRecord.prompt_version == VERSIONS["prompt"],
+                                  DecisionRecord.feature_version == VERSIONS["feature"],
+                                  DecisionRecord.signals_json.isnot(None))
+                           .order_by(DecisionRecord.id.desc()).limit(1))
+        if not raw:
+            return None
+        try:
+            stored = json.loads(raw)
+            signals = {name: AgentSignal(**stored[name]) for name in self.agents}
+        except (ValueError, TypeError, KeyError):  # an older row shape, or an agent added since: ask afresh
+            return None
+        if any(sig.degraded for sig in signals.values()):
+            return None
+        return dict(signals)
+
     def agent_context(self, symbol: str, snapshot: Snapshot) -> AgentContext:
         """What an agent is given for one stock. Market context is lazy: only an agent that asks for it pays for it."""
         return AgentContext(symbol, snapshot,

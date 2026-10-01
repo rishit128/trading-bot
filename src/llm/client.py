@@ -73,7 +73,7 @@ class LLMClient:
                  transient_retries: int = 2, format_retries: int = 1, truncation_retries: int = 2,
                  backoff_base: float = 0.0, backoff_cap: float = 60.0, call_budget_seconds: float = 180.0,
                  breaker_threshold: int = 3, breaker_cooldown: float = 300.0,
-                 min_interval: float = 0.0, max_concurrency: int = 0,
+                 min_interval: float = 0.0, max_concurrency: int = 0, temperature: Optional[float] = None,
                  sleep: Callable[[float], None] = time.sleep, jitter: Callable[[], float] = random.random):
         if not models:
             raise ValueError("at least one model is required")
@@ -83,6 +83,7 @@ class LLMClient:
         self.backoff_base, self.backoff_cap, self.call_budget = backoff_base, backoff_cap, call_budget_seconds
         self.breaker_threshold, self.breaker_cooldown = breaker_threshold, breaker_cooldown
         self.min_interval, self._sleep, self._jitter = min_interval, sleep, jitter
+        self.temperature = temperature  # None: the provider's default
         self.dead: set[str] = set()  # models that no longer exist; skipped for the session so we stop paying for them
         self.last_model: Optional[str] = None  # which configured model answered the most recent live call
         self._no_reasoning_control: set[str] = set()  # models that reject the "reasoning off" switch
@@ -107,7 +108,7 @@ class LLMClient:
         """The production client: reasoning off, paced to the free tier's request limit, bounded concurrency, backoff."""
         params = dict(cache_ttl_seconds=settings.llm_cache_hours * 3600, reasoning_off=settings.llm_reasoning_off,
                       min_interval=settings.llm_min_interval, max_concurrency=settings.llm_concurrency,
-                      backoff_base=4.0)
+                      temperature=settings.llm_temperature, backoff_base=4.0)
         params.update(overrides)
         return cls(settings.models, **params)
 
@@ -276,6 +277,8 @@ class LLMClient:
         """The API call, with the reasoning switch that is dropped for any model that rejects it."""
         kwargs: Dict[str, Any] = dict(model=model, max_tokens=tokens, messages=messages,
                                       response_format={"type": "json_schema", "json_schema": schema})
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
         if self.reasoning_off and model not in self._no_reasoning_control:
             kwargs["extra_body"] = {"reasoning": {"enabled": False}}
         try:

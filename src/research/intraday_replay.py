@@ -26,6 +26,7 @@ from src.config import RiskLimits, Settings
 from src.data.india import IST, IndiaClock
 from src.data.intraday_bars import COLUMNS
 from src.database import IntradaySignalRecord, make_session_factory
+from src.engine.costs import SLIPPAGE
 from src.engine.paper_broker import PaperBroker
 from src.engine.ports import BAR
 from src.intraday.engine import IntradayEngine
@@ -132,11 +133,12 @@ def replay(bars: Dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(),
     days = session_days(bars, start, end)
     feed, clock = ReplayFeed(bars), IndiaClock()
     symbols = sorted(bars) if universe is None else universe
-    with tempfile.TemporaryDirectory() as tmp:
+    # ignore_cleanup_errors: on Windows SQLite still holds replay.db open when the folder is removed
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         sessions = make_session_factory(f"sqlite:///{Path(tmp) / 'replay.db'}")
-        extra = {} if config.slippage is None else {"slippage": config.slippage}
         broker = PaperBroker(sessions, feed, clock, initial_cash=config.capital, fees=intraday_fees,
-                             now_fn=lambda: feed.now, **extra)
+                             now_fn=lambda: feed.now,
+                             slippage=SLIPPAGE if config.slippage is None else config.slippage)
         engine = IntradayEngine(broker, symbols, clock, fetch_bars=feed.today, live=True, max_positions=config.max_positions,
                                 risk_pct=config.risk_pct, max_position_pct=config.max_position_pct,
                                 max_daily_loss_pct=config.max_daily_loss_pct, universe_source="", now_fn=lambda: feed.now)

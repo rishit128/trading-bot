@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from src.agents.base import ADVISOR, LEAD
-from src.data.indicators import Snapshot
+from src.data.indicators import BarNotReadyError, Snapshot
 from src.engine.enums import Action
 from src.engine.risk_engine import Portfolio, RiskDecision
 from src.engine.agent_signal import AgentSignal
@@ -20,8 +20,9 @@ from src.workflow import CycleServices, build_analysis_graph, build_cycle_graph,
 class FakeServices:
     """Records every call the graphs make. No broker, no database, no risk engine: only the interface."""
 
-    def __init__(self, symbols, dry_run=False, approve=(), broken=(), degraded=()):
+    def __init__(self, symbols, dry_run=False, approve=(), broken=(), degraded=(), remembered=None, waiting=()):
         self.calls, self.alerts = [], []
+        self.remembered, self.waiting = dict(remembered or {}), set(waiting)
         self.symbols, self.approve, self.broken, self.degraded = list(symbols), set(approve), set(broken), set(degraded)
         self.settings = SimpleNamespace(dry_run=dry_run)
         agent = SimpleNamespace(name="technical", role=LEAD, analyze=self._analyze)
@@ -37,7 +38,12 @@ class FakeServices:
         self.calls.append(("snapshot", symbol))
         if symbol in self.broken:
             raise ValueError(f"{symbol}: no data")
+        if symbol in self.waiting:
+            raise BarNotReadyError(f"{symbol}: waiting for the 2026-09-30 bar")
         return Snapshot(symbol, 100.0, 98.0, 95.0, 60.0, 1000)
+
+    def remembered_signals(self, symbol, snapshot):
+        return self.remembered.get(symbol)
 
     def agent_context(self, symbol, snapshot):
         return SimpleNamespace(symbol=symbol, snapshot=snapshot)
@@ -111,6 +117,24 @@ def test_a_stock_that_fails_becomes_an_error_result_and_an_alert_without_stoppin
     assert "BAD" not in [c[1] for c in services.calls if c[0] == "decide"]  # nothing was decided for it
 
 
+def test_a_stock_whose_last_bar_is_not_published_yet_waits_quietly_and_is_not_decided():
+    services = FakeServices(["AAA", "LATE", "CCC"], approve={"AAA", "CCC"}, waiting={"LATE"})
+    results = run_cycle(services)
+    assert [(r.symbol, r.action) for r in results] == [("AAA", "BUY"), ("LATE", "WAIT"), ("CCC", "BUY")]
+    assert "waiting for the 2026-09-30 bar" in results[1].error
+    assert services.alerts == []  # every morning until Yahoo posts the bar: an alert each cycle would be noise
+    assert "LATE" not in [c[1] for c in services.calls if c[0] == "decide"]
+    assert ("LATE",) not in kinds(services, "analyze")  # no AI call on a bar we refuse to trade
+
+
+def test_a_stock_already_decided_on_this_bar_reuses_that_answer_without_asking_the_agents_again():
+    earlier = {"technical": AgentSignal(action="HOLD", confidence=0.65, reasoning="earlier"), "sentiment": None}
+    services = FakeServices(["AAA", "BBB"], remembered={"AAA": earlier})
+    run_cycle(services)
+    assert kinds(services, "analyze") == [("BBB",)]  # only the stock not yet decided this session is asked
+    assert [c[1] for c in services.calls if c[0] == "decide"] == ["AAA", "BBB"]  # both still decided and recorded
+
+
 def test_a_failing_fail_safe_lead_is_reported_per_stock_for_outage_detection():
     services = FakeServices(["AAA", "BBB"], degraded={"BBB"})
     run_cycle(services)
@@ -125,7 +149,7 @@ def test_an_empty_universe_still_opens_and_closes_the_cycle():
 
 def test_the_trading_pipeline_implements_every_member_of_the_interface(tmp_path):
     members = {name for name, _ in inspect.getmembers(CycleServices) if not name.startswith("_")}
-    assert {"agents", "settings", "snapshot", "agent_context", "open_cycle", "select_symbols", "decide", "place",
+    assert {"agents", "settings", "snapshot", "remembered_signals", "agent_context", "open_cycle", "select_symbols", "decide", "place",
             "refresh_portfolio", "note_lead_health", "close_cycle", "notify"} <= members
     instance = make_pipeline(tmp_path)[0]
     for name in members:

@@ -20,7 +20,7 @@ services:
       - portfolio_data:/app/portfolio_data
     # Check progress any time:  docker compose -f docker-compose.aws.yml exec trading-bot python main.py --report
     # For a dry run (decisions only, no simulated trades), remove "--live" below.
-    command: ["python", "main.py", "--loop", "30", "--live"]
+    command: ["python", "main.py", "--loop", "30", "--live", "--holdout"]
 
   intraday-bot:
     build:

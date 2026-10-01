@@ -2,6 +2,7 @@
 
     cycle graph     open_cycle -> select_universe --(map: one Send per stock)--> analyze_symbol x N --> execute_cycle
     analysis graph  fetch_data -> agent_<name> (ALL agents in parallel) -> collect          (one stock)
+                    fetch_data -> collect   (already decided on this session's bar: reuse it, no AI call)
     decision graph  decide -> [risk approved?] -> execute                                     (one stock)
 
 * Adding an agent means writing a class with `name`/`role`/`analyze(ctx)` and registering it: the analysis graph grows
@@ -20,7 +21,7 @@ from langgraph.types import RetryPolicy, Send
 
 from src.agents.base import LEAD, Agent, AgentContext
 from src.config import Settings
-from src.data.indicators import Snapshot
+from src.data.indicators import BarNotReadyError, Snapshot
 from src.data.retry import is_transient_data_error
 from src.engine.risk_engine import Portfolio
 from src.engine.agent_signal import AgentSignal
@@ -79,6 +80,7 @@ class CycleServices(Protocol):
     def settings(self) -> Settings: ...
 
     def snapshot(self, symbol: str) -> Snapshot: ...
+    def remembered_signals(self, symbol: str, snapshot: Snapshot) -> Optional[Dict[str, Optional[AgentSignal]]]: ...
     def agent_context(self, symbol: str, snapshot: Snapshot) -> AgentContext: ...
     def open_cycle(self) -> Portfolio: ...
     def select_symbols(self, portfolio: Portfolio) -> Sequence[str]: ...
@@ -104,8 +106,14 @@ def build_analysis_graph(services: CycleServices, snapshot_retry: RetryPolicy = 
         raise ValueError("at least one agent is required")
 
     def fetch_data(state: AnalysisState):
-        """Fetch the stock's indicator snapshot."""
-        return {"snapshot": services.snapshot(state["symbol"])}
+        """Fetch the stock's indicator snapshot, and the agents' answers if this session's bar was already decided."""
+        snapshot = services.snapshot(state["symbol"])
+        remembered = services.remembered_signals(state["symbol"], snapshot)
+        return {"snapshot": snapshot, "signals": remembered} if remembered else {"snapshot": snapshot}
+
+    def route_agents(state: AnalysisState) -> List[str]:
+        """Ask the agents only once per stock per session: a second answer to the same bar is noise, not information."""
+        return ["collect"] if state.get("signals") else [agent_node_name(n) for n in services.agents]
 
     def make_agent_node(name: str):
         """Build the graph node that runs one agent."""
@@ -125,10 +133,10 @@ def build_analysis_graph(services: CycleServices, snapshot_retry: RetryPolicy = 
     graph.add_node("collect", collect)
     graph.add_edge(START, "fetch_data")
     for name in services.agents:
-        node = agent_node_name(name)
-        graph.add_node(node, make_agent_node(name))
-        graph.add_edge("fetch_data", node)
-    graph.add_edge([agent_node_name(n) for n in services.agents], "collect")
+        graph.add_node(agent_node_name(name), make_agent_node(name))
+    agent_nodes = [agent_node_name(n) for n in services.agents]
+    graph.add_conditional_edges("fetch_data", route_agents, [*agent_nodes, "collect"])
+    graph.add_edge(agent_nodes, "collect")
     graph.add_edge("collect", END)
     return graph.compile()
 
@@ -180,6 +188,8 @@ def build_cycle_graph(services: CycleServices, analysis_graph, decision_graph):
             # for this stock still runs in parallel regardless of how many stocks are in flight.
             out = analysis_graph.invoke({"symbol": symbol}, config={"max_concurrency": len(services.agents)})
             return {"analyses": [{"symbol": symbol, "snapshot": out["snapshot"], "signals": out["signals"], "error": None}]}
+        except BarNotReadyError as e:  # not a fault: the data source is late; this stock is decided on a later cycle
+            return {"analyses": [{"symbol": symbol, "error": str(e), "waiting": True}]}
         except Exception as e:  # one stock failing must not abort the others
             log.exception("%s analysis failed", symbol)
             return {"analyses": [{"symbol": symbol, "error": f"{type(e).__name__}: {e}"}]}
@@ -188,9 +198,13 @@ def build_cycle_graph(services: CycleServices, analysis_graph, decision_graph):
         """Decide and execute each analysed stock in universe order against fresh account state."""
         order = {s: i for i, s in enumerate(state["symbols"])}
         roles = {n: a.role for n, a in services.agents.items()}
-        portfolio, results = state["portfolio"], []
+        portfolio, results, waiting = state["portfolio"], [], []
         for a in sorted(state["analyses"], key=lambda a: order[a["symbol"]]):
             symbol = a["symbol"]
+            if a.get("waiting"):
+                results.append(SymbolResult(symbol, "WAIT", 0.0, None, None, a["error"]))
+                waiting.append(symbol)
+                continue
             if a["error"]:
                 results.append(SymbolResult(symbol, "ERROR", 0.0, None, None, a["error"]))
                 services.notify(f"ERROR processing {symbol}: {a['error']}")
@@ -215,6 +229,8 @@ def build_cycle_graph(services: CycleServices, analysis_graph, decision_graph):
             results.append(SymbolResult(symbol, decision.action, decision.confidence, risk, status))
             if status and not services.settings.dry_run:
                 portfolio = services.refresh_portfolio()
+        if waiting:
+            log.info("%d stock(s) waiting for the last session's bar to be published: %s", len(waiting), " ".join(waiting))
         services.close_cycle()
         return {"results": results}
 

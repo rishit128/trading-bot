@@ -40,6 +40,8 @@ sudo docker compose -f docker-compose.aws.yml down                            # 
 /pause                stop placing new orders
 /resume               allow orders again
 ```
+Automatic messages: a weekly learning report (Mondays: outcomes labelled, AI vs the plain rule, holdout reserve),
+and WATCHDOG alerts from the server itself if a bot container is down or silent for 75 minutes.
 
 ## Checking things on this PC
 
@@ -92,6 +94,8 @@ docker compose down              # stop (the database volume, and your paper his
 
 ```
 scripts/test_openrouter_api.py             # tries each configured AI model with a real call (safe)
+scripts/seed_setup_memory.py build|check|import   # rebuild 10y of setups for the learning memory; `check` = the
+                                           #   walk-forward gate (FAILED 2026-10-01, so LEARNING_SEED stays off)
 scripts/reconcile_paper.py                 # rebuilds cash from recorded fills, flags any mismatch
 scripts/paper_report.py                    # full history, both accounts: every trade, P&L by day/week/total
 scripts/analyze_mistakes.py                # judges every analysed stock against what then happened

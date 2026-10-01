@@ -2,18 +2,22 @@
 
 Simplifications, all optimistic and worth remembering: fills happen at the latest 5-minute close plus a fixed slippage;
 stop/target exits fill at the stop/target level (or the bar open on a gap) with no slippage; no circuit-limit modelling
-(a real stock locked at its lower circuit may not let you sell at your stop).
+(a real stock locked at its lower circuit may not let you sell at your stop). Splits, bonuses and dividends are applied
+on their ex-dates (`corporate_actions`), without which a 1:1 bonus halves the price and fires the stop as a fake loss;
+fractional entitlements are not paid out (in reality they are settled in cash).
 
 Stop/target replay: every 5-minute bar after the buy has its full high/low examined. The bar still forming is examined
 too (its highs and lows so far are real prints, so a breach is not delayed) but is only marked as checked once it has
 finished, so the rest of its range is seen next time. The bar the buy happened in is never examined: it also holds
 prints from before the fill."""
 import logging
+import math
 import threading
+import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Callable, List, Optional, Tuple
+from datetime import date, datetime, timedelta, timezone
+from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 from sqlalchemy import func, select
@@ -25,6 +29,10 @@ from src.database import PaperAccountRecord, PaperPositionRecord, PaperTradeReco
 from src.engine.risk_engine import Portfolio
 
 log = logging.getLogger(__name__)
+
+IST = timezone(timedelta(hours=5, minutes=30))
+# (splits, dividends) for one stock: ex-date -> split ratio (2.0 for a 2:1 split or a 1:1 bonus), ex-date -> rupees a share
+CorporateActions = Tuple[Dict[date, float], Dict[date, float]]
 
 
 def _utc(dt: datetime) -> datetime:
@@ -56,9 +64,13 @@ class PaperBroker:
     # when redeemed). 0 = cash earns nothing, the original behaviour. Credited per elapsed calendar day, like the
     # backtest (src.research.backtest.simulate's cash_yield).
     cash_yield: float = 0.0
+    corporate_actions: Optional[Callable[[str], CorporateActions]] = None  # None: not modelled (tests, intraday)
+    actions_ttl_seconds: float = 3600.0  # how long one stock's corporate actions are reused before asking again
+    monotonic: Callable[[], float] = time.monotonic
 
     def __post_init__(self):
         self._lock = threading.RLock()
+        self._actions_cache: Dict[str, Tuple[float, CorporateActions]] = {}
         with self.sessions() as s:
             if s.get(PaperAccountRecord, 1) is None:
                 s.add(PaperAccountRecord(id=1, cash=self.initial_cash, initial_cash=self.initial_cash))
@@ -90,8 +102,9 @@ class PaperBroker:
         acct.interest_accrued_at = now
 
     def portfolio(self) -> Portfolio:
-        """Settle any hit stops/targets, credit idle-cash interest, then value the account at live prices."""
+        """Apply corporate actions, settle any hit stops/targets, credit idle-cash interest, then value the account."""
         with self._lock:
+            self._apply_corporate_actions()
             self._settle_exits()
             with self.sessions() as s:
                 acct = s.get(PaperAccountRecord, 1)
@@ -156,6 +169,61 @@ class PaperBroker:
         raise NotImplementedError("the paper broker's positions are always protected")
 
     # ---- internals ----------------------------------------------------------------------------------
+    def _actions_for(self, symbol: str) -> Optional[CorporateActions]:
+        assert self.corporate_actions is not None
+        hit = self._actions_cache.get(symbol)
+        if hit is not None and self.monotonic() - hit[0] < self.actions_ttl_seconds:
+            return hit[1]
+        try:
+            events = self.corporate_actions(symbol)
+        except Exception as e:
+            log.warning("could not read corporate actions for %s: %s", symbol, e)
+            return None
+        self._actions_cache[symbol] = (self.monotonic(), events)
+        return events
+
+    def _apply_corporate_actions(self) -> None:
+        """Bring every open position through the splits, bonuses and dividends whose ex-date has passed since it was
+        opened (or since the last one applied). A split scales the quantity and divides the stop and target by its
+        ratio, keeping the cost basis; a dividend is credited as cash. Must run before stops are replayed: the price
+        feed is already split-adjusted."""
+        if self.corporate_actions is None:
+            return
+        today = date.fromisoformat(self.clock.today_ist(self.now_fn()))
+        with self.sessions() as s:
+            held = [(p.symbol, date.fromisoformat(p.actions_through) if p.actions_through
+                     else _utc(p.opened_at).astimezone(IST).date()) for p in s.scalars(select(PaperPositionRecord))]
+        for symbol, through in held:
+            events = self._actions_for(symbol)
+            if events is None:
+                continue
+            splits, dividends = ({d: v for d, v in e.items() if through < d <= today} for e in events)
+            if not splits and not dividends:
+                continue
+            ratio = math.prod(r for r in splits.values() if r > 0)
+            with self.sessions() as s:
+                pos, acct = s.get(PaperPositionRecord, symbol), s.get(PaperAccountRecord, 1)
+                if pos is None:
+                    continue
+                if ratio != 1:
+                    new_qty = int(pos.qty * ratio)
+                    if new_qty < 1:
+                        log.warning("%s: a %.4g-for-1 consolidation leaves less than one share of %d; not modelled",
+                                    symbol, ratio, pos.qty)
+                    else:
+                        log.info("%s: split/bonus %.4g-for-1: %d -> %d shares", symbol, ratio, pos.qty, new_qty)
+                        pos.avg_price = pos.qty * pos.avg_price / new_qty
+                        pos.qty = new_qty
+                        pos.stop, pos.target = round(pos.stop / ratio, 2), round(pos.target / ratio, 2)
+                amount = sum(dividends.values()) * pos.qty  # Yahoo's dividends are per share after any split
+                if amount > 0:
+                    self._accrue_interest(acct)
+                    acct.cash += amount
+                    acct.dividends_received = (acct.dividends_received or 0.0) + amount
+                    log.info("%s: dividend %.2f credited on %d shares", symbol, amount, pos.qty)
+                pos.actions_through = max([*splits, *dividends]).isoformat()
+                s.commit()
+
     def _close(self, symbol: str, qty: int, price: float, reason: str) -> None:
         now = self.now_fn()
         with self.sessions() as s:
@@ -216,6 +284,7 @@ class PaperBroker:
     def holdings(self) -> List[dict]:
         """Open positions in detail: buy date and price, live price, profit or loss (amount and %), stop level."""
         with self._lock:
+            self._apply_corporate_actions()
             self._settle_exits()
             with self.sessions() as s:
                 rows = s.scalars(select(PaperPositionRecord)).all()
@@ -256,4 +325,5 @@ class PaperBroker:
                 "realized_net_pnl": sum(t.net_pnl for t in trades), "fees_paid": fees,
                 "exits": {r: sum(1 for t in trades if t.reason == r) for r in ("STOP", "TARGET", "SIGNAL")},
                 "interest_earned": acct.interest_earned or 0.0,
+                "dividends_received": acct.dividends_received or 0.0,
             }

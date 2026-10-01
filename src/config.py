@@ -117,16 +117,23 @@ class Settings:
     llm_reasoning_off: bool = True
     llm_min_interval: float = 3.0  # seconds between request starts (the free tier allows ~20 requests a minute)
     llm_concurrency: int = 2  # requests in flight at once
+    # Sampling temperature. 0 asks for the model's single most likely answer: the live record showed the same stock on the
+    # same bar answered HOLD one time and BUY the next, which turns the 0.60 confidence gate into a coin toss.
+    llm_temperature: float = 0.0
     llm_cot: bool = True  # chain-of-thought prompting: 5-step reasoning chain stored with each decision 
     llm_learning: bool = True  # decision memory: adjust from closed paper-trade record of similar setups
     llm_context: bool = True  # market context: adjust when the market regime is notable (risk-off / euphoric)
     llm_reflect: bool = True  # reflection: self-critique of the assembled call before it is final
-    llm_max_adjust: float = 0.15
+    llm_max_adjust: float = 0.15  # largest confidence change one refinement phase may make (review doc 2.4)
     # Sessions an outcome is measured over (what "how did this setup turn out" means). 60, not 20: live-setup trades are
     # held a median 65-74 sessions, and the 60-session outcome ranks their real results better (0.66-0.69 vs 0.53-0.62
     # rank correlation, STRATEGY.md 2026-09-26). Must be one of the labelled horizons (src.learning.outcomes.HORIZONS).
     learning_horizon: int = 60
-    learning_min_samples: int = 30  # independent observations a setup label needs before the memory speaks at all  # largest confidence change one refinement phase may make (review doc 2.4)
+    learning_min_samples: int = 30  # independent observations a setup label needs before the memory speaks at all
+    # Let the decision memory also use setups reconstructed from price history (scripts/seed_setup_memory.py), not only the
+    # bot's own matured decisions, so it can speak before months of live outcomes exist. Off until reviewed: it changes
+    # live decisions, and history carries survivorship bias (today's stock list only).
+    learning_seed: bool = False
     # The intraday engine (its own paper account) is sized by RISK, not by the swing settings above: a position is the
     # smaller of "the stop-out costs intraday_risk_pct of equity" and "at most intraday_max_position_pct of equity", cash
     # only (no leverage). Borrowing the swing 5% left a Rs 20,000 account unable to buy any stock above Rs 985, silently
@@ -158,6 +165,8 @@ class Settings:
                              f"got {self.learning_horizon}")
         if not 0 <= self.llm_max_adjust <= 1:
             raise ValueError("llm_max_adjust must be a fraction in [0, 1]")
+        if not 0 <= self.llm_temperature <= 2:
+            raise ValueError(f"llm_temperature must be in [0, 2], got {self.llm_temperature}")
         if not 0 <= self.cash_yield_pct <= 0.15:
             raise ValueError(f"cash_yield_pct must be an annual fraction in [0, 0.15], e.g. 0.05, got {self.cash_yield_pct}")
         if not 0 < self.max_daily_volatility < 1:
@@ -216,6 +225,7 @@ def load_settings() -> Settings:
         llm_reasoning_off=os.getenv("LLM_REASONING_OFF", "true").strip().lower() != "false",
         llm_min_interval=_float("LLM_MIN_INTERVAL", 3.0),
         llm_concurrency=int(_float("LLM_CONCURRENCY", 2)),
+        llm_temperature=_float("LLM_TEMPERATURE", 0.0),
         llm_cot=os.getenv("LLM_COT", "true").strip().lower() != "false",
         llm_learning=os.getenv("LLM_LEARNING", "true").strip().lower() != "false",
         llm_context=os.getenv("LLM_CONTEXT", "true").strip().lower() != "false",
@@ -223,6 +233,7 @@ def load_settings() -> Settings:
         llm_max_adjust=_float("LLM_MAX_ADJUST", 0.15),
         learning_horizon=int(_float("LEARNING_HORIZON", 60)),
         learning_min_samples=int(_float("LEARNING_MIN_SAMPLES", 30)),
+        learning_seed=os.getenv("LEARNING_SEED", "false").strip().lower() == "true",
         intraday_risk_pct=_float("INTRADAY_RISK_PCT", 0.005),
         intraday_max_position_pct=_float("INTRADAY_MAX_POSITION_PCT", 0.20),
         intraday_max_positions=int(_float("INTRADAY_MAX_POSITIONS", 5)),

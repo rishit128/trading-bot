@@ -11,7 +11,10 @@ worse, not better):
     to coarser labels until a label has enough observations;
   * it always reports the win rate of ALL comparable setups beside the matched one, so the agent can tell an edge from the
     market simply drifting up;
-  * point-in-time: asked "as of" a date, it only uses outcomes that had finished by then."""
+  * point-in-time: asked "as of" a date, it only uses outcomes that had finished by then;
+  * optionally (`use_history`, LEARNING_SEED) it also counts setups rebuilt from price history
+    (scripts/seed_setup_memory.py), so it can speak before months of the bot's own outcomes have matured. The bot's own
+    observation wins when both cover the same stock-week."""
 import json
 import logging
 import time
@@ -23,7 +26,7 @@ from sqlalchemy import func, select
 
 from src.agents.history import PatternStats, pattern_id
 from src.data.indicators import Snapshot
-from src.database import DecisionRecord, OutcomeRecord
+from src.database import DecisionRecord, OutcomeRecord, SetupObservationRecord
 from src.learning.outcomes import HORIZONS
 
 log = logging.getLogger(__name__)
@@ -81,13 +84,13 @@ class SetupMemory:
     """Answers "how did setups like this one turn out?" from the database. `stats(snapshot)` is the agent's history hook."""
 
     def __init__(self, sessions, horizon: int = 20, min_samples: int = 30, round_trip_cost: float = ROUND_TRIP_COST,
-                 ttl_seconds: float = 600.0, clock: Callable[[], float] = time.monotonic):
+                 ttl_seconds: float = 600.0, clock: Callable[[], float] = time.monotonic, use_history: bool = False):
         if min_samples < 1 or horizon < 1:
             raise ValueError("horizon and min_samples must be >= 1")
         if horizon not in HORIZONS:  # only these are labelled; any other would leave the memory silent forever
             raise ValueError(f"horizon must be one of the labelled horizons {HORIZONS}, got {horizon}")
         self.sessions, self.horizon, self.min_samples = sessions, horizon, min_samples
-        self.cost, self.ttl, self.clock = round_trip_cost, ttl_seconds, clock
+        self.cost, self.ttl, self.clock, self.use_history = round_trip_cost, ttl_seconds, clock, use_history
         self._cache: Dict[Optional[str], Tuple[float, List[_Row]]] = {}
 
     def rows(self, as_of: Optional[date] = None) -> List[_Row]:
@@ -109,19 +112,28 @@ class SetupMemory:
                  .order_by(DecisionRecord.bar_date, DecisionRecord.symbol))
         if as_of is not None:  # point-in-time: only outcomes that had finished by then
             query = query.where(OutcomeRecord.exit_date != "", OutcomeRecord.exit_date <= as_of.isoformat())
+        with self.sessions() as s:
+            found = list(s.execute(query))
+            if self.use_history:
+                seeded = (select(SetupObservationRecord.symbol, SetupObservationRecord.bar_date,
+                                 SetupObservationRecord.snapshot_json, SetupObservationRecord.gross_return)
+                          .where(SetupObservationRecord.horizon == self.horizon)
+                          .order_by(SetupObservationRecord.bar_date, SetupObservationRecord.symbol))
+                if as_of is not None:
+                    seeded = seeded.where(SetupObservationRecord.exit_date <= as_of.isoformat())
+                found += list(s.execute(seeded))  # after the bot's own rows, so a real call wins its stock-week
         rows: List[_Row] = []
         seen = set()
-        with self.sessions() as s:
-            for symbol, bar_date, snapshot_json, gross in s.execute(query):
-                week = date.fromisoformat(bar_date).isocalendar()[:2]
-                if (symbol, week) in seen:
-                    continue  # a stock analysed again the same week is the same story
-                try:
-                    labels = setup_labels(Snapshot(**json.loads(snapshot_json)))
-                except (ValueError, TypeError):
-                    continue  # a stored snapshot from an older schema that no longer loads: skip it, never guess
-                seen.add((symbol, week))
-                rows.append(_Row(symbol, bar_date, labels, gross - self.cost))
+        for symbol, bar_date, snapshot_json, gross in found:
+            week = date.fromisoformat(bar_date).isocalendar()[:2]
+            if (symbol, week) in seen:
+                continue  # a stock analysed again the same week is the same story
+            try:
+                labels = setup_labels(Snapshot(**json.loads(snapshot_json)))
+            except (ValueError, TypeError):
+                continue  # a stored snapshot from an older schema that no longer loads: skip it, never guess
+            seen.add((symbol, week))
+            rows.append(_Row(symbol, bar_date, labels, gross - self.cost))
         return rows
 
     def stats(self, snapshot: Snapshot, as_of: Optional[date] = None) -> Optional[PatternStats]:

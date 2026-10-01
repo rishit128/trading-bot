@@ -53,25 +53,27 @@ def make_paper_broker(settings: Settings, database_url: Optional[str] = None, fe
     Only the swing account sweeps idle cash (CASH_YIELD_PCT): the intraday account is flat every night, so a liquid-fund
     sweep does not describe it. The report commands build the swing broker through here too, so they credit interest
     the same way the running bot does."""
-    from src.data.india import IndiaClock, IntradayFeed
+    from src.data.india import IndiaClock, IntradayFeed, yahoo_corporate_actions
     from src.database import make_session_factory
     from src.engine.paper_broker import PaperBroker
     from src.engine.costs import india_delivery_fees
 
     url = database_url or settings.database_url
+    swing = url == settings.database_url  # the intraday account is flat every night: no sweep, no ex-dates to cross
     return PaperBroker(make_session_factory(url), IntradayFeed(), IndiaClock(),
                        initial_cash=settings.paper_initial_cash, fees=fees or india_delivery_fees,
-                       cash_yield=settings.cash_yield_pct if url == settings.database_url else 0.0)
+                       cash_yield=settings.cash_yield_pct if swing else 0.0,
+                       corporate_actions=yahoo_corporate_actions if swing else None)
 
 
 def build_market_wiring(settings: Settings, sessions) -> MarketWiring:
     """Assemble the broker and data functions for the configured market."""
-    from src.data.india import SUFFIX, IndiaClock, IntradayFeed
+    from src.data.india import SUFFIX, IndiaClock, IntradayFeed, yahoo_corporate_actions
     from src.engine.paper_broker import PaperBroker
 
     clock, feed = IndiaClock(), IntradayFeed()
     broker = PaperBroker(sessions, feed, clock, initial_cash=settings.paper_initial_cash,
-                         cash_yield=settings.cash_yield_pct)
+                         cash_yield=settings.cash_yield_pct, corporate_actions=yahoo_corporate_actions)
     screener = build_india_screener(settings) if settings.universe == "market" else None
     # Analyse the last COMPLETED session only (stable prompts all day -> cacheable, and matches the backtest), then
     # size/bracket the order off the live price.

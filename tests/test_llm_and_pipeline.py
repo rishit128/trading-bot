@@ -13,7 +13,7 @@ from src.data.indicators import Snapshot
 from src.database import DecisionRecord, OrderRecord, make_session_factory
 from src.engine.ports import Fill
 from src.engine.risk_engine import Portfolio
-from src.llm import LLMClient, LLMUnavailable
+from src.llm import AgentSignal, LLMClient, LLMUnavailable
 from src.pipeline import TradingPipeline
 
 
@@ -385,3 +385,82 @@ def test_failed_market_scan_falls_back_to_holdings_only_and_alerts(tmp_path):
     pipe.universe_fn = broken
     assert [r.symbol for r in pipe.run_once()] == ["HELD"]
     assert any("UNIVERSE SCAN FAILED" in m and "alpaca data down" in m for m in messages)
+
+
+# ---------------------------------------------------------------- one decision per stock per completed session
+def counting_pipeline(tmp_path, signal):
+    """A pipeline whose snapshot carries a bar date, with the technical agent's calls counted."""
+    calls = []
+
+    def technical(snapshot):
+        calls.append(snapshot.symbol)
+        return signal
+
+    pipe, broker, sessions = make_pipeline(
+        tmp_path, snapshot_fn=lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000, bar_date="2026-09-30"))
+    pipe.agents["technical"] = StubAgent(technical, "technical", LEAD)
+    pipe.agents["sentiment"] = StubAgent(lambda s: AgentSignal(action="HOLD", confidence=0.5, reasoning="a"), "sentiment",
+                                         ADVISOR)
+    return pipe, sessions, calls
+
+
+def test_the_agents_are_asked_once_per_bar_and_later_cycles_reuse_the_recorded_answer(tmp_path):
+    pipe, sessions, calls = counting_pipeline(tmp_path, AgentSignal(action="BUY", confidence=0.9, reasoning="t"))
+    pipe.run_once()
+    pipe.run_once()
+    assert calls == ["AAPL"]
+    with sessions() as s:
+        rows = s.scalars(select(DecisionRecord)).all()
+    assert len(rows) == 2 and {r.final_action for r in rows} == {"BUY"}  # every cycle still records its decision
+
+
+def test_a_restarted_process_reuses_the_answer_already_in_the_database(tmp_path):
+    first, _, first_calls = counting_pipeline(tmp_path, AgentSignal(action="HOLD", confidence=0.65, reasoning="t"))
+    first.run_once()
+    flipped = AgentSignal(action="BUY", confidence=0.65, reasoning="a noisy second opinion")
+    restarted, sessions, calls = counting_pipeline(tmp_path, flipped)  # same database, fresh process
+    [result] = restarted.run_once()
+    assert first_calls == ["AAPL"] and calls == [] and result.action == "HOLD"
+
+
+def test_a_fail_safe_hold_from_an_ai_outage_is_asked_again_next_cycle(tmp_path):
+    pipe, _, calls = counting_pipeline(tmp_path, AgentSignal(action="HOLD", confidence=0.0, reasoning="down", degraded=True))
+    pipe.run_once()
+    pipe.run_once()
+    assert calls == ["AAPL", "AAPL"]
+
+
+def test_an_answer_recorded_under_an_older_prompt_version_is_not_reused(tmp_path):
+    pipe, sessions, calls = counting_pipeline(tmp_path, AgentSignal(action="BUY", confidence=0.9, reasoning="t"))
+    pipe.run_once()
+    with sessions() as s:
+        for row in s.scalars(select(DecisionRecord)):
+            row.prompt_version = "an-older-prompt"
+        s.commit()
+    pipe.run_once()
+    assert calls == ["AAPL", "AAPL"]
+
+
+def test_a_snapshot_without_a_bar_date_is_never_matched_to_an_earlier_answer(tmp_path):
+    pipe, _, _ = make_pipeline(tmp_path)
+    pipe.run_once()
+    assert pipe.remembered_signals("AAPL", Snapshot("AAPL", 100.0, 98.0, 95.0, 60.0, 1000)) is None
+
+
+# ---------------------------------------------------------------- sampling temperature
+def test_the_configured_temperature_is_sent_with_every_request():
+    fake = FakeOpenAI({"a": GOOD})
+    LLMClient(["a"], client=fake, temperature=0.0).signal("p")
+    assert fake.calls[0][1]["temperature"] == 0.0
+
+
+def test_no_temperature_is_sent_when_none_is_configured():
+    fake = FakeOpenAI({"a": GOOD})
+    LLMClient(["a"], client=fake).signal("p")
+    assert "temperature" not in fake.calls[0][1]
+
+
+def test_the_production_client_uses_the_settings_temperature():
+    fake = FakeOpenAI({"a": GOOD})
+    LLMClient.from_settings(Settings(models=("a",), llm_temperature=0.0), client=fake).signal("p")
+    assert fake.calls[0][1]["temperature"] == 0.0

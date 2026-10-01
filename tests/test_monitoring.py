@@ -219,3 +219,27 @@ def test_pnl_period_lines_skip_zero_trade_rows(control):
 
     rows = [PeriodPnl("2026-09-29", 1, 1, 10.0, 1.0), PeriodPnl("2026-09-30", 0, 0, 0.0, 0.0)]
     assert _period_lines(rows, "₹") == "2026-09-29  +₹10  (1 trade)"
+
+
+def test_a_polling_conflict_is_explained_once_in_the_chat_and_rate_limited_in_the_log(caplog):
+    sent = []
+
+    def handler(request: httpx.Request):
+        if request.url.path.endswith("/getUpdates"):
+            return httpx.Response(409, json={"ok": False, "error_code": 409,
+                                             "description": "Conflict: terminated by other getUpdates request"})
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True})
+
+    caplog.set_level(logging.WARNING)
+    listener = CommandListener("SECRET-TOKEN-123", "111", lambda text: "ok",
+                               client=httpx.Client(transport=httpx.MockTransport(handler)))
+    for _ in range(3):
+        try:
+            listener.poll_once()
+        except Exception as e:
+            listener._poll_failed(e)
+    assert len(sent) == 1 and "Another program is reading this bot's messages" in sent[0]["text"]
+    conflicts = [r for r in caplog.records if "409" in r.getMessage()]
+    assert len(conflicts) == 1 and "terminated by other getUpdates request" in conflicts[0].getMessage()
+    assert "SECRET-TOKEN-123" not in caplog.text

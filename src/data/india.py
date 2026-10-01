@@ -250,6 +250,26 @@ class IndiaClock:
         return self.cal.previous_close(ts.floor("min")).tz_convert(IST).date()
 
 
+def _by_ex_date(series: pd.Series) -> Dict[date, float]:
+    """A Yahoo event series (indexed by ex-date timestamp) as {date: value}, events only."""
+    if series is None or len(series) == 0:
+        return {}
+    index = pd.DatetimeIndex(series.index)
+    days = (index.tz_convert(IST) if index.tz is not None else index).date
+    return {d: float(v) for d, v in zip(days, series.to_numpy()) if v and v > 0}
+
+
+def yahoo_corporate_actions(symbol: str, ticker: Optional[Callable] = None) -> Tuple[Dict[date, float], Dict[date, float]]:
+    """An NSE stock's (splits, dividends) from Yahoo: ex-date -> split ratio (a 1:1 bonus is 2.0), ex-date -> rupees a
+    share. Used by the paper broker to adjust open positions; raises on a network failure so the caller can retry."""
+    if ticker is None:
+        import yfinance as yf
+
+        ticker = yf.Ticker
+    t = ticker(symbol + SUFFIX)
+    return _by_ex_date(t.splits), _by_ex_date(t.dividends)
+
+
 class IntradayFeed:
     """5-minute Yahoo bars: latest price for paper fills and high/low history for simulated stop/target checks."""
 

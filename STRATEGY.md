@@ -515,3 +515,40 @@ is flagged as a candidate, and the same market without it is not. Limits, stated
 that many dates an edge smaller than ~0.35% net per trade would not be detectable (though any edge that small could not pay
 0.2% of costs either); H2 and H3 had too few trades (92, 157) to judge. Re-run `scripts/research_intraday.py` as the archive
 grows; if a longer archive still shows nothing, retire the intraday engine.
+
+## Live-data review and fixes (2026-10-01)
+A read of the production database (825 decisions on 50 stock-sessions, 2026-09-25..30) found three defects in how the AI's
+calls reach orders. None was visible in tests; all are fixed.
+- **Stale bars.** Yahoo posts NSE daily bars hours after the close. The snapshot took whatever bar existed at the first
+  fetch and cached it for the whole session, so 269 of 825 decisions (33%) were made on a bar two sessions old and then
+  filled at today's price. A snapshot whose bar is older than the last completed session is now refused
+  (`BarNotReadyError`), never cached, and the stock shows as WAIT until the bar is published.
+- **The same bar answered twice, differently.** 22 of 50 stock-sessions flipped between BUY and HOLD. The prompt cache
+  worked (identical inputs got identical answers); the flips came from process restarts, after which re-downloaded data
+  differing in the 12th decimal missed the cache and the model, sampled at its default temperature, answered again
+  (e.g. HOLD 0.65, then BUY 0.70). With confidence near the 0.60 gate, that is buying on a re-roll. Now each stock is
+  decided once per completed bar: later cycles and restarts reuse the recorded answer (`remembered_signals`, a LangGraph
+  conditional edge from fetch_data straight to collect), a fail-safe HOLD is never reused, and requests are sent at
+  temperature 0 (`LLM_TEMPERATURE`).
+- **Corporate actions.** The paper broker ignored splits, bonuses and dividends: a 1:1 bonus halves the split-adjusted
+  price and would fire the 15% stop as a fake loss. Positions are now adjusted on the ex-date (quantity times the ratio,
+  stop and target divided by it, cost basis kept) and dividends credited; the ledger reconciliation includes them.
+
+## Can the decision memory be seeded from history? Pre-declared walk-forward test (2026-10-01): FAILED
+The memory needs 30 matured observations per setup label and 60 sessions to mature, so it would stay silent until about
+January 2027. `scripts/seed_setup_memory.py` rebuilt the setups it would have learned from: on the first session of every
+week, the live scanner's top 15 on all NSE stocks (today's list: survivorship bias), the snapshot the agent would have
+seen, and the 60-session net outcome; 6,654 setups, 2017-12..2026-06. The walk-forward then asked the real `SetupMemory`
+about every setup from 2022-06 on, using only outcomes finished by that day. Gate, fixed before running: setups it rated
+above the market-wide baseline must beat those it rated at or below it, with the 95% interval above zero and positive in
+both halves.
+
+| Memory's rating | Setups | Mean net 60-session return | Win rate |
+|---|---|---|---|
+| above baseline | 1,538 | +6.48% (±1.31%) | 55% |
+| at or below baseline | 1,590 | +7.69% (±1.34%) | 55% |
+
+Above minus below: -1.21% (95% interval -3.08% to +0.67%); first half -0.40%, second half +0.50%. **Failed**: the
+memory's labels (trend shape, RSI decade, ADX and volume bands) do not separate winners from losers among the scanner's
+picks. `LEARNING_SEED` stays off. This also says the live memory (`LLM_LEARNING`) is unlikely to add value once it starts
+speaking; that phase is left as it is (it is silent until then) and is a candidate to switch off, the owner's call.
