@@ -91,6 +91,7 @@ docker compose down              # stop (the database volume, and your paper his
 ```
 scripts/test_openrouter_api.py             # tries each configured AI model with a real call (safe)
 scripts/reconcile_paper.py                 # rebuilds cash from recorded fills, flags any mismatch
+scripts/paper_report.py                    # full history, both accounts: every trade, P&L by day/week/total
 scripts/analyze_mistakes.py                # judges every analysed stock against what then happened
 scripts/intraday_archive.py status|refresh|import-cache   # the archive of 5-minute bars (fills itself while the engine runs)
 scripts/backtest_intraday.py               # the LIVE engine replayed over the archived sessions (Rs 20,000 account by default)
