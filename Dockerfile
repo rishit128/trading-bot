@@ -9,6 +9,7 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY main.py ./
+COPY scripts ./scripts
 COPY src ./src
 
 RUN useradd --create-home bot && mkdir /data && chown bot /data

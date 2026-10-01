@@ -12,8 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.app.wiring import intraday_db_url, make_paper_broker  # noqa: E402
 from src.config import load_settings  # noqa: E402
+from src.data.india import IST  # noqa: E402
+from src.engine.paper_report import group_by_day, group_by_week, merge_periods, totals  # noqa: E402
 from src.intraday.strategy import intraday_fees  # noqa: E402
-from src.ops.paper_report import group_by_day, group_by_week, merge_periods, totals  # noqa: E402
 
 
 def period_table(title: str, rows: list) -> None:
@@ -32,7 +33,7 @@ def trade_table(label: str, trades: list) -> None:
 
 
 def account_report(label: str, trades: list, holdings: list, equity: float, start: float, show_trades: bool) -> None:
-    by_day, by_week, total = group_by_day(trades), group_by_week(trades), totals(trades)
+    by_day, by_week, total = group_by_day(trades, IST), group_by_week(trades, IST), totals(trades, IST)
     win_rate = f"{total.win_rate:.0%}" if total.win_rate is not None else "n/a"
     print(f"\n{'=' * 60}\n{label}: {len(holdings)} open, {total.trades} closed, "
           f"started Rs {start:,.0f} -> now Rs {equity:,.0f} ({equity / start - 1:+.2%})\n"
@@ -68,8 +69,8 @@ def main():
     combined_equity = swing_summary["equity"] + intraday_summary["equity"]
     print(f"\n{'=' * 60}\nCOMBINED (swing + intraday): started Rs {combined_start:,.0f} -> now Rs {combined_equity:,.0f} "
           f"({combined_equity / combined_start - 1:+.2%})")
-    period_table("by day", merge_periods(group_by_day(swing_trades), group_by_day(intraday_trades)))
-    period_table("by week", merge_periods(group_by_week(swing_trades), group_by_week(intraday_trades)))
+    period_table("by day", merge_periods(group_by_day(swing_trades, IST), group_by_day(intraday_trades, IST)))
+    period_table("by week", merge_periods(group_by_week(swing_trades, IST), group_by_week(intraday_trades, IST)))
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --positions     # open positions & history
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --check         # test all connections
 sudo docker compose -f docker-compose.aws.yml exec intraday-bot python main.py --intraday-report  # intraday account status
+sudo docker compose -f docker-compose.aws.yml exec trading-bot python scripts/paper_report.py       # full P&L history, both accounts
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio setup  # one-time: save your Integrated login
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio check  # what's saved (masked)
 sudo docker compose -f docker-compose.aws.yml restart                         # restart both
@@ -34,6 +35,7 @@ sudo docker compose -f docker-compose.aws.yml down                            # 
 /status              equity, cash, mode
 /positions           open positions with profit/loss
 /history              closed trades
+/pnl                  profit/loss by day and week, both accounts
 /portfolio            read your real Integrated account (read-only); it will ask for the OTP here
 /pause                stop placing new orders
 /resume               allow orders again

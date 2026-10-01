@@ -18,6 +18,7 @@ RUN pip install -r requirements-portfolio.txt \
     && playwright install --with-deps chromium
 
 COPY main.py ./
+COPY scripts ./scripts
 COPY src ./src
 
 # /data: the paper account's own sqlite database (as in the plain Dockerfile).

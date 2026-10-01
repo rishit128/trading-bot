@@ -2,13 +2,14 @@
 grouped by day and by ISO week, for each account and combined.
 
 Pure functions on what `Broker.trade_history()` already returns (dicts with `closed_at`, `net_pnl`, `fees`, ...), so this
-adds no new recording and cannot show anything the two accounts did not already log."""
+adds no new recording and cannot show anything the two accounts did not already log.
+
+The engine layer has no notion of "IST"; callers pass the timezone a trading day is measured in (src.data.india.IST for
+this bot's one market)."""
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, tzinfo
 from typing import Dict, List, Optional
-
-from src.data.india import IST
 
 
 @dataclass(frozen=True)
@@ -25,32 +26,32 @@ class PeriodPnl:
         return self.wins / self.trades if self.trades else None
 
 
-def _closed_date(trade: dict) -> date:
-    """The IST calendar date a trade closed on (trade_history's `closed_at` is UTC)."""
-    return trade["closed_at"].astimezone(IST).date()
+def _closed_date(trade: dict, tz: tzinfo) -> date:
+    """The calendar date (in `tz`) a trade closed on (trade_history's `closed_at` is UTC)."""
+    return trade["closed_at"].astimezone(tz).date()
 
 
-def group_by_day(trades: List[dict]) -> List[PeriodPnl]:
-    """One row per calendar day that had a closed trade, oldest first."""
-    return _group(trades, lambda d: d.isoformat())
+def group_by_day(trades: List[dict], tz: tzinfo) -> List[PeriodPnl]:
+    """One row per calendar day (in `tz`) that had a closed trade, oldest first."""
+    return _group(trades, tz, lambda d: d.isoformat())
 
 
-def group_by_week(trades: List[dict]) -> List[PeriodPnl]:
-    """One row per ISO week (YYYY-Www) that had a closed trade, oldest first."""
-    return _group(trades, lambda d: f"{d.isocalendar()[0]}-W{d.isocalendar()[1]:02d}")
+def group_by_week(trades: List[dict], tz: tzinfo) -> List[PeriodPnl]:
+    """One row per ISO week (YYYY-Www, in `tz`) that had a closed trade, oldest first."""
+    return _group(trades, tz, lambda d: f"{d.isocalendar()[0]}-W{d.isocalendar()[1]:02d}")
 
 
-def _group(trades: List[dict], key) -> List[PeriodPnl]:
+def _group(trades: List[dict], tz: tzinfo, key) -> List[PeriodPnl]:
     buckets: Dict[str, List[dict]] = defaultdict(list)
     for t in trades:
-        buckets[key(_closed_date(t))].append(t)
+        buckets[key(_closed_date(t, tz))].append(t)
     return [PeriodPnl(label, len(rows), sum(1 for r in rows if r["net_pnl"] > 0), sum(r["net_pnl"] for r in rows),
                       sum(r["fees"] for r in rows)) for label, rows in sorted(buckets.items())]
 
 
-def totals(trades: List[dict]) -> PeriodPnl:
+def totals(trades: List[dict], tz: tzinfo) -> PeriodPnl:
     """All closed trades as one period, labelled "total"."""
-    rows = group_by_day(trades)
+    rows = group_by_day(trades, tz)
     return PeriodPnl("total", sum(r.trades for r in rows), sum(r.wins for r in rows),
                      sum(r.net_pnl for r in rows), sum(r.fees for r in rows))
 

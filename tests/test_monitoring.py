@@ -178,3 +178,44 @@ def test_intraday_commands_show_the_separate_account(control):
     assert "INTRADAY account" in text and "₹1,000,500.00" in text and "+0.05% today" in text and "<b>ORB1</b>" in text
     assert handle_command("/intraday_history", control, FakeBroker(Portfolio(1, 1)), SETTINGS, intra) == "No closed trades yet."
     assert handle_command("/intraday", control, FakeBroker(Portfolio(1, 1)), SETTINGS) == HELP  # no intraday account wired
+
+
+def test_pnl_command_shows_swing_and_intraday_broken_down_by_day_and_week_and_combined(control):
+    from datetime import datetime, timezone
+
+    def trade(day, net_pnl, symbol="A"):
+        return {"symbol": symbol, "qty": 1, "entry_price": 100.0, "exit_price": 100.0 + net_pnl, "reason": "SIGNAL",
+                "fees": 1.0, "net_pnl": net_pnl, "opened_at": datetime(*day, tzinfo=timezone.utc),
+                "closed_at": datetime(*day, tzinfo=timezone.utc)}
+
+    class Swing(FakeBroker):
+        def trade_history(self):
+            return [trade((2026, 9, 29), 100.0), trade((2026, 9, 30), -40.0)]
+
+    class Intra(FakeBroker):
+        def trade_history(self):
+            return [trade((2026, 9, 29), 20.0, "B")]
+
+    text = handle_command("/pnl", control, Swing(Portfolio(1, 1)), SETTINGS, Intra(Portfolio(1, 1)))
+    assert "Swing</b>  +₹60  (2 closed trades)" in text and "2026-09-29  +₹100  (1 trade)" in text
+    assert "2026-09-30  -₹40  (1 trade)" in text and "2026-W40  +₹60  (2 trades)" in text
+    assert "Intraday</b>  +₹20  (1 closed trade)" in text and "Combined</b>  +₹80" in text
+
+
+def test_pnl_command_works_with_no_intraday_account_and_no_closed_trades(control):
+    class Empty(FakeBroker):
+        def trade_history(self):
+            return []
+
+    assert handle_command("/pnl", control, Empty(Portfolio(1, 1)), SETTINGS) == Html(
+        "📈 <b>Profit / loss</b>\n\n<b>Swing</b>  +₹0  (0 closed trades)\n<u>by day</u>\nno closed trades yet\n"
+        "<u>by week</u>\nno closed trades yet")
+    assert handle_command("/pnl", control, FakeBroker(Portfolio(1, 1)), SETTINGS) == HELP  # no trade_history: not a ListsTrades broker
+
+
+def test_pnl_period_lines_skip_zero_trade_rows(control):
+    from src.monitoring.telegram import _period_lines
+    from src.engine.paper_report import PeriodPnl
+
+    rows = [PeriodPnl("2026-09-29", 1, 1, 10.0, 1.0), PeriodPnl("2026-09-30", 0, 0, 0.0, 0.0)]
+    assert _period_lines(rows, "₹") == "2026-09-29  +₹10  (1 trade)"
