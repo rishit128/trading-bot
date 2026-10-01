@@ -5,7 +5,6 @@ venv/
 __pycache__/
 *.pyc
 tests/
-scripts/
 backtest_*
 .pytest_cache/
 portfolio_data/
