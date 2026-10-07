@@ -1,6 +1,7 @@
 """Wiring shared by the command-line entry point and the reports: the market wiring and the paper-broker factory."""
 import os
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 from src.config import Settings
@@ -76,9 +77,14 @@ def build_market_wiring(settings: Settings, sessions) -> MarketWiring:
                          cash_yield=settings.cash_yield_pct, corporate_actions=yahoo_corporate_actions)
     screener = build_india_screener(settings) if settings.universe == "market" else None
     # Analyse the last COMPLETED session only (stable prompts all day -> cacheable, and matches the backtest), then
-    # size/bracket the order off the live price.
+    # size/bracket the order off the live price. A session Yahoo has not posted a daily bar for yet is completed from
+    # the same feed's 5-minute bars.
+    def recent_5m(symbol: str):
+        return feed.bars_since(symbol, datetime.now(timezone.utc) - timedelta(days=7))
+
     return MarketWiring(
-        broker, cached_per_session(lambda s: fetch_snapshot(s, suffix=SUFFIX, as_of=clock.last_completed_session),
+        broker, cached_per_session(lambda s: fetch_snapshot(s, suffix=SUFFIX, as_of=clock.last_completed_session,
+                                                            intraday=recent_5m),
                                    clock.last_completed_session),
         screener, "built-in paper simulator", quote_fn=feed.last_price,
     )

@@ -297,3 +297,41 @@ def test_invalid_performance_settings_are_rejected(monkeypatch, name, value):
     monkeypatch.setenv(name, value)
     with pytest.raises(ValueError):
         load_settings()
+
+
+def five_minute_session(day, closes_from=100.0, last="15:25", bars=75):
+    start = pd.Timestamp(f"{day} 09:15", tz="Asia/Kolkata")
+    idx = pd.date_range(start, periods=bars, freq="5min")
+    idx = idx[idx.time <= pd.Timestamp(f"{day} {last}").time()]
+    close = [closes_from + i for i in range(len(idx))]
+    return pd.DataFrame({"Open": close, "High": [c + 0.5 for c in close], "Low": [c - 0.5 for c in close],
+                         "Close": close, "Volume": 100.0}, index=idx)
+
+
+def test_a_late_daily_bar_is_completed_from_a_full_session_of_five_minute_bars():
+    bars = daily_bars()  # ends Friday 2026-09-18; Monday's daily bar is not posted yet
+    snap = fetch_snapshot("X", as_of=lambda: date(2026, 9, 21), download=lambda *a, **k: bars,
+                          intraday=lambda s: five_minute_session("2026-09-21"))
+    assert snap.bar_date == "2026-09-21" and snap.price == 174.0 and snap.volume == 7500
+
+
+def test_a_partial_five_minute_session_is_not_used_and_the_stock_still_waits():
+    bars = daily_bars()
+    with pytest.raises(BarNotReadyError):
+        fetch_snapshot("X", as_of=lambda: date(2026, 9, 21), download=lambda *a, **k: bars,
+                       intraday=lambda s: five_minute_session("2026-09-21", last="13:00"))
+
+
+def test_a_failing_five_minute_feed_only_means_waiting():
+    def broken(symbol):
+        raise ConnectionError("yahoo down")
+
+    with pytest.raises(BarNotReadyError):
+        fetch_snapshot("X", as_of=lambda: date(2026, 9, 21), download=lambda *a, **k: daily_bars(), intraday=broken)
+
+
+def test_the_five_minute_session_bar_takes_open_first_high_max_low_min_close_last_volume_sum():
+    from src.data.market_data import session_bar_from_intraday
+
+    [row] = session_bar_from_intraday(five_minute_session("2026-09-21"), date(2026, 9, 21)).to_dict("records")
+    assert row == {"Open": 100.0, "High": 174.5, "Low": 99.5, "Close": 174.0, "Volume": 7500.0}

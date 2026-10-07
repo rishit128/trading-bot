@@ -552,3 +552,32 @@ Above minus below: -1.21% (95% interval -3.08% to +0.67%); first half -0.40%, se
 memory's labels (trend shape, RSI decade, ADX and volume bands) do not separate winners from losers among the scanner's
 picks. `LEARNING_SEED` stays off. This also says the live memory (`LLM_LEARNING`) is unlikely to add value once it starts
 speaking; that phase is left as it is (it is silent until then) and is a candidate to switch off, the owner's call.
+
+## Earnings-date veto: not built, no usable free data (2026-10-07)
+Idea: don't buy in the days before a quarterly results announcement (a gap the price data cannot see). Checked first:
+Yahoo's past results dates are missing or stop years ago for the stocks this bot trades (none for UNIPARTS or CUPID,
+STLTECH ends 2021, TFCILTD 2020; only large caps such as RELIANCE are covered), so it cannot be tested on history; and
+Yahoo knew the upcoming results date for 1 of the 14 stocks the bot held or ranked that day. A veto blind to 13 of 14
+stocks would look like protection without being any. NSE publishes the calendar, but its terms forbid automated
+collection; a results file downloaded by hand each week would be the compliant route if it is ever wanted.
+
+## Late daily bars completed from 5-minute data (2026-10-07)
+After the stale-bar fix, 8-11 stocks a day (including held positions, whose trend exit then ran ~5 hours late) waited
+until Yahoo posted the previous day's daily bar at about 14:20 IST. The previous session is now built from the 5-minute
+bars the bot already downloads (open first, high max, low min, close last, volume summed), only when they cover the
+session to at least 15:10. Checked against Yahoo's official daily bars on 2026-10-05/06: close identical or within
+0.2%, highs/lows within ~0.1%, volume ~97%.
+
+## Bigger positions (10 x 8%) vs the live 10 x 5%: pre-declared test FAILED (2026-10-07)
+Rs 20,000, 15% stop, trend exit, costs, 3.5% cash sweep. Gate fixed before running: 8% must beat 5% on return in all four
+cases, with Sharpe never lower by more than 0.05 and max drawdown better than -40%.
+
+| Case | 10 x 5% (live) | 10 x 8% |
+|---|---|---|
+| All NSE, full 2017-2026 | +195%, Sharpe 1.13, DD -27% | +359%, Sharpe 1.06, DD -39% |
+| All NSE, last 3y | +48%, Sharpe 1.09, DD -19% | +80%, Sharpe 1.11, DD -29% |
+| Nifty 500, full | +184%, Sharpe 1.12, DD -24% | +487%, Sharpe 1.23, DD -36% |
+| Nifty 500, last 3y | +74%, Sharpe 1.57, DD -13% | +68%, Sharpe 1.02, DD -26% |
+
+Larger positions mostly buy more return with more risk, not better trading: Sharpe falls in two cases, and over the
+most recent Nifty 500 window 8% loses on return and risk. Sizing stays 10 x 5%.

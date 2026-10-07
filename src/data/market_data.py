@@ -1,8 +1,9 @@
 """Per-stock market data and news fetching (Yahoo Finance)."""
 import logging
 import threading
-from datetime import date
+from datetime import date, time
 from typing import Callable, Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
@@ -12,14 +13,40 @@ from src.data.indicators import MAX_STALE_DAYS, BarNotReadyError, Snapshot, Stal
 
 log = logging.getLogger(__name__)
 
+IST = ZoneInfo("Asia/Kolkata")
+MIN_SESSION_BARS = 60  # of the 75 five-minute bars in an NSE session (09:15-15:30)
+# The newest 5-minute bar must start at or after this, so the session ran to its close. Yahoo's 5-minute series ends at
+# 15:10-15:15 for some large caps and 15:25 for others; its last close matched the official daily close to within 0.2%
+# on every stock checked (2026-10-05/06).
+LAST_BAR_START = time(15, 10)
+
+
+def session_bar_from_intraday(bars: Optional[pd.DataFrame], day: date) -> Optional[pd.DataFrame]:
+    """`day`'s daily bar (Open/High/Low/Close/Volume) built from its 5-minute bars, or None unless they cover the whole
+    session. Yahoo posts some NSE daily bars only by ~14:20 IST the next day; the 5-minute bars are there at once."""
+    if bars is None or bars.empty:
+        return None
+    index = pd.DatetimeIndex(bars.index)
+    local = index.tz_convert(IST) if index.tz is not None else index.tz_localize(IST)
+    mask = local.date == day
+    session, times = bars[mask], local[mask]
+    if len(session) < MIN_SESSION_BARS or times.max().time() < LAST_BAR_START:
+        return None
+    return pd.DataFrame({"Open": [float(session["Open"].iloc[0])], "High": [float(session["High"].max())],
+                         "Low": [float(session["Low"].min())], "Close": [float(session["Close"].iloc[-1])],
+                         "Volume": [float(session["Volume"].sum())]}, index=pd.DatetimeIndex([pd.Timestamp(day)]))
+
 
 def fetch_snapshot(symbol: str, suffix: str = "", as_of: Optional[Callable[[], date]] = None,
                    download: Callable = yf.download, timeout: float = 30.0,
-                   today: Callable[[], date] = date.today) -> Snapshot:
+                   today: Callable[[], date] = date.today,
+                   intraday: Optional[Callable[[str], Optional[pd.DataFrame]]] = None) -> Snapshot:
     """suffix is the Yahoo exchange suffix, e.g. '.NS' for NSE; the snapshot keeps the plain symbol.
 
     as_of returns the last COMPLETED session date; later (still-forming) bars are dropped, so the indicators - and the
-    AI prompt built from them - are identical all session and match how the backtest saw the data."""
+    AI prompt built from them - are identical all session and match how the backtest saw the data. When that session's
+    daily bar is not published yet, `intraday(symbol)` (recent 5-minute bars) can complete it; failing that, the stock
+    waits (BarNotReadyError) rather than being decided on an older bar."""
     bars = download(symbol + suffix, period="2y", interval="1d", progress=False, auto_adjust=True, timeout=timeout)
     if bars.empty:
         raise ValueError(f"{symbol}: no market data returned")
@@ -36,7 +63,17 @@ def fetch_snapshot(symbol: str, suffix: str = "", as_of: Optional[Callable[[], d
     if snap.volume <= 0:
         raise StaleDataError(f"{symbol}: last bar {snap.bar_date} shows zero volume (no trading)")
     if as_of is not None and snap.bar_date is not None and date.fromisoformat(snap.bar_date) < expected:
-        raise BarNotReadyError(f"{symbol}: waiting for the {expected} bar (latest published: {snap.bar_date})")
+        completed = None
+        if intraday is not None:
+            try:
+                completed = session_bar_from_intraday(intraday(symbol), expected)
+            except Exception as e:
+                log.warning("%s: could not build the %s bar from 5-minute data: %s", symbol, expected, e)
+        if completed is None:
+            raise BarNotReadyError(f"{symbol}: waiting for the {expected} bar (latest published: {snap.bar_date})")
+        if bars.index.tz is not None:
+            completed.index = pd.DatetimeIndex(completed.index).tz_localize(bars.index.tz)
+        snap = build_snapshot(symbol, pd.concat([bars, completed]))
     return snap
 
 
