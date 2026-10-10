@@ -9,7 +9,8 @@ def test_index_constituents_come_from_the_hand_downloaded_list(tmp_path):
 
 
 def test_index_cache_expires_and_falls_back_to_the_stale_copy(tmp_path):
-    import os, time
+    import os
+    import time
     from datetime import date
     import pandas as pd
     from src.data.price_history import load_index_close

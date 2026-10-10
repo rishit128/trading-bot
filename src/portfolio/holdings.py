@@ -102,7 +102,7 @@ def from_rows(headings: Sequence[str], rows: Iterable[Sequence]) -> List[Holding
         return []
     out = []
     for row in rows:
-        h = _holding(lambda f: row[cols[f]] if f in cols and cols[f] < len(row) else None)
+        h = _holding(lambda f, row=row: row[cols[f]] if f in cols and cols[f] < len(row) else None)
         if h:
             out.append(h)
     return out

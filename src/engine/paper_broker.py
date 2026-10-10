@@ -162,7 +162,8 @@ class PaperBroker:
 
     # ---- internals ----------------------------------------------------------------------------------
     def _actions_for(self, symbol: str) -> Optional[CorporateActions]:
-        assert self.corporate_actions is not None
+        if self.corporate_actions is None:
+            return None
         hit = self._actions_cache.get(symbol)
         if hit is not None and self.monotonic() - hit[0] < self.actions_ttl_seconds:
             return hit[1]

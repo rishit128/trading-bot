@@ -265,13 +265,13 @@ class LLMClient:
             response = self._create(model, messages, tokens, schema)
         except openai.NotFoundError as e:
             self.dead.add(model)
-            raise Failure(PERMANENT, f"model no longer exists ({str(e)[:60]})")
+            raise Failure(PERMANENT, f"model no longer exists ({str(e)[:60]})") from e
         except (openai.AuthenticationError, openai.PermissionDeniedError, openai.BadRequestError) as e:
-            raise Failure(PERMANENT, f"{type(e).__name__}: {str(e)[:100]}")
+            raise Failure(PERMANENT, f"{type(e).__name__}: {str(e)[:100]}") from e
         except openai.RateLimitError as e:
-            raise Failure(TRANSIENT, "rate limited", retry_after=retry_after(e))
+            raise Failure(TRANSIENT, "rate limited", retry_after=retry_after(e)) from e
         except openai.APIError as e:  # timeouts, connection errors, 5xx: all worth another go
-            raise Failure(TRANSIENT, f"{type(e).__name__}: {str(e)[:80]}")
+            raise Failure(TRANSIENT, f"{type(e).__name__}: {str(e)[:80]}") from e
         choices = getattr(response, "choices", None)
         if not choices:
             raise Failure(TRANSIENT, f"no choices in response ({upstream_message(response)})")
@@ -285,7 +285,7 @@ class LLMClient:
             instance = parse(extract_json_object(text))
         except (ValueError, ValidationError) as e:
             kind = TRUNCATED if finish == "length" else FORMAT
-            raise Failure(kind, f"{type(e).__name__}: {str(e)[:100]} (finish_reason={finish}, head={text[:60]!r})")
+            raise Failure(kind, f"{type(e).__name__}: {str(e)[:100]} (finish_reason={finish}, head={text[:60]!r})") from e
         if hasattr(instance, "raw_model"):
             instance.raw_model = model  # tag the answer with who produced it, for per-model accountability
         return instance

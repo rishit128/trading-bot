@@ -10,6 +10,7 @@ import os
 import threading
 import time
 from datetime import date, datetime, timedelta, timezone
+from functools import partial
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -85,7 +86,7 @@ def yahoo_nse_symbols(min_traded_value: float = 0.0, top: Optional[int] = None,
             return yf.screen(query, size=page, offset=offset, sortField="intradaymarketcap", sortAsc=False)
     quotes: list = []
     while True:
-        r = retry_call(lambda: screen(len(quotes)), attempts=3, delay=2.0, what="Yahoo NSE stock list")
+        r = retry_call(partial(screen, len(quotes)), attempts=3, delay=2.0, what="Yahoo NSE stock list")
         got = r.get("quotes", [])
         quotes += got
         if not got or len(quotes) >= r.get("total", 0):

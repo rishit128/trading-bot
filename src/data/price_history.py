@@ -1,7 +1,8 @@
 """Multi-year daily price history (adjusted, disk-cached): an index's stocks and the index itself. Shared by the live bot's
 market context and by the research tools, so it lives with the data layer, not in research/."""
 import logging
-import pickle
+# The pickle files read below are the bot's own caches, written into its own cache directory; never user input.
+import pickle  # nosec B403
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -31,7 +32,7 @@ def load_index_close(ticker: str, years: int = 10, cache_dir: Path = Path("resea
     cache = cache_dir / f"index_{ticker.strip('^')}_{years}y.pkl"
     stale = None
     if cache.exists() and not refresh:
-        cached = pickle.loads(cache.read_bytes())
+        cached = pickle.loads(cache.read_bytes())  # nosec B301
         if max_age_hours is None or time.time() - cache.stat().st_mtime < max_age_hours * 3600:
             return cached
         stale = cached
@@ -67,7 +68,7 @@ def load_ohlc_universe(index: int = 500, years: int = 10, cache_dir: Path = Path
     next-open fills and stop checks. Cached on disk."""
     cache = cache_dir / f"ohlc_nifty{index}_{years}y.pkl"
     if cache.exists() and not refresh:
-        return pickle.loads(cache.read_bytes())
+        return pickle.loads(cache.read_bytes())  # nosec B301
     symbols = symbols if symbols is not None else load_index_symbols(index)
     return _download_ohlc(symbols, years, cache, cache_dir, download, chunk, today)
 
@@ -81,7 +82,7 @@ def load_ohlc_nse(years: int = 10, cache_dir: Path = Path("research_cache"), ref
     since been delisted, so they are still missing. Cached on disk; the first download takes a while."""
     cache = cache_dir / f"ohlc_nse_{years}y.pkl"
     if cache.exists() and not refresh:
-        return pickle.loads(cache.read_bytes())
+        return pickle.loads(cache.read_bytes())  # nosec B301
     return _download_ohlc((list_symbols or load_nse_symbols)(), years, cache, cache_dir, download, chunk, today)
 
 

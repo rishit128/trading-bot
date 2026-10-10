@@ -47,7 +47,7 @@ def reconcile_paper(sessions, fees=None, cash: Optional[float] = None) -> dict:
     if abs(expected - recorded) > TOLERANCE:
         findings.append(f"cash does not tie: rebuilt {expected:,.2f} vs recorded {recorded:,.2f}")
 
-    # ---- 2. orders: every approved trade decision must have produced an order, and every filled order a fill ---- 
+    # ---- 2. orders: every approved trade decision must have produced an order, and every filled order a fill ----
     buy_orders: Dict[str, int] = {}
     sell_orders: Dict[str, int] = {}
     for o in orders:

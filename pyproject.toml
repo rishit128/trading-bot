@@ -1,0 +1,68 @@
+[project]
+name = "ai-trading-bot"
+version = "0.0.0"  # not published: this file configures the tools, the bot is run from a checkout or its Docker image
+description = "India (NSE) paper-trading bot: a swing strategy with an AI analyst and intraday paper strategies"
+requires-python = ">=3.13"
+
+# One place for every tool's settings. `python -m ruff check .`, `ruff format --check .`, `mypy` and `pytest` need no
+# flags; CI runs exactly these (see .github/workflows/ci.yml and docs/development/standards.md).
+
+[tool.ruff]
+line-length = 130
+target-version = "py313"
+extend-exclude = ["research_cache", "portfolio_data", "venv"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes: unused imports and names, undefined names
+    "I",       # imports sorted, one style everywhere
+    "B",       # bugbear: patterns that are usually bugs (loop-variable closures, raise without from, ...)
+]
+ignore = [
+    "E501",  # line length is the formatter's job; long comments and docstrings are fine
+    "E741",  # o/h/l/c/v are the OHLCV array names throughout the market code
+    "B905",  # zip(strict=...) would turn a harmless length mismatch into a crash in the trading loop
+    "B008",  # a frozen dataclass or a per-lambda RNG as a default is deliberate where it appears
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "scripts", "tests", "main"]
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts put the repo root on sys.path first, so their `src` imports legitimately follow code.
+"scripts/*" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning:websockets.*",
+    "ignore::DeprecationWarning:exchange_calendars.*",
+]
+markers = [
+    "typecheck: runs mypy over the whole application (about a minute); CI runs mypy as its own step and deselects this",
+]
+
+[tool.mypy]
+# Type checking for the application code (tests and scripts are checked by running them). Deliberately not `strict`: the
+# goal is that interfaces, Optional handling and return types are honest, without annotating every local. Keep `python -m
+# mypy` at zero errors; CI runs it.
+files = ["src", "main.py"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = false
+no_implicit_optional = true
+
+[tool.coverage.run]
+source = ["src"]
+branch = false
+
+[tool.coverage.report]
+# Measured 93% on 2026-10-11. The gate sits a little below so a normal change does not trip it, but a real drop does.
+fail_under = 90
+show_missing = false
+skip_covered = true

@@ -40,7 +40,7 @@ def test_json_logs_are_one_object_per_line_with_structured_fields():
 def test_json_logs_include_tracebacks():
     stream = capture("json")
     try:
-        1 / 0
+        raise ZeroDivisionError
     except ZeroDivisionError:
         logging.getLogger("t").exception("boom")
     assert "ZeroDivisionError" in json.loads(stream.getvalue().strip())["exc"]
@@ -254,13 +254,19 @@ def test_replay_roles_come_from_the_agent_registry_when_given(tmp_path):
 
 
 # ---------------------------------------------------------------- continuous integration
-def test_ci_workflow_runs_lint_and_tests_on_the_pinned_python():
-    wf = yaml.safe_load((Path(__file__).resolve().parent.parent / ".github/workflows/tests.yml").read_text())
-    steps = wf["jobs"]["test"]["steps"]
-    runs = [s["run"] for s in steps if "run" in s]
-    assert "python -m pytest -q" in runs and any("pyflakes" in r for r in runs)
-    assert any(s.get("with", {}).get("python-version") == "3.13" for s in steps)
-    assert "pyflakes" in (Path(__file__).resolve().parent.parent / "requirements-dev.txt").read_text()
+def test_ci_runs_every_quality_gate_on_the_pinned_python():
+    """The checks the docs promise are the checks CI runs, each in a job that fails the run when it fails."""
+    root = Path(__file__).resolve().parent.parent
+    jobs = yaml.safe_load((root / ".github/workflows/ci.yml").read_text(encoding="utf-8"))["jobs"]
+    runs = {name: " | ".join(s["run"] for s in job["steps"] if "run" in s) for name, job in jobs.items()}
+    assert set(jobs) == {"quality", "test", "security", "docker"}
+    assert all(w in runs["quality"] for w in ("ruff check", "ruff format --check", "mypy"))
+    assert "pytest" in runs["test"] and "--cov-fail-under" in runs["test"]
+    assert "bandit" in runs["security"] and "pip_audit" in runs["security"] and "docker build" in runs["docker"]
+    for name in ("quality", "test", "security"):  # the same Python as the production image
+        assert any(s.get("with", {}).get("python-version") == "3.13" for s in jobs[name]["steps"])
+    dev = (root / "requirements-dev.txt").read_text(encoding="utf-8")
+    assert all(tool in dev for tool in ("ruff==", "bandit==", "pip-audit==", "pytest-cov==", "mypy=="))
 
 
 def test_json_and_text_formatters_are_exported_for_reuse():

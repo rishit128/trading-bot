@@ -124,7 +124,7 @@ class PortalRun:
             self._ctx.clear_cookies()
             self._ctx.close()
         except Exception:
-            pass
+            log.debug("browser cleanup after the run failed (the process is ending anyway)", exc_info=True)
         self._pw.stop()
 
     # -- guard and dialogs ---------------------------------------------------------------------------------------
@@ -279,7 +279,7 @@ class PortalRun:
                                "i.type !== 'submit' && i.type !== 'radio') i.value = '' })")
             self.page.screenshot(path=str(self.evidence_dir / name), full_page=True)
         except Exception:
-            pass
+            log.debug("could not save the evidence screenshot %s", name, exc_info=True)
 
 
 class Progress:

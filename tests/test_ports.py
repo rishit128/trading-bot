@@ -37,9 +37,10 @@ def test_fill_is_defined_once_in_the_ports_module(tmp_path):
     assert isinstance(fill, Fill) and fill.status == "filled" and fill.filled_qty == 5
 
 
+@pytest.mark.typecheck
 def test_the_application_type_checks_cleanly():
     """Interface mismatches, Optional values used as if always set, and wrong return types surface here, not mid-cycle."""
     api = pytest.importorskip("mypy.api")
     root = Path(__file__).resolve().parent.parent
-    stdout, stderr, status = api.run(["--config-file", str(root / "mypy.ini"), str(root / "src"), str(root / "main.py")])
+    stdout, stderr, status = api.run(["--config-file", str(root / "pyproject.toml"), str(root / "src"), str(root / "main.py")])
     assert status == 0, stdout

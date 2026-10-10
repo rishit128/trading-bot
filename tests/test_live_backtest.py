@@ -69,7 +69,8 @@ def test_screener_applies_affordability_to_the_symbols_it_hands_the_pipeline():
 
 def _two_stock_bars():
     idx = pd.bdate_range("2024-01-01", periods=10)
-    flat = lambda p: pd.DataFrame({"Open": p, "High": p, "Low": p, "Close": p, "Volume": 1e6}, index=idx)
+    def flat(p):
+        return pd.DataFrame({"Open": p, "High": p, "Low": p, "Close": p, "Volume": 1e6}, index=idx)
     return {"AAA": flat(100.0), "ZZZ": flat(100.0)}, idx
 
 

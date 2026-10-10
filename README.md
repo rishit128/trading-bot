@@ -334,9 +334,13 @@ flowchart TD
 
 ## Development
 ```
-python -m pytest            # ~650 offline tests (no network, no keys)
-python -m pyflakes main.py src scripts tests
-python -m mypy              # the application type-checks cleanly; CI runs all three
+python -m pytest                 # ~855 offline tests (no network, no keys), a few minutes; add --cov for coverage
+python -m ruff check .           # lint (rules and settings: pyproject.toml)
+python -m ruff format --check .  # formatting; `python -m ruff format .` fixes it
+python -m mypy                   # type-checks the whole application
+python -m bandit -r src main.py -q            # static security checks
+python -m pip_audit -r requirements.txt --no-deps   # known vulnerabilities in the pinned dependencies
+CI (`.github/workflows/ci.yml`) runs every one of these, plus a build of the production Docker image, and fails if any fails.
 ```
 The structure is enforced by `tests/test_layering.py`: production code never imports `research` or `ops`, the engine stays a
 leaf (no agents, LLM or data imports), the `src/` root holds only the application core, and there are no import cycles or

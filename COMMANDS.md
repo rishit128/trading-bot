@@ -79,9 +79,12 @@ python main.py --portfolio --show          # run it once without the trading bot
 ## Tests and code checks (before trusting a change)
 
 ```
-python -m pytest              # ~780 offline tests (no network, no keys), a couple of minutes
-python -m pyflakes main.py src scripts tests
-python -m mypy                # type-checks the whole application
+python -m pytest                 # ~855 offline tests (no network, no keys), a few minutes; add --cov for coverage
+python -m ruff check .           # lint (rules and settings: pyproject.toml)
+python -m ruff format --check .  # formatting; `python -m ruff format .` fixes it
+python -m mypy                   # type-checks the whole application
+python -m bandit -r src main.py -q            # static security checks
+python -m pip_audit -r requirements.txt --no-deps   # known vulnerabilities in the pinned dependencies
 ```
 
 ## Docker, locally on this PC (an alternative to running python main.py directly — not needed if using AWS)

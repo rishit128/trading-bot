@@ -1,4 +1,4 @@
-python-dotenv==1.0.1
+python-dotenv==1.2.2  # 1.0.1 has a known vulnerability (PYSEC-2026-2270)
 pydantic==2.9.2
 
 # Market data / broker

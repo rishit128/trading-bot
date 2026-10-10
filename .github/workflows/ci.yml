@@ -1,0 +1,61 @@
+name: ci
+
+# Every check below is required: a failing one fails the run. Settings for all of them live in pyproject.toml, so the same
+# commands work locally (see docs/development/standards.md).
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Lint (ruff)
+        run: python -m ruff check .
+      - name: Format (ruff)
+        run: python -m ruff format --check .
+      - name: Types (mypy)
+        run: python -m mypy
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      # mypy runs in the quality job; its in-suite twin (marked `typecheck`) would only repeat it here.
+      - name: Tests with coverage gate
+        run: python -m pytest -q -m "not typecheck" --cov --cov-report=term --cov-fail-under=90
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Static security checks (bandit)
+        run: python -m bandit -r src main.py -q
+      - name: Dependency vulnerabilities (pip-audit)
+        run: python -m pip_audit -r requirements.txt --no-deps --progress-spinner off
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The production image builds
+        run: docker build -f Dockerfile.aws -t ai-trading-bot:ci .
