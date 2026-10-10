@@ -7,13 +7,13 @@ import sys
 
 from src.agents.technical import TechnicalAgent
 from src.learning.jobs import DailyOutcomeLabelling, WeeklyLearningReport
-from src.learning.setups import SetupMemory
 from src.app.intraday_cli import run_intraday
 from src.app.portfolio_agent import PortfolioCommand, make_explainer, run_standalone, strip_html
 from src.app.wiring import build_market_wiring, intraday_db_url, make_paper_broker
 from src.app.reports import print_candidates, print_graphs, print_positions, print_report
 from src.config import load_settings
 from src.control import Control
+from src.data.fundamentals import FundamentalsProvider
 from src.data.india import SUFFIX
 from src.data.market_context import MarketContextProvider
 from src.data.market_data import fetch_daily_bars
@@ -62,40 +62,21 @@ def build_pipeline(live: bool) -> TradingPipeline:
                         intercept=portfolio.inbox.offer).start()
     else:
         print("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID); alerts and /pause disabled")
-    def make_history_fn(sessions):
-        """Decision-memory hook: how setups like this one turned out across every analysed stock (labelled outcomes). It
-        stays silent until enough observations exist; a failure means no adjustment."""
-        memory = SetupMemory(sessions, horizon=settings.learning_horizon, min_samples=settings.learning_min_samples,
-                             use_history=settings.learning_seed)
-
-        def history(snapshot):
-            try:
-                return memory.stats(snapshot)
-            except Exception as e:
-                log.warning("history lookup failed for %s: %s: %s", snapshot.symbol, type(e).__name__, e)
-                return None
-
-        return history
-
     market_provider = MarketContextProvider()
 
     def market_context(snapshot):
-        """Market-context hook: index regime / VIX for the stock; a failure means no context adjustment."""
+        """Market situation for the stock's prompt (index regime, VIX, relative strength); a failure means none."""
         try:
             return market_provider.context(snapshot.symbol, snapshot)
         except Exception as e:
             log.warning("market context failed for %s: %s: %s", snapshot.symbol, type(e).__name__, e)
             return None
 
-    agents = [TechnicalAgent(
-        llm, use_cot=settings.llm_cot, use_learning=settings.llm_learning, use_context=settings.llm_context,
-        use_reflect=settings.llm_reflect, history_fn=make_history_fn(sessions),
-        max_adjustment=settings.llm_max_adjust,
-    )]
+    agents = [TechnicalAgent(llm, use_cot=settings.llm_cot, use_reflect=settings.llm_reflect)]
     pipeline = TradingPipeline(
         settings, agents, kit.broker, sessions, kit.snapshot_fn, control=control, notify=notify,
         universe_fn=kit.screener.symbols_for if kit.screener else None, quote_fn=kit.quote_fn,
-        market_context_fn=market_context, broker_label=kit.broker_label,
+        market_context_fn=market_context, fundamentals_fn=FundamentalsProvider(), broker_label=kit.broker_label,
     )
     return pipeline
 

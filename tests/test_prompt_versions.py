@@ -5,41 +5,36 @@ PROMPT_VERSION in src/versions.py and record the new fingerprint here in the sam
 import hashlib
 import json
 
-from src.agents.history import PatternStats
-from src.agents.technical import (CONTEXT_SCHEMA, COT_SCHEMA, LEARNING_SCHEMA, REFLECT_SCHEMA, TechnicalAgent, mechanical_action,
-                                  mechanical_baseline)
+from src.agents.technical import COT_SCHEMA, REFLECT_SCHEMA, TechnicalAgent, mechanical_action, mechanical_baseline
 from src.agents.technical.prompts import simple_prompt
+from src.data.fundamentals import Fundamentals, Quarter
 from src.data.indicators import Snapshot
 from src.data.market_context import MarketContext
 from src.engine.agent_signal import AgentSignal
 from src.versions import PROMPT_VERSION
 
-FINGERPRINTS = {"technical-v9": "ae2321d9c8c76b001f45bb50217f607141cddecea06125807df7d7276ed1b2d6"}  # earlier versions' texts live in git history
-# 2026-09-27: the sentiment prompt was dropped from this fingerprint (SentimentAgent removed - see git history for why);
-# this covers only src/agents/technical/'s own prompts and schemas, matching the module this test's docstring names.
+FINGERPRINTS = {"technical-v10": "2b025ee232b16e3f959e75a3c53a1d44dfce2c9991b626d275d8840b1098d06e"}  # earlier versions' texts live in git history
 
 
 def fingerprint() -> str:
     snaps = [
         Snapshot("UP", 250.0, 240.0, 220.0, 58.0, 1_200_000, avg_volume=900_000, momentum=0.03, macd=1.2, macd_signal=0.9,
-                 macd_histogram=0.3, bb_position=0.85, volume_trend=0.1, atr=5.0, adx=45.0, momentum_6m=0.2),
+                 macd_histogram=0.3, bb_position=0.85, volume_trend=0.1, atr=5.0, adx=45.0, momentum_6m=0.2,
+                 momentum_12_1=0.9),
         Snapshot("DOWN", 90.0, 100.0, 110.0, 75.0, 500, adx=10.0, bb_position=0.1),
         Snapshot("BARE", 100.0, 98.0, 95.0, 60.0, 1000),
         Snapshot("OB", 300.0, 280.0, 250.0, 72.5, 1000, avg_volume=800),
     ]
     base = AgentSignal(action="BUY", confidence=0.72, reasoning="uptrend intact")
-    stats = PatternStats(12, 0.4, 8.0, -4.0, 2.0, 30, 3, 0.4)
     market = MarketContext(index_price=23400.0, index_ma200=24500.0, index_above_ma200=False, index_rsi=41.0, index_ytd=-0.03,
-                           vix=18.0, vix_percentile=0.85, vs_index_6m=0.05, beta_6m=1.2)
-    out = {"schemas": {n: json.dumps(v, sort_keys=True) for n, v in
-                       (("cot", COT_SCHEMA), ("learn", LEARNING_SCHEMA), ("ctx", CONTEXT_SCHEMA), ("refl", REFLECT_SCHEMA))}}
+                           index_mom_6m=-0.04, vix=18.0, vix_percentile=0.85, vs_index_6m=0.05)
+    company = Fundamentals(sector="Industrials", industry="Machinery", market_cap=35e9, pe=19.5, debt_to_equity=0.18,
+                           profit_margin=0.145, revenue_growth=0.27, earnings_growth=-0.12, promoter_holding=0.66,
+                           quarters=(Quarter("2026-06-30", 3.47e9, 5.66e8), Quarter("2026-03-31", 3.39e9, None)))
+    out = {"schemas": {n: json.dumps(v, sort_keys=True) for n, v in (("cot", COT_SCHEMA), ("refl", REFLECT_SCHEMA))}}
     out["prompts"] = {s.symbol: {"cot": TechnicalAgent.build_prompt(s), "simple": simple_prompt(s),
                                  "baseline": mechanical_baseline(s), "action": str(mechanical_action(s))} for s in snaps}
-    out["prompts"]["learning"] = TechnicalAgent.build_learning_prompt(base, "UP", stats, "P>MA50+MA50>MA200|RSI50")
-    market_stats = PatternStats(41, 0.46, 6.5, -3.2, 1.9, 20, 20, 0.5, scope="market",
-                                matched_on="P>MA50+MA50>MA200|RSI50|ADX:mid (level: no_volume)", baseline_win_rate=0.5)
-    out["prompts"]["learning_market"] = TechnicalAgent.build_learning_prompt(base, "UP", market_stats, "P>MA50+MA50>MA200|RSI50")
-    out["prompts"]["context"] = TechnicalAgent.build_context_prompt(base, "UP", market)
+    out["prompts"]["informed"] = TechnicalAgent.build_prompt(snaps[0], market, company)
     out["prompts"]["reflection"] = TechnicalAgent.build_reflection_prompt(base, "UP", "summary line one\nsummary line two")
     return hashlib.sha256(json.dumps(out, sort_keys=True).encode()).hexdigest()
 

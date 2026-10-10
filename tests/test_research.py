@@ -346,26 +346,6 @@ def test_index_cache_expires_and_falls_back_to_the_stale_copy(tmp_path):
     assert load_index_close("^X", 1, tmp_path, download=broken, max_age_hours=12).index[-1] == pd.Timestamp("2026-09-25")
 
 
-def test_ai_backtest_snapshot_carries_the_enriched_production_indicators():
-    import sys
-    from pathlib import Path
-    import numpy as np
-    import pandas as pd
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from scripts.backtest_ai_agent import point_in_time_snapshot
-
-    idx = pd.bdate_range("2022-01-03", periods=320)
-    close = pd.Series(np.linspace(100, 160, 320) + np.sin(np.arange(320)), index=idx)
-    volume = pd.Series(1e6, index=idx)
-    snap = point_in_time_snapshot("A", close, volume, idx[300])
-    assert snap.bar_date == str(idx[300].date())
-    assert None not in (snap.macd_histogram, snap.bb_position, snap.momentum, snap.volume_trend, snap.avg_volume)
-    assert snap.atr is None and snap.adx is None  # no High/Low in the research frames
-    future = close.copy()
-    future.iloc[301:] = 1.0  # data after as_of must not leak in
-    assert point_in_time_snapshot("A", future, volume, idx[300]) == snap
-
-
 def test_ohlc_universe_downloads_in_chunks_caches_to_disk_and_skips_unresolvable_symbols(tmp_path):
     import numpy as np
     import pandas as pd

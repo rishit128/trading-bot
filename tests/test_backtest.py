@@ -61,7 +61,7 @@ def test_time_exit_after_max_hold_days_at_close():
 
 
 def test_the_default_exit_policy_is_the_live_one_so_a_backtest_tests_the_running_strategy():
-    """Regression: simulate() used to default to a 10-day time exit, so holdout, walk-forward and ablation silently tested a
+    """Regression: simulate() used to default to a 10-day time exit, so the holdout and other research paths silently tested a
     strategy that is not the one running. The live policy is now the default and any other must be requested by name."""
     bars = make_bars({10: dict(Close=101.0)}, n=15)
     default = simulate({"X": bars}, buy_on(0), LIM)
@@ -214,12 +214,12 @@ def test_simulator_resumes_buying_after_the_drawdown_pause_but_not_when_permanen
 
 
 def test_every_research_entry_point_simulates_with_the_live_exit_policy(monkeypatch, tmp_path):
-    """holdout, walk-forward, ablation and the live-config backtest must not quietly pick their own exits."""
+    """the holdout and the live-config backtest must not quietly pick their own exits."""
     import numpy as np
     from src.research import backtest as backtest_module
     from src.config import RiskLimits
     from src.ops.holdout import HoldoutReserve
-    from src.research import ablation, live_backtest, walk_forward
+    from src.research import live_backtest
     from src.data.universe import ScreenConfig
     from src.database import make_session_factory
 
@@ -230,16 +230,13 @@ def test_every_research_entry_point_simulates_with_the_live_exit_policy(monkeypa
         seen.append(kwargs.get("exits", LIVE_EXITS))  # absent means "the default", which is the live policy
         return real(*args, **kwargs)
 
-    for module in (walk_forward, ablation, live_backtest):
-        monkeypatch.setattr(module, "simulate", spy)
+    monkeypatch.setattr(live_backtest, "simulate", spy)
     import src.ops.holdout as holdout_module
     monkeypatch.setattr(holdout_module, "simulate", spy)
 
     idx = pd.bdate_range("2023-01-02", periods=320)
     close = pd.Series(np.linspace(100, 160, 320) + np.sin(np.arange(320)), index=idx)
     bars = pd.DataFrame({"Open": close, "High": close * 1.01, "Low": close * 0.99, "Close": close, "Volume": 1e6}, index=idx)
-    walk_forward.run_walk_forward("A", {"A": bars}, list(idx[250:]), n_windows=2)
-    ablation.run_ablation("A", {"A": bars}, list(idx[250:]))
     live_backtest.run_live_config({"A": bars}, RiskLimits(), ScreenConfig(min_price=1, min_traded_value=1), 20_000.0,
                                   dates=list(idx[250:]))
     from datetime import datetime, timezone
@@ -254,7 +251,7 @@ def test_every_research_entry_point_simulates_with_the_live_exit_policy(monkeypa
     before = len(seen)
     HoldoutReserve(sessions, lambda symbol: bars, initial_cash=100_000.0).mark()
     assert len(seen) == before + 1, "the holdout reserve never reached the simulator, so this test would prove nothing about it"
-    assert len(seen) >= 4 and all(policy == LIVE_EXITS for policy in seen)
+    assert len(seen) == 2 and all(policy == LIVE_EXITS for policy in seen)  # the live-config backtest and the holdout
 
 
 def test_idle_cash_accrues_at_cash_yield_only_from_cash_yield_from():

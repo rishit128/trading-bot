@@ -23,7 +23,7 @@ def test_members_are_the_old_strings_so_nothing_stored_or_sent_changes():
 
 def test_every_json_schema_sent_to_the_model_offers_exactly_the_three_actions():
     from src.agents.technical import schemas as agents
-    schemas = [SIGNAL_SCHEMA, COT_SCHEMA, agents.LEARNING_SCHEMA, agents.CONTEXT_SCHEMA, agents.REFLECT_SCHEMA]
+    schemas = [SIGNAL_SCHEMA, COT_SCHEMA, agents.REFLECT_SCHEMA]
     for schema in schemas:
         assert schema["schema"]["properties"]["action"]["enum"] == ["BUY", "SELL", "HOLD"], schema["name"]
 
@@ -37,7 +37,7 @@ def test_typos_are_rejected_instead_of_becoming_a_different_branch():
         AgentSignal(action="MAYBE", confidence=0.5, reasoning="r")
     assert AgentSignal(action="BUY", confidence=0.5, reasoning="r").action is Action.BUY  # a model's string becomes the enum
     body = dict(action="HOLD", confidence=0.5, edge_confidence=0.5, step1_trend="up trend", step2_overbought="fine",
-                step3_volume="ok volume", step4_confluence=5, step5_risks=["gap risk"], final_reasoning="stand aside")
+                step3_volume="ok volume", company_check="results fine", market_check="market calm", step4_confluence=5, step5_risks=["gap risk"], final_reasoning="stand aside")
     assert AdvancedSignal(**body).action is Action.HOLD
 
 

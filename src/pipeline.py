@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from src.agents.base import Agent, AgentContext
 from src.config import Settings
 from src.data.indicators import Snapshot
+from src.data.fundamentals import Fundamentals
 from src.data.market_context import MarketContext
 from src.database import DecisionRecord, EquityRecord, OrderRecord
 from src.engine.enums import NOT_A_PLACED_BUY, SILENT_STATUSES, Action, OrderStatus
@@ -30,27 +31,20 @@ __all__ = ["TradingPipeline", "SymbolResult", "NOT_A_PLACED_BUY"]  # the last is
 
 def details_columns(details: Optional[SignalDetails]) -> dict:
     """The lead agent's audit trail as the denormalised `decisions` columns (queryable without parsing the JSON blob).
-    Everything is None when the agent recorded no details or a section did not run."""
+    Everything is None when the agent recorded no details or a section did not run. Columns from removed phases
+    (decision memory, the separate market-context call) stay in the table for older rows and are left empty."""
     if details is None:
         return {}
-    learning, context, reflection, chain = details.learning, details.context, details.reflection, details.reasoning_chain
+    reflection, chain = details.reflection, details.reasoning_chain
     return dict(
-        # chain-of-thought extras
+        # analysis extras
         confluence_score=details.confluence_score, edge_confidence=details.edge_confidence,
         risks_json=json.dumps(details.risks) if details.risks is not None else None,
         reasoning_chain_json=json.dumps(chain.model_dump()) if chain is not None else None,
-        # refinement phases: the untouched base confidence, the historical record, the regime and the review columns
-        base_confidence=details.base_confidence,
-        context_regime=context.regime if context else None,
-        historical_win_rate=learning.win_rate if learning else None,
-        historical_sample_size=learning.sample_size if learning else None,
-        pattern_id=details.pattern_id, adjusted_signal_confidence=details.adjusted_signal_confidence,
-        adjustment_reason=details.adjustment_reason,
-        macro_support=context.macro_support if context else None,
-        sector_support=context.sector_support if context else None,
-        earnings_risk=context.earnings_risk if context else None,
-        diversification_score=context.diversification_score if context else None,
         market_context_json=json.dumps(details.market_context_json) if details.market_context_json is not None else None,
+        # the review: the untouched base confidence, what the critic did and why
+        base_confidence=details.base_confidence,
+        adjusted_signal_confidence=details.adjusted_signal_confidence, adjustment_reason=details.adjustment_reason,
         biggest_risk=reflection.biggest_risk if reflection else None,
         what_proves_us_wrong=reflection.what_proves_us_wrong if reflection else None,
         bias_check=json.dumps(reflection.bias_check) if reflection else None,
@@ -73,6 +67,7 @@ class TradingPipeline:
         universe_fn: Optional[Callable[[Portfolio], Sequence[str]]] = None,
         quote_fn: Optional[Callable[[str], float]] = None,
         market_context_fn: Optional[Callable[[Snapshot], Optional[MarketContext]]] = None,
+        fundamentals_fn: Optional[Callable[[str], Optional[Fundamentals]]] = None,
         broker_label: str = "",
     ):
         names = [a.name for a in agents]
@@ -89,6 +84,7 @@ class TradingPipeline:
         self.universe_fn = universe_fn
         self.quote_fn = quote_fn
         self.market_context_fn = market_context_fn
+        self.fundamentals_fn = fundamentals_fn
         self._notify = notify
         self._halt_kind: Optional[str] = None
         self._llm_down = False
@@ -136,9 +132,10 @@ class TradingPipeline:
         return dict(signals)
 
     def agent_context(self, symbol: str, snapshot: Snapshot) -> AgentContext:
-        """What an agent is given for one stock. Market context is lazy: only an agent that asks for it pays for it."""
+        """What an agent is given for one stock. Market and company data are lazy: only an agent that asks pays for them."""
         return AgentContext(symbol, snapshot,
-                            market=lambda: self.market_context_fn(snapshot) if self.market_context_fn else None)
+                            market=lambda: self.market_context_fn(snapshot) if self.market_context_fn else None,
+                            company=lambda: self.fundamentals_fn(symbol) if self.fundamentals_fn else None)
 
     def open_cycle(self) -> Portfolio:
         """Start a cycle: read the account, record its equity, apply the drawdown pause, check halts and stop protection."""
@@ -282,15 +279,13 @@ class TradingPipeline:
     def _log_decision(self, symbol: str, snap: Snapshot, signals: Mapping[str, Optional[AgentSignal]],
                       decision: Decision, risk: RiskDecision, price: float,
                       universe_size: Optional[int] = None) -> int:
-        tech, sent = signals.get("technical"), signals.get("sentiment")
+        tech = signals.get("technical")
         with self.sessions() as s:
             record = DecisionRecord(
                 symbol=symbol,
                 price=price,
                 technical_action=tech.action if tech else None,
                 technical_confidence=tech.confidence if tech else None,
-                sentiment_action=sent.action if sent else None,
-                sentiment_confidence=sent.confidence if sent else None,
                 final_action=decision.action,
                 final_confidence=decision.confidence,
                 reasoning=decision.reasoning,

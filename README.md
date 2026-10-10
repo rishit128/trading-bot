@@ -67,8 +67,14 @@ DECISION (per stock)   decide -> risk approved? -> execute
 2. **Analysis on completed daily bars only.** The AI prompt is therefore identical all session (and matches the
    backtest), so **AI answers are cached**: after the first cycle, later cycles cost 0 AI calls (measured: 84 s for the
    first cycle including the full-market scan, ~2 s afterwards).
-3. **Agents** run in parallel per stock, and stocks run in parallel (`ANALYSIS_WORKERS`). Decisions and orders then run
-   one stock at a time in a fixed order, so risk limits always see fresh state.
+3. **The AI analyst** sees what the rule cannot: besides the chart and the rule's verdict, it is told why the stock was
+   picked (its 12-month momentum), the company's recent quarters (sales, profit, growth, debt, promoter holding, from
+   Yahoo) and the market situation (Nifty vs its 200-day average, India VIX). It follows the rule unless the company data
+   gives a concrete, numbered reason against it; a stretched chart or a weak market alone is not a reason (asked to
+   second-guess the chart alone it rejected two thirds of the rule's picks at random; skipping buys in weak markets halved
+   the 9-year return). A veto-only critic (`LLM_REFLECT`) reviews each BUY/SELL. The weekly Telegram report scores the
+   AI's calls against the plain rule's. Agents and stocks run in parallel (`ANALYSIS_WORKERS`); decisions and orders then
+   run one stock at a time in a fixed order, so risk limits always see fresh state.
 4. **Risk engine** (`src/engine/risk_engine.py`, plain code): the only source of order size; 5% per stock, 80% total,
    max 10 positions, halt on -2% day / -20% drawdown, min confidence 0.6, long only.
 5. **Execution** at the live price with a broker-side protective stop (-15%) and no practical target; a held stock is
@@ -120,8 +126,8 @@ answers can arrive empty, cut off or wrapped in prose. `src/llm/` handles this i
   `rule_alignment` is computed from the data, not taken from the model.
 - **Model health**: a model that fails three calls in a row is benched for 5 minutes so the healthy one answers first.
   Requests are paced (`LLM_MIN_INTERVAL`, `LLM_CONCURRENCY`) to stay under the free tier's limit.
-- **Fallback ladder**: full chain-of-thought -> compact one-sentence prompt (recorded as `tier: compact`) -> HOLD. A skipped
-  reflection/learning/context step is recorded in the decision (`reflection_skipped`, ...).
+- **Fallback ladder**: full analysis -> compact one-sentence prompt (recorded as `tier: compact`) -> HOLD. A skipped
+  review is recorded in the decision (`reflection_skipped`).
 - **Visibility**: one `LLM health:` log line per cycle (calls ok, average seconds, failures by kind, benched models).
 
 ## Configuration
@@ -373,7 +379,6 @@ Operational checks on the paper account (read-only):
 Research on history:
 - `scripts/research_cash_sweep.py` the idle-cash sweep test behind `CASH_YIELD_PCT` (`--universe nse` for all NSE stocks).
 - `scripts/research_decomposition.py` pure momentum to the live setup one rule at a time (`--confirm`: the live-account check on both universes).
-- `scripts/validate_walk_forward.py SYMBOL` walk-forward, out-of-sample check of one decision phase (DET, +LLM, ... FULL).
 
 ## Project layout
 
@@ -381,16 +386,16 @@ Research on history:
 main.py                 argument parsing and the swing bot's wiring (build_pipeline, preflight)
 src/                    the application core: config, pipeline (the cycle's services), workflow (the LangGraph graphs),
                         runner, control, results, versions, logging_setup
-src/agents/             AI agents: technical/ (agent, prompts, schemas, phases), history.py (decision memory),
-                        base.py (the agent protocol)
+src/agents/             AI agents: technical/ (agent, prompts, schemas, phases = the review's rules), base.py (the agent protocol)
 src/llm/                the OpenRouter client for unreliable free models: client, parsing, errors
 src/engine/             the domain, with no I/O of its own: rules (entry filter, trend exit), risk_engine, strategy,
                         enums, agent_signal (the typed audit trail), costs (fees + slippage), ports (broker / price feed /
                         clock interfaces), paper_broker
-src/data/               NSE list, Yahoo data, indicators, universe scanner, market context, price history, delivery %, retry
+src/data/               NSE list, Yahoo data, indicators, universe scanner, market context, company fundamentals, price
+                        history, delivery %, retry
 src/database/           models, session (open + upgrade a file), migrations
 src/ops/                operational tools: holdout reserve, decision replay, ledger reconciliation, start-up checks
-src/research/           the simulator (backtest.py), live-configuration backtest, ablation, walk-forward, calibration; for the
+src/research/           the simulator (backtest.py), live-configuration backtest, calibration, feature study; for the
                         intraday rule: intraday_replay (the live engine over stored bars), intraday_audit, intraday_hypotheses
 src/intraday/           opening-range-breakout rule (one numpy core), risk-based sizing, the 5-minute engine, the universe selector
 src/monitoring/         Telegram alerts and commands

@@ -32,30 +32,16 @@ def show(r):
                 print(f"      tier: {d.tier}" + (f" (full prompt failed: {d.cot_failure})" if d.cot_failure else ""))
             chain = d.reasoning_chain
             if chain:
-                for step, text in (("trend", chain.trend), ("overbought", chain.overbought), ("volume", chain.volume)):
+                for step, text in (("trend", chain.trend), ("overbought", chain.overbought), ("volume", chain.volume),
+                                   ("company", chain.company), ("market", chain.market)):
                     if text:
                         print(f"      {step}: {text}")
             print(f"      confluence: {d.confluence_score} / edge confidence: {d.edge_confidence:.2f}"
                   if d.edge_confidence is not None else f"      confluence: {d.confluence_score}")
             if d.risks:
                 print(f"      risks: {' | '.join(d.risks)}")
-            if d.pattern_id:
-                print(f"      pattern: {d.pattern_id} | adjusted confidence: {d.adjusted_signal_confidence} | "
-                      f"reason: {d.adjustment_reason}")
-            learning = d.learning
-            if learning:
-                pf = f"{learning.profit_factor:.2f}" if learning.profit_factor is not None else "n/a"
-                print(f"      decision memory: {learning.sample_size} similar closed trades, win rate "
-                      f"{learning.win_rate:.0%}, avg win {learning.avg_win_pct:+.1f}%, avg loss "
-                      f"{learning.avg_loss_pct:+.1f}%, profit factor {pf} -> {learning.adjusted_action} "
-                      f"(conf {learning.adjusted_confidence:.2f}, {learning.pattern_reliability})")
-                if learning.reason:
-                    print(f"        {learning.reason}")
-            context = d.context
-            if context:
-                print(f"      market context: regime {context.regime}, support={context.macro_support}, "
-                      f"sector={context.sector_support}, earnings_risk={context.earnings_risk}, "
-                      f"diversification={context.diversification_score} -> risks: {' | '.join(context.risks)}")
+            if d.adjustment_reason:
+                print(f"      review: {d.adjustment_reason} (confidence {d.adjusted_signal_confidence})")
             reflection = d.reflection
             if reflection:
                 trail = " -> ".join(f"{c.stage}={c.conviction:.2f}" for c in reflection.conviction_adjustments)
@@ -65,9 +51,8 @@ def show(r):
                 print(f"        biggest risk: {reflection.biggest_risk} | exit if: {reflection.what_proves_us_wrong}")
                 if reflection.bias_check:
                     print(f"        biases checked: {' | '.join(reflection.bias_check)}")
-            for phase in ("learning", "context", "reflection"):
-                if getattr(d, f"{phase}_skipped"):
-                    print(f"      {phase}: SKIPPED (every model failed)")
+            if d.reflection_skipped:
+                print("      reflection: SKIPPED (every model failed)")
     verdict = {True: "REPRODUCED", False: "DIFFERS", None: "cannot check"}[r.reproduced]
     kind = "deterministic trend exit" if r.rule_based else "recomputed from the stored signals"
     print(f"    rules {kind}: {r.recomputed_action} -> {verdict}")

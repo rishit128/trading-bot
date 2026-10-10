@@ -17,7 +17,7 @@ from typing import Dict, List
 import numpy as np
 import pandas as pd
 
-from src.learning.setups import ROUND_TRIP_COST
+from src.engine.costs import ROUND_TRIP_COST
 
 FEATURES = ("rsi", "adx", "atr_pct", "volume_ratio", "dist_ma50", "momentum_6m")
 STEP = 5

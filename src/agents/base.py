@@ -28,6 +28,8 @@ class AgentContext:
     snapshot: Snapshot
     # Lazy market context (index regime / VIX / relative strength); None when it is unavailable or not wired up.
     market: Callable[[], Optional[object]] = lambda: None
+    # Lazy company fundamentals (recent quarters' sales and profit, ratios); None when unavailable or not wired up.
+    company: Callable[[], Optional[object]] = lambda: None
 
 
 class Agent(Protocol):

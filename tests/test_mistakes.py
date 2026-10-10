@@ -5,7 +5,7 @@ import pytest
 
 from src.database import DecisionRecord, OutcomeRecord, make_session_factory
 from src.learning.mistakes import (Judged, breakdown, confidence_bucket, group_stats, load_judged, missed_gains, worst_calls)
-from src.learning.setups import ROUND_TRIP_COST
+from src.engine.costs import ROUND_TRIP_COST
 
 
 def j(ret, action="BUY", conf=0.75, stop=False, symbol="X"):

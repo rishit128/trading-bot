@@ -1,12 +1,10 @@
 """Focused tests for the LLM-upgrade gaps called out in the review doc that earlier tests do not cover:
 
   * first call: the one-shot LLM retry on parse/validation failure (and that transport/dead-model failures are not retried)
-  * decision memory: the confidence cap helper, the pattern label, `find_similar_patterns` [] + limit, `analyze_pattern` mapping
   * reflection: the client-side clamp that stops a stage from raising conviction, and the fixed humility tail
-  * cross: the `LLM_MAX_ADJUST` setting, and that both new indexes exist on fresh and pre-existing databases"""
+  * cross: both new indexes exist on fresh and pre-existing databases"""
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -16,8 +14,7 @@ from src.agents.technical import (AdvancedSignal, COT_SCHEMA, ReflectionChain, R
                                   mechanical_action, mechanical_baseline)
 from src.agents.base import LEAD
 from src.agents.technical.phases import apply_reflection
-from src.agents.history import MAX_MATCHES, PatternMatch, pattern_id, analyze_pattern, find_similar_patterns
-from src.config import Settings, load_settings
+from src.config import Settings
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord, make_session_factory
 from src.engine.risk_engine import Portfolio
@@ -26,8 +23,9 @@ from src.pipeline import TradingPipeline
 from src.ops.replay import replay
 from src.versions import VERSIONS
 from tests.test_cot import COT_GOOD
-from tests.test_learning_context_reflect import SNAP, _add_decision, _add_trade
 from tests.test_llm_and_pipeline import FakeBroker, FakeOpenAI, StubAgent
+
+SNAP = Snapshot("AAPL", 100.0, 98.0, 95.0, 60.0, 1000)
 
 SNAP_RSI45 = Snapshot("AAPL", 100.0, 98.0, 95.0, 45.0, 1000)
 DOWN = Snapshot("AAPL", 90.0, 92.0, 95.0, 55.0, 1000)  # price below MA50, MA50 below MA200
@@ -107,55 +105,6 @@ def test_transient_errors_are_retried_then_the_next_model_and_missing_models_are
     assert "a" in llm.dead  # and skipped for the rest of this session
 
 
-# ------------------------------------------------------------------ decision-memory: cap, label, pattern lookup
-def test_clamp_adjustment_bounds_and_cap():
-    from src.agents.technical.phases import clamp_adjustment as clamp
-    assert clamp(0.75, 0.7, 0.15) == pytest.approx(0.7)  # inside the cap: applied as-is
-    assert clamp(0.75, 0.5, 0.15) == pytest.approx(0.6)  # a -0.25 request is capped at -0.15
-    assert clamp(0.75, 1.0, 0.15) == pytest.approx(0.9)  # a +0.25 request is capped at +0.15
-    assert clamp(0.05, 0.0, 0.15) == pytest.approx(0.0)  # the [0,1] floor still applies
-    assert clamp(0.95, 1.0, 0.15) == pytest.approx(1.0)  # the [0,1] ceiling still applies
-
-
-def testpattern_id_label_is_stable_and_shape_keyed():
-    assert pattern_id(SNAP) == "P>MA50+MA50>MA200|RSI60"
-    assert pattern_id(SNAP_RSI45) == "P>MA50+MA50>MA200|RSI40"  # RSI decade bucket, not the raw value
-    assert pattern_id(DOWN) == "P<=MA50+MA50<=MA200|RSI50"
-
-
-def test_find_similar_patterns_returns_empty_without_closed_trades(tmp_path):
-    sessions = make_session_factory(f"sqlite:///{tmp_path / 'h.db'}")
-    now = datetime(2026, 9, 20, tzinfo=timezone.utc)
-    with sessions() as s:
-        _add_decision(s, "AAPL", "BUY", 100.0, 98.0, 95.0, 60.0, now - timedelta(days=10))
-        s.commit()  # a decision exists but nothing closed: nothing to learn from
-    assert find_similar_patterns(sessions, "AAPL", (95.0, 105.0), (True, True), (55.0, 65.0), now=now) == []
-
-
-def test_find_similar_patterns_respects_limit_and_orders_by_quality(tmp_path):
-    sessions = make_session_factory(f"sqlite:///{tmp_path / 'h.db'}")
-    now = datetime(2026, 9, 20, tzinfo=timezone.utc)
-    with sessions() as s:
-        for i in range(MAX_MATCHES + 5):
-            opened = now - timedelta(days=30 + i)
-            _add_trade(s, "AAPL", opened, held_days=5, entry=100.0, exit=101.0)
-            _add_decision(s, "AAPL", "BUY", 100.0, 98.0, 95.0, 60.0, opened)
-        s.commit()
-    matches = find_similar_patterns(sessions, "AAPL", (95.0, 105.0), (True, True), (55.0, 65.0), now=now)
-    assert len(matches) == MAX_MATCHES  # the sample is capped so one boom period cannot dominate
-    assert all(isinstance(m, PatternMatch) and m.pattern_id.startswith("P>MA50") for m in matches)
-
-
-def test_analyze_pattern_maps_matches_into_stats():
-    matches = [
-        PatternMatch("P1", "AAPL", now := datetime(2026, 9, 1, tzinfo=timezone.utc), 100.0, 108.0, 4, 8.0, 0.5),
-        PatternMatch("P1", "AAPL", now, 100.0, 96.0, 6, -4.0, 1.0),
-    ]
-    st = analyze_pattern(matches)
-    assert st is not None and st.sample_size == 2 and st.win_rate == pytest.approx(0.5)
-    assert st.profit_factor == pytest.approx(2.0) and st.best_holding_days == 6 and st.worst_holding_days == 4
-
-
 # ------------------------------------------------------------------ reflection: monotonic clamp + humility
 def test_reflection_never_lets_a_stage_raise_conviction():
     base = SimpleNamespace(confidence=0.75)
@@ -186,18 +135,6 @@ def test_reflection_keeps_model_drops_and_applies_humility_once():
 
 
 # ------------------------------------------------------------------ cross: setting + database indexes
-def test_llm_max_adjust_default_env_and_validation(monkeypatch):
-    monkeypatch.delenv("LLM_MAX_ADJUST", raising=False)
-    assert load_settings().llm_max_adjust == pytest.approx(0.15)
-    monkeypatch.setenv("LLM_MAX_ADJUST", "0.25")
-    assert load_settings().llm_max_adjust == pytest.approx(0.25)
-    monkeypatch.setenv("LLM_MAX_ADJUST", "1.5")
-    with pytest.raises(ValueError):
-        load_settings()
-    assert TechnicalAgent(llm=None).max_adjustment == pytest.approx(0.15)
-    assert TechnicalAgent(llm=None, max_adjustment=0.05).max_adjustment == pytest.approx(0.05)
-
-
 def _index_names(path):
     con = sqlite3.connect(path)
     names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='index'")}
@@ -208,7 +145,7 @@ def _index_names(path):
 def test_indexes_are_created_for_fresh_and_pre_existing_databases(tmp_path):
     fresh = tmp_path / "fresh.db"
     make_session_factory(f"sqlite:///{fresh}")
-    for idx in ("ix_decisions_confluence", "ix_decisions_pattern", "ix_decisions_raw_model"):
+    for idx in ("ix_decisions_confluence", "ix_decisions_raw_model"):
         assert idx in _index_names(fresh)
 
     old = tmp_path / "old.db"
@@ -221,7 +158,6 @@ def test_indexes_are_created_for_fresh_and_pre_existing_databases(tmp_path):
     con.close()
     make_session_factory(f"sqlite:///{old}")  # upgrades the table and must add the indexes too
     assert "ix_decisions_confluence" in _index_names(old)
-    assert "ix_decisions_pattern" in _index_names(old)
     assert "ix_decisions_raw_model" in _index_names(old)
 
 
@@ -240,7 +176,7 @@ def test_cot_prompt_declares_mechanical_baseline_and_rule_check():
     p = TechnicalAgent.build_prompt(SNAP)
     assert "MECHANICAL BASELINE" in p and mechanical_baseline(SNAP)[:3] in p
     assert "STEP 6 (rule check)" in p and "rule_alignment" in p and "falsification" in p
-    assert "deliberately overriding" in p and "MECHANICAL BASELINE (the deterministic" in p
+    assert "'deviate' if you override it" in p and "MECHANICAL BASELINE (the deterministic" in p
 
 
 def test_advanced_signal_carries_alignment_falsification_and_answering_model():

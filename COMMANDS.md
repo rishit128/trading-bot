@@ -94,8 +94,7 @@ docker compose down              # stop (the database volume, and your paper his
 
 ```
 scripts/test_openrouter_api.py             # tries each configured AI model with a real call (safe)
-scripts/seed_setup_memory.py build|check|import   # rebuild 10y of setups for the learning memory; `check` = the
-                                           #   walk-forward gate (FAILED 2026-10-01, so LEARNING_SEED stays off)
+scripts/check_angel_data.py [SYMBOLS]     # read-only: logs in to Angel One SmartAPI (asks for login), compares its candles with Yahoo
 scripts/reconcile_paper.py                 # rebuilds cash from recorded fills, flags any mismatch
 scripts/paper_report.py                    # full history, both accounts: every trade, P&L by day/week/total
 scripts/analyze_mistakes.py                # judges every analysed stock against what then happened
@@ -106,7 +105,6 @@ scripts/research_intraday.py               # Phase 2: five pre-declared intraday
 scripts/analyze_patterns.py                # which entry conditions the closed trades actually won on
 scripts/research_cash_sweep.py             # the idle-cash sweep test (--universe nse for all NSE stocks)
 scripts/research_decomposition.py          # pure momentum to the live setup, one rule at a time (--confirm for the live-account check)
-scripts/validate_walk_forward.py SYMBOL    # walk-forward, out-of-sample check of one decision phase
 ```
 Run any of these with `python scripts/<name>.py` (some accept `--help` for their options).
 

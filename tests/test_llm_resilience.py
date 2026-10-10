@@ -273,7 +273,8 @@ DOWN = Snapshot("TESTCO", 200.0, 240.0, 220.0, 45.0, 1_000_000)  # price below M
 def cot(**over):
     body = {"action": "BUY", "confidence": 0.8, "edge_confidence": 0.5,
             "step1_trend": "Price is above both averages", "step2_overbought": "RSI 58 leaves room",
-            "step3_volume": "Volume is above its average", "step4_confluence": 7,
+            "step3_volume": "Volume is above its average", "company_check": "Profits are growing",
+            "market_check": "The market is calm", "step4_confluence": 7,
             "step5_risks": ["earnings gap", "index sell-off"], "final_reasoning": "Clean uptrend with room to run",
             "rule_alignment": "agree", "falsification": "A close below 240"}
     body.update(over)
@@ -283,7 +284,7 @@ def cot(**over):
 def agent_for(script, snap=UP, **flags):
     client = Scripted(script)
     llm = LLMClient(list(script), client=client, sleep=lambda s: None)
-    agent = TechnicalAgent(llm, use_learning=False, use_context=False, use_reflect=False, **flags)
+    agent = TechnicalAgent(llm, use_reflect=False, **flags)
     return agent, client, snap
 
 
@@ -325,10 +326,10 @@ def test_if_the_full_prompt_fails_everywhere_the_compact_prompt_is_tried():
     compact = json.dumps({"action": "BUY", "confidence": 0.7, "reasoning": "trend intact"})
 
     def route(**kw):
-        return answer("garbage") if "five fixed steps" in kw["messages"][0]["content"] else answer(compact)
+        return answer("garbage") if "MECHANICAL BASELINE" in kw["messages"][0]["content"] else answer(compact)
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=route)))
-    agent = TechnicalAgent(LLMClient(["a"], client=client), use_learning=False, use_context=False, use_reflect=False)
+    agent = TechnicalAgent(LLMClient(["a"], client=client), use_reflect=False)
     signal = run(agent, UP)
     assert signal.action == "BUY" and not signal.degraded
     assert signal.details.tier == "compact" and signal.details.cot_failure is not None and signal.details.raw_model == "a"
@@ -340,20 +341,12 @@ def test_only_when_both_prompts_fail_does_the_agent_stand_down():
     assert signal.action == "HOLD" and signal.degraded is True
 
 
-def test_a_skipped_refinement_leaves_a_mark_in_the_audit_record():
-    from tests.test_learning_context_reflect import make_stats
-
+def test_a_skipped_review_leaves_a_mark_in_the_audit_record():
     reflection_fails = [answer(cot()), overloaded()]
     client = Scripted({"a": reflection_fails})
-    agent = TechnicalAgent(LLMClient(["a"], client=client, sleep=lambda s: None), use_learning=False, use_context=False,
-                           use_reflect=True)
+    agent = TechnicalAgent(LLMClient(["a"], client=client, sleep=lambda s: None), use_reflect=True)
     signal = run(agent, UP)
     assert signal.action == "BUY" and signal.details.reflection_skipped is True and signal.details.reflection is None
-
-    learn_fails = Scripted({"a": [answer(cot()), overloaded()]})
-    agent = TechnicalAgent(LLMClient(["a"], client=learn_fails, sleep=lambda s: None), use_learning=True,
-                           use_context=False, use_reflect=False, history_fn=lambda s: make_stats(12, 0.3))
-    assert run(agent, UP).details.learning_skipped is True
 
 
 def test_the_pipeline_logs_one_health_line_per_cycle(tmp_path, caplog):

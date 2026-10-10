@@ -9,7 +9,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 from sqlalchemy import func, select
 
 from src.database import DecisionRecord, OutcomeRecord
-from src.learning.setups import ROUND_TRIP_COST
+from src.engine.costs import ROUND_TRIP_COST
 
 
 @dataclass(frozen=True)

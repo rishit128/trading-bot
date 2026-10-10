@@ -1,7 +1,8 @@
 """Re-examine a stored decision: what the model was shown, what each agent said, and whether the rules reproduce the result.
 
 The AI's own answer cannot be regenerated (models are not deterministic), but everything around it can: the exact prompt
-is rebuilt from the stored indicator inputs, and the combination of the stored signals is recomputed."""
+is rebuilt from the stored indicator inputs and the company/market data stored with the lead agent's signal, and the
+combination of the stored signals is recomputed."""
 import json
 from dataclasses import dataclass
 from typing import Dict, Mapping, Optional
@@ -46,13 +47,17 @@ def replay(record: DecisionRecord, roles: Mapping[str, str] = DEFAULT_ROLES) -> 
         recomputed = Action.SELL if snap is not None and trend_broken(snap.price, snap.ma200) else None  # a deterministic override, not an AI call
     else:
         recomputed = combine_signals(signals, roles).action if signals else None
+    lead = signals.get("technical")
+    shown = lead.details if lead is not None and lead.details is not None else None
+    prompt = (TechnicalAgent.build_prompt(snap, shown.market_context_json if shown else None,
+                                          shown.company_json if shown else None) if snap is not None else None)
     versions = None
     if record.prompt_version or record.feature_version or record.strategy_version:
         versions = {"strategy": record.strategy_version, "prompt": record.prompt_version,
                     "feature": record.feature_version}
     return Replay(
         decision_id=record.id, symbol=record.symbol, inputs=snap,
-        prompt=TechnicalAgent.build_prompt(snap) if snap is not None else None, signals=signals,
+        prompt=prompt, signals=signals,
         stored_action=record.final_action, stored_confidence=record.final_confidence, recomputed_action=recomputed,
         rule_based=rule_based, reproduced=None if recomputed is None else recomputed == record.final_action,
         versions=versions,

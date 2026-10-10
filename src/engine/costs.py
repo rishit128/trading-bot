@@ -17,6 +17,7 @@
 from src.engine.enums import Action
 
 SLIPPAGE = 0.0005  # 5 bps per side: the paper broker's default and every backtest path's (buy fills higher, sell lower)
+ROUND_TRIP_COST = 0.0035  # estimated fees + slippage for a delivery round trip, used to judge outcomes net of costs
 
 
 def india_delivery_fees(side: str, value: float) -> float:

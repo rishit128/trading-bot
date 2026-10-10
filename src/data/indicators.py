@@ -42,6 +42,9 @@ class Snapshot:
     volume_trend: Optional[float] = None  # recent 20-day mean volume vs the prior 20, fractional change
     atr: Optional[float] = None  # 14-day average true range (absolute, use with price for a %)
     adx: Optional[float] = None  # 14-day ADX, 0-100 trend strength
+    # Return from 12 months ago to 1 month ago: the scanner's ranking signal (the one that beat holding everything in
+    # the research), so the AI knows why a candidate was picked. Same formula as `screen_arrays`.
+    momentum_12_1: Optional[float] = None
 
 
 def _macd(close: pd.Series):
@@ -182,4 +185,5 @@ def build_snapshot(symbol: str, bars: pd.DataFrame) -> Snapshot:
         volume_trend=_volume_trend(volume),
         atr=compute_atr(high, low, close),
         adx=compute_adx(high, low, close),
+        momentum_12_1=float(close.iloc[-22] / close.iloc[-253] - 1) if len(close) >= 253 else None,
     )

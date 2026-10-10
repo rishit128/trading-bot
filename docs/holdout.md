@@ -2,8 +2,8 @@
 
 ## Why it exists
 
-Everything in this repo that *learns* or *tunes* — the learning phase, calibration, reconciliation,
-the ablation and walk-forward harnesses — is judged against the paper account's own outcomes. If those
+Everything in this repo that *learns* or *tunes* — the weekly AI-vs-rule scoring, calibration, reconciliation —
+is judged against the paper account's own outcomes. If those
 decisions are then graded on the same data, the validation is self-referential. The reserve is the
 escape: **an account that is never tuned, never reads the paper account's order book, and only ever
 answers one question — "did the recorded decisions themselves make money?"**

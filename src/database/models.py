@@ -25,8 +25,6 @@ class DecisionRecord(Base):
     price: Mapped[float] = mapped_column(Float)
     technical_action: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     technical_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    sentiment_action: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
-    sentiment_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     final_action: Mapped[str] = mapped_column(String(8))
     final_confidence: Mapped[float] = mapped_column(Float)
     reasoning: Mapped[str] = mapped_column(Text)
@@ -41,21 +39,12 @@ class DecisionRecord(Base):
     edge_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-1, how repeatable the pattern is
     risks_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON list of the identified risks
     reasoning_chain_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # the step-by-step reasoning
-    # Phases 2-4 extras, taken from the lead agent's details (None when a phase did not run or was not enabled).
-    base_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # confidence before any refinement
-    context_regime: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)  # bull / bear / risk_off / None
-    historical_win_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # similar closed trades (decision memory)
-    historical_sample_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # and how many backed it
-    # Review doc 2: the pattern the decision belongs to and what the learning/refinement phases did to the base call.
-    pattern_id: Mapped[Optional[str]] = mapped_column(String(48), nullable=True, index=True)  # e.g. P>MA50+MA50>MA200|RSI60
-    adjusted_signal_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # after the phases moved it
-    adjustment_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # why any phase changed the call
-    # Review doc 3: the context-phase answers and the full context dataclass.
-    macro_support: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)  # yes / neutral / no
-    sector_support: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
-    earnings_risk: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    diversification_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 1-10
-    market_context_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # the regime the call faced
+    # The review step, taken from the lead agent's details (None when it did not run). Columns of removed phases (decision
+    # memory, the separate market-context call, the sentiment agent) stay in older databases with their old values.
+    base_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # confidence before the review
+    adjusted_signal_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # after the review
+    adjustment_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # what the review did
+    market_context_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # the market situation the model was shown
     # Review doc 4: the reflection chain's findings.
     biggest_risk: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     what_proves_us_wrong: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -178,21 +167,6 @@ class HoldoutMark(Base):
     decisions: Mapped[int] = mapped_column(Integer)
     closed_trades: Mapped[int] = mapped_column(Integer)
     open_positions: Mapped[int] = mapped_column(Integer)
-
-
-class SetupObservationRecord(Base):
-    """A setup rebuilt from price history: a stock the live scanner would have ranked on `bar_date`, the snapshot the agent
-    would have seen, and what holding it `horizon` sessions from the next open returned. Seeds the decision memory
-    (LEARNING_SEED) before the bot's own decisions mature; kept apart from `decisions`, which are only real calls."""
-    __tablename__ = "setup_observations"
-
-    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
-    bar_date: Mapped[str] = mapped_column(String(10), primary_key=True)
-    horizon: Mapped[int] = mapped_column(Integer, primary_key=True)
-    exit_date: Mapped[str] = mapped_column(String(10))
-    snapshot_json: Mapped[str] = mapped_column(Text)
-    gross_return: Mapped[float] = mapped_column(Float)
-    source: Mapped[str] = mapped_column(String(16), default="history")
 
 
 class OutcomeRecord(Base):

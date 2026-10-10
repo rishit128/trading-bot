@@ -45,6 +45,7 @@ GOOD = json.dumps({"action": "BUY", "confidence": 0.8, "reasoning": "uptrend"})
 # A chain-of-thought response valid against COT_SCHEMA: what the default TechnicalAgent now asks for.
 COT_OK = json.dumps({"action": "BUY", "confidence": 0.8, "edge_confidence": 0.5, "step1_trend": "uptrend",
                      "step2_overbought": "not overbought", "step3_volume": "volume confirms",
+                     "company_check": "sales and profit growing", "market_check": "market supportive",
                      "step4_confluence": 6, "step5_risks": ["earnings"], "final_reasoning": "uptrend"})
 
 

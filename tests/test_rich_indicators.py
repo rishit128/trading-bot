@@ -69,8 +69,7 @@ def test_prompt_renders_rich_indicators_and_degrades_to_n_a():
 
     plain = build_snapshot("X", ohclv_only([100.0 * (1 + 0.003 * i) for i in range(250)]))
     p2 = TechnicalAgent.build_prompt(plain)
-    assert "trend strength n/a ADX" in p2  # high/low-dependent values fall back to n/a
-    assert "volatility ATR n/a" in p2 and "n/a" in p2
+    assert "ATR n/a | ADX n/a" in p2  # high/low-dependent values fall back to n/a
 
 
 def test_build_snapshot_still_supports_close_and_volume_only_bars():

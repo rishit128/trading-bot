@@ -272,14 +272,15 @@ def test_no_quote_is_fetched_for_hold_decisions(tmp_path):
     assert calls == []
 
 
-def test_sentiment_veto_flows_through_the_graph_and_is_audited(tmp_path):
+def test_an_advisors_veto_flows_through_the_graph_and_is_audited(tmp_path):
     pipe, _, sessions = make_pipeline(tmp_path)
     pipe.agents["sentiment"] = stub("sentiment", lambda s: AgentSignal(action="SELL", confidence=0.9, reasoning="bad news"), ADVISOR)
     [r] = pipe.run_once()
     assert r.action == "HOLD"
     with sessions() as s:
         row = s.scalar(select(DecisionRecord))
-        assert (row.technical_action, row.sentiment_action, row.final_action) == ("BUY", "SELL", "HOLD")
+        assert (row.technical_action, row.final_action) == ("BUY", "HOLD")
+        assert json.loads(row.signals_json)["sentiment"]["action"] == "SELL"  # every agent's call is in the audit row
 
 
 def test_nodes_use_agents_swapped_in_after_construction(tmp_path):

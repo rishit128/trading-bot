@@ -1,26 +1,22 @@
-"""The pieces of the technical agent's refinement phases that need no model: how a confidence change is capped, how each
-phase's answer becomes audit details, how the critic's conviction chain is enforced, and how the audit record is stamped.
-Pure functions over signals, so each rule is testable on its own and the agent class only orchestrates."""
+"""The parts of the agent's review step that need no model: how the critic's conviction chain is enforced, how its answer
+becomes audit details, and how the audit record is stamped. Pure functions over signals, so each rule is testable on its
+own and the agent class only orchestrates."""
 import dataclasses
-from typing import List, Tuple
+import json
+from typing import List, Optional, Tuple
 
-from src.agents.base import AgentContext
-from src.agents.history import HUMILITY, PatternStats, pattern_id
-from src.agents.technical.schemas import ContextSignal, LearningSignal, ReflectionChain
-from src.engine.agent_signal import (ContextDetails, ConvictionStage, LearningDetails, ReflectionDetails, AgentSignal, SignalDetails)
+from src.agents.technical.prompts import company_text, market_text
+from src.agents.technical.schemas import ReflectionChain
+from src.engine.agent_signal import AgentSignal, ConvictionStage, ReflectionDetails, SignalDetails
 
-MAX_PHASE_ADJUSTMENT = 0.15  # the largest confidence swing one refinement phase may make
+HUMILITY = 0.10  # the critic's fixed humility discount (review doc 4.2); audit only, it never gates a trade
 
 
 def adjustment_reason(details: SignalDetails, current: AgentSignal) -> str:
-    """Why the refinement phases are credited with the final call, in the words of the phase that last changed it."""
-    if details.learning and details.learning.reason:
-        return details.learning.reason
-    if details.context and details.context.reasoning:
-        return details.context.reasoning
+    """Why the review is credited with the final call."""
     reflection = details.reflection
     if reflection is None:
-        return "a refinement phase adjusted the call"
+        return "no review ran"
     if reflection.upheld is True:
         return "reflection upheld the call unchanged"
     if reflection.upheld is False:
@@ -33,47 +29,26 @@ def tag(sig: AgentSignal, key: str, value) -> AgentSignal:
     if sig.details is None:
         return sig
     return AgentSignal(action=sig.action, confidence=sig.confidence, reasoning=sig.reasoning, degraded=sig.degraded,
-                  details=sig.details.model_copy(update={key: value}))
+                       details=sig.details.model_copy(update={key: value}))
 
 
-def stamp_base(sig: AgentSignal) -> AgentSignal:
-    """Record the untouched base confidence before any later phase moves it. Signals without details (simple
-    mode) are left alone so a no-details signal stays a no-details signal."""
+def stamp_base(sig: AgentSignal, market=None, company=None) -> AgentSignal:
+    """Record the untouched base confidence and the market/company data the model was shown (so the prompt can be
+    rebuilt on replay). Signals without details (the compact tier) are left alone."""
     if sig.details is None:
         return sig
-    details = sig.details if sig.details.base_confidence is not None else sig.details.model_copy(
-        update={"base_confidence": sig.confidence})
+    def plain(data):  # JSON-shaped (tuples become lists) so the stored record equals what was used
+        return json.loads(json.dumps(dataclasses.asdict(data))) if data is not None else None
+
+    update: dict = {"market_context_json": plain(market), "company_json": plain(company)}
+    if sig.details.base_confidence is None:
+        update["base_confidence"] = sig.confidence
     return AgentSignal(action=sig.action, confidence=sig.confidence, reasoning=sig.reasoning,
-                  degraded=sig.degraded, details=details)
-
-
-def clamp_adjustment(base_conf: float, new_conf: float, cap: float) -> float:
-    """A confidence change inside [-cap, +cap] (also within [0, 1]); the cap is the confidence cap per phase."""
-    new_conf = min(1.0, max(0.0, new_conf))
-    lower, upper = max(base_conf - cap, 0.0), min(base_conf + cap, 1.0)
-    return round(max(lower, min(new_conf, upper)), 4)
-
-
-def learning_details(out: LearningSignal, stats: PatternStats, applied: float) -> LearningDetails:
-    return LearningDetails(
-        adjusted_action=out.action, adjusted_confidence=applied, pattern_reliability=out.pattern_reliability,
-        sample_size=stats.sample_size, win_rate=stats.win_rate, avg_win_pct=stats.avg_win_pct,
-        avg_loss_pct=stats.avg_loss_pct, profit_factor=stats.profit_factor, best_holding_days=stats.best_holding_days,
-        worst_holding_days=stats.worst_holding_days, confidence_in_pattern=stats.confidence_in_pattern,
-        reason=out.reason_for_adjustment, what_could_break=out.what_could_break)
-
-
-def context_details(out: ContextSignal, market, applied: float) -> ContextDetails:
-    return ContextDetails(
-        regime=market.regime_label, macro_support=out.macro_support, sector_support=out.sector_support,
-        earnings_risk=out.earnings_risk, diversification_score=out.diversification_score,
-        index_above_ma200=market.index_above_ma200, index_rsi=market.index_rsi, vix=market.vix,
-        vix_percentile=market.vix_percentile, vs_index_6m=market.vs_index_6m, reasoning=out.context_reasoning,
-        risks=out.key_context_risks)
+                       degraded=sig.degraded, details=sig.details.model_copy(update=update))
 
 
 def reflection_details(base: AgentSignal, out: ReflectionChain, steps: List[Tuple[str, float, str]],
-                        final_confidence: float, critic_confidence: float, upheld: bool) -> ReflectionDetails:
+                       final_confidence: float, critic_confidence: float, upheld: bool) -> ReflectionDetails:
     return ReflectionDetails(
         biggest_risk=out.biggest_risk, what_proves_us_wrong=out.what_proves_us_wrong, bias_check=out.bias_check,
         conviction_adjustments=[ConvictionStage(stage=name, conviction=round(conviction, 4)) for name, conviction, _ in steps],
@@ -81,35 +56,16 @@ def reflection_details(base: AgentSignal, out: ReflectionChain, steps: List[Tupl
         humility_reduction=HUMILITY, critic_confidence=critic_confidence, upheld=upheld)
 
 
-def refinement_summary(ctx: AgentContext, current: AgentSignal, state: dict, market) -> str:
-    lines = [f"Base reasoning: {current.reasoning}"]
-    stats = state.get("stats")
-    if stats is not None:
-        pf = f"{stats.profit_factor:.2f}" if stats.profit_factor is not None else "n/a"
-        lines.append("Historical record on similar setups: "
-                     f"n={stats.sample_size}, win rate {stats.win_rate:.0%}, "
-                     f"avg win {stats.avg_win_pct:+.1f}%, avg loss {stats.avg_loss_pct:+.1f}%, "
-                     f"profit factor {pf}, holding {stats.worst_holding_days}-{stats.best_holding_days} days.")
-    if market is not None:
-        vix = f"{market.vix:.0f}" if market.vix is not None else "n/a"
-        vs = ("above" if market.index_above_ma200 else "below") if market.index_above_ma200 is not None else "? vs"
-        lines.append(f"Market regime: {market.regime_label}, index {vs} the 200-day MA, VIX {vix}.")
-    learning = current.details.learning if current.details else None
-    if learning is not None:
-        lines.append(f"Pattern overlap: {learning.sample_size} similar closed trades, "
-                     f"win rate {learning.win_rate:.0%}.")
-    return "\n".join(lines)
+def review_summary(current: AgentSignal, market=None, company=None) -> str:
+    """What the critic is shown: the base reasoning, and the same company and market data the analyst had."""
+    return "\n".join([f"Base reasoning: {current.reasoning}", f"Company: {company_text(company)}",
+                      f"Market: {market_text(market)}"])
 
 
-def stamp_refinements(ctx: AgentContext, current: AgentSignal, market) -> None:
-    """Top-level record of what any refinement did, so the decision row exposes it to SQL queries and replay."""
-    details = current.details
-    if details is None:
-        return
-    details.pattern_id = pattern_id(ctx.snapshot)
-    if market is not None:
-        details.market_context_json = dataclasses.asdict(market)
-    if details.base_confidence is not None and (details.learning or details.context or details.reflection):
+def stamp_review(current: AgentSignal) -> None:
+    """Top-level record of what the review did, so the decision row exposes it to SQL queries and replay."""
+    details: Optional[SignalDetails] = current.details
+    if details is not None and details.base_confidence is not None and details.reflection is not None:
         details.adjusted_signal_confidence = current.confidence
         details.adjustment_reason = adjustment_reason(details, current)
 

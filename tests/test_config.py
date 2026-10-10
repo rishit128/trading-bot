@@ -128,24 +128,11 @@ def test_delivery_filter_defaults_off_and_can_be_enabled(monkeypatch):
     assert load_settings().delivery_filter is True
 
 
-def test_learning_horizon_defaults_to_the_live_holding_period(monkeypatch):
-    """60 sessions: live-setup trades are held a median 65-74 sessions (STRATEGY.md, 2026-09-26)."""
-    monkeypatch.delenv("LEARNING_HORIZON", raising=False)
-    assert load_settings().learning_horizon == 60
-
-
-def test_an_unlabelled_learning_horizon_is_rejected_at_startup_not_deep_inside_setupmemory(monkeypatch):
-    """Only 5/20/60 are labelled (src.learning.outcomes.HORIZONS); any other value must fail load_settings() with the
-    standard "Invalid configuration" message, not surface later as an unhandled ValueError from SetupMemory()."""
-    monkeypatch.setenv("LEARNING_HORIZON", "30")
-    with pytest.raises(ValueError, match="learning_horizon"):
-        load_settings()
-
-
 # -- the intraday engine's own sizing settings --------------------------------------------------------------------------
 def test_intraday_settings_have_their_own_defaults_and_do_not_follow_the_swing_ones(monkeypatch):
     for name in ("INTRADAY_RISK_PCT", "INTRADAY_MAX_POSITION_PCT", "INTRADAY_MAX_POSITIONS", "INTRADAY_UNIVERSE"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MIN_POSITION_PCT", "0.05")
     monkeypatch.setenv("MAX_POSITION_PCT", "0.05")
     monkeypatch.setenv("MAX_OPEN_POSITIONS", "10")
     s = load_settings()
@@ -187,10 +174,3 @@ def test_temperature_defaults_to_zero_and_rejects_nonsense(monkeypatch):
     assert load_settings().llm_temperature == 0.7
     with pytest.raises(ValueError, match="llm_temperature"):
         Settings(llm_temperature=3.0)
-
-
-def test_seeded_learning_memory_is_off_unless_switched_on(monkeypatch):
-    monkeypatch.delenv("LEARNING_SEED", raising=False)
-    assert load_settings().learning_seed is False
-    monkeypatch.setenv("LEARNING_SEED", "true")
-    assert load_settings().learning_seed is True

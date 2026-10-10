@@ -78,4 +78,4 @@ def test_setting_the_documented_values_changes_nothing(monkeypatch):
 
 
 def test_the_example_explains_the_free_model_advice():
-    assert "LLM_REASONING_OFF" in EXAMPLE and "LLM_LEARNING" in EXAMPLE and "best left OFF" in EXAMPLE
+    assert "LLM_REASONING_OFF" in EXAMPLE and "LLM_REFLECT" in EXAMPLE and "company results" in EXAMPLE

@@ -581,3 +581,42 @@ cases, with Sharpe never lower by more than 0.05 and max drawdown better than -4
 
 Larger positions mostly buy more return with more risk, not better trading: Sharpe falls in two cases, and over the
 most recent Nifty 500 window 8% loses on return and risk. Sizing stays 10 x 5%.
+
+**Owner's decision 2026-10-10: live sizing changed to 10 x 8%** (`MIN_POSITION_PCT=MAX_POSITION_PCT=0.08` in `.env`),
+so that about Rs 15,000-16,000 of the Rs 20,000 is working (the 80% exposure cap still applies) instead of ~43%. This is a
+chosen trade of more risk for more return, not a better strategy: the table above is the expectation (drawdowns of
+-26% to -39% instead of -13% to -27%, so the 20% drawdown pause will trigger more often). Positions opened at 5% keep
+their size; a held stock the AI rates BUY again is topped up to 8%, and freed slots are filled at 8%.
+
+## The AI's job, redesigned (2026-10-09): from second-guessing the chart to reading what the chart cannot show
+**Finding (live data, 134 stock-sessions, 2026-09-25..10-08).** The rule said BUY on 116; the AI bought 39. The stocks it
+rejected and the ones it bought were indistinguishable on everything it was shown (median RSI 56.4 vs 57.2, Bollinger
+position 0.59 vs 0.60, 6-month momentum +120% vs +121%, volume trend -19% vs -16%), and so were the results (5-session
+net +3.07% for the rule's picks it passed, +3.12% for those it bought). Its usual reasons ("weak volume", "extended")
+applied equally to both. Every backtest assumed the AI approves the rule's picks; live it was a coin flip that pushed the
+account down the momentum ranking. Root cause: it re-judged the same price data with no information the rule lacked, was
+never told why a stock was picked, and was framed as "cautious".
+
+**Market-regime protection, pre-declared test: FAILED.** Live account, no new buys while the Nifty 50 closes below its
+200-day average. Gate: drawdown at least 3 points better and Sharpe no lower, in all four cases.
+
+| Case | Baseline | Regime gate |
+|---|---|---|
+| All NSE, full | +194.6%, Sharpe 1.13, DD -27.4% | +93.1%, Sharpe 0.77, DD -25.6% |
+| All NSE, last 3y | +48.4%, Sharpe 1.09, DD -18.9% | +33.3%, Sharpe 0.89, DD -15.2% |
+| Nifty 500, full | +183.8%, Sharpe 1.12, DD -23.5% | +194.8%, Sharpe 1.25, DD -20.5% |
+| Nifty 500, last 3y | +73.9%, Sharpe 1.57, DD -12.8% | +63.0%, Sharpe 1.61, DD -8.4% |
+
+On all NSE stocks it halved the full-period return; weak markets are where many later winners are bought. Not adopted as a
+rule, and the AI is told a weak market alone is not a reason to skip a buy.
+
+**What changed.** One informed analysis per stock (`PROMPT_VERSION` technical-v10, `FEATURE_VERSION` indicators-v4): the
+chart and the rule's verdict, the stock's 12-1 momentum (why it was picked), the company's last quarters and ratios from
+Yahoo (sales, profit, year-on-year growth, debt/equity, margin, promoter holding; checked to cover every stock the bot
+held or ranked), and the market situation. It follows the rule unless the company data gives a concrete, numbered reason;
+its company and market checks are recorded with the data they used, so replay rebuilds the exact prompt. The veto-only
+critic stays. Removed, with their settings: the decision memory (failed its walk-forward test, 2026-10-01) and its
+seeding tool, the separate market-context call (now part of the one analysis), the phase-ablation and walk-forward
+harnesses and the historical AI backtest (`scripts/backtest_ai_agent.py`): an AI cannot be fairly replayed on past dates
+(the model has seen what happened, and Yahoo's company data is today's, not what was known then). The AI is therefore
+judged forward only: the weekly Telegram report compares the rule's picks the AI bought with those it passed.

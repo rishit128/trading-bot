@@ -18,11 +18,10 @@ from sqlalchemy import create_engine, inspect, text
 
 from src.database.models import Base
 
-# Extra indexes for the review-doc queries ("decisions with a strong confluence", "pattern x's track record") are
+# Extra indexes for the review-doc queries ("decisions with a strong confluence", "which model answered") are
 # created for every database, including ones that predate the columns, in `ensure_indexes`.
 EXTRA_INDEXES = {
     "ix_decisions_confluence": "CREATE INDEX IF NOT EXISTS ix_decisions_confluence ON decisions (confluence_score)",
-    "ix_decisions_pattern": "CREATE INDEX IF NOT EXISTS ix_decisions_pattern ON decisions (pattern_id)",
     "ix_decisions_raw_model": "CREATE INDEX IF NOT EXISTS ix_decisions_raw_model ON decisions (raw_model)",
 }
 

@@ -18,11 +18,11 @@ from src.learning.mistakes import (ai_vs_rule, breakdown, confidence_bucket, fmt
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--horizon", type=int, default=None, help="sessions to measure over (default: LEARNING_HORIZON)")
-    ap.add_argument("--min-samples", type=int, default=None, help="smallest group that is judged (default: LEARNING_MIN_SAMPLES)")
+    ap.add_argument("--horizon", type=int, choices=(5, 20, 60), default=None, help="sessions to measure over (default 20)")
+    ap.add_argument("--min-samples", type=int, default=None, help="smallest group that is judged (default 30)")
     args = ap.parse_args()
     settings = load_settings()
-    horizon, floor = args.horizon or settings.learning_horizon, args.min_samples or settings.learning_min_samples
+    horizon, floor = args.horizon or 20, args.min_samples or 30
     judged = load_judged(make_session_factory(settings.database_url), horizon)
     print(f"{len(judged)} decisions with a matured {horizon}-session outcome (groups under {floor} are not judged)")
     if not judged:

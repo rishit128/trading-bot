@@ -26,6 +26,8 @@ COT_GOOD = json.dumps({
     "step1_trend": "Uptrend; price above MA50 and MA50 above MA200.",
     "step2_overbought": "RSI 55; not overbought.",
     "step3_volume": "Volume 1.3x average; confirms the move.",
+    "company_check": "Sales and profit growing year on year; low debt.",
+    "market_check": "Nifty above its 200-day average; calm VIX.",
     "step4_confluence": 8,
     "step5_risks": ["Earnings next week", "Sector rotation"],
     "final_reasoning": "Clear uptrend, volume confirms, not overbought.",
@@ -84,7 +86,7 @@ def test_structured_call_sends_the_schema_and_caches_identical_prompts():
     assert first is second  # served from cache, not a second call
     assert len(fake.calls) == 1
     schema_sent = fake.calls[0][1]["response_format"]["json_schema"]
-    assert schema_sent["name"] == "trading_signal_v1" and schema_sent["strict"] is True
+    assert schema_sent["name"] == "trading_signal_v2" and schema_sent["strict"] is True
 
 
 def test_structured_call_falls_back_to_the_next_model():

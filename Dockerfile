@@ -16,6 +16,8 @@ RUN useradd --create-home bot && mkdir /data && chown bot /data
 USER bot
 ENV DATABASE_URL=sqlite:////data/trading.db
 ENV INTRADAY_DATABASE_URL=sqlite:////data/intraday.db
+# The index/VIX series behind the AI's market data are cached on disk; /app is not writable by the bot user.
+ENV MARKET_CACHE_DIR=/data/cache
 VOLUME /data
 
 # Indian market, dry run (decisions only), every 30 minutes while NSE is open. Analysis uses completed daily bars and

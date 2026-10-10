@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.learning.setups import ROUND_TRIP_COST
+from src.engine.costs import ROUND_TRIP_COST
 from src.research.feature_study import BucketResult, build_observations, features, forward_net, study
 
 

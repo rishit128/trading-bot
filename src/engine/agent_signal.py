@@ -12,43 +12,13 @@ from src.engine.enums import Action
 
 
 class ReasoningChain(BaseModel):
-    """The three one-sentence steps of the chain-of-thought answer."""
+    """The one-sentence steps of the analysis: the chart (trend, overbought, volume), then what the chart cannot show
+    (company, market; absent on rows written before the agent saw company and market data)."""
     trend: str
     overbought: str
     volume: str
-
-
-class LearningDetails(BaseModel):
-    """What the decision-memory phase found in the closed-trade record of similar setups, and what it did about it."""
-    adjusted_action: Action
-    adjusted_confidence: float
-    pattern_reliability: str
-    sample_size: int
-    win_rate: float
-    avg_win_pct: float
-    avg_loss_pct: float
-    profit_factor: Optional[float] = None
-    best_holding_days: int
-    worst_holding_days: int
-    confidence_in_pattern: float
-    reason: str
-    what_could_break: str
-
-
-class ContextDetails(BaseModel):
-    """What the market-context phase saw (index regime, VIX, relative strength) and concluded."""
-    regime: str
-    macro_support: str
-    sector_support: str
-    earnings_risk: bool
-    diversification_score: int
-    index_above_ma200: Optional[bool] = None
-    index_rsi: Optional[float] = None
-    vix: Optional[float] = None
-    vix_percentile: Optional[float] = None
-    vs_index_6m: Optional[float] = None
-    reasoning: str
-    risks: List[str] = Field(default_factory=list)
+    company: Optional[str] = None
+    market: Optional[str] = None
 
 
 class ConvictionStage(BaseModel):
@@ -84,17 +54,13 @@ class SignalDetails(BaseModel):
     reasoning_chain: Optional[ReasoningChain] = None
     rule_alignment: Optional[Literal["agree", "deviate"]] = None  # computed from the data, not the model's claim
     falsification: Optional[str] = None
-    base_confidence: Optional[float] = None  # the confidence before any refinement phase moved it
-    pattern_id: Optional[str] = None
-    market_context_json: Optional[dict] = None
+    base_confidence: Optional[float] = None  # the confidence before the reflection phase could change it
+    market_context_json: Optional[dict] = None  # the market situation the model was shown (rebuilds the prompt on replay)
+    company_json: Optional[dict] = None  # the company data the model was shown (same purpose)
     adjusted_signal_confidence: Optional[float] = None
     adjustment_reason: Optional[str] = None
-    learning: Optional[LearningDetails] = None
-    context: Optional[ContextDetails] = None
     reflection: Optional[ReflectionDetails] = None
-    learning_skipped: Optional[bool] = None  # a phase that was due but could not run (every model failed)
-    context_skipped: Optional[bool] = None
-    reflection_skipped: Optional[bool] = None
+    reflection_skipped: Optional[bool] = None  # reflection was due but could not run (every model failed)
 
 
 class AgentSignal(BaseModel):
