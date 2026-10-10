@@ -29,7 +29,7 @@ from src.config import RiskLimits, Settings
 from src.data.india import IST, IndiaClock
 from src.data.intraday_bars import COLUMNS
 from src.database import IntradaySignalRecord, make_session_factory
-from src.engine.costs import SLIPPAGE
+from src.engine.costs import SLIPPAGE, intraday_fees
 from src.engine.paper_broker import PaperBroker
 from src.engine.ports import BAR
 from src.intraday.engine import IntradayEngine
@@ -41,7 +41,6 @@ from src.intraday.strategy import (
     find_gap_only_setup,
     find_gap_setup,
     find_setup,
-    intraday_fees,
 )
 from src.versions import GAPGO_VERSION, GAPONLY_VERSION, INTRADAY_VERSION
 

@@ -30,3 +30,13 @@ def india_delivery_fees(side: str, value: float) -> float:
     gst = 0.18 * (exchange + sebi)
     dp = 15.93 if side == Action.SELL else 0.0
     return stt + stamp + exchange + sebi + gst + dp
+
+
+def intraday_fees(side: str, value: float) -> float:
+    """Approximate NSE intraday (MIS) equity costs with a flat-fee discount broker: brokerage min(Rs 20, 0.03%) per side,
+    STT 0.025% on sells, stamp 0.003% on buys, exchange 0.00297%, SEBI 0.0001%, 18% GST on brokerage+exchange+SEBI."""
+    brokerage = min(20.0, 0.0003 * value)
+    exchange, sebi = 0.0000297 * value, 0.000001 * value
+    stt = 0.00025 * value if side == Action.SELL else 0.0
+    stamp = 0.00003 * value if side == Action.BUY else 0.0
+    return brokerage + exchange + sebi + stt + stamp + 0.18 * (brokerage + exchange + sebi)

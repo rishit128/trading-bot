@@ -18,7 +18,7 @@ from src.data.india import SUFFIX
 from src.data.market_context import MarketContextProvider
 from src.data.market_data import fetch_daily_bars
 from src.database import make_session_factory
-from src.intraday.strategy import intraday_fees
+from src.engine.costs import intraday_fees
 from src.learning.jobs import DailyOutcomeLabelling, WeeklyLearningReport
 from src.llm import LLMClient
 from src.logging_setup import configure_logging

@@ -4,6 +4,7 @@ and the numpy breakout core pinned to a plain loop and to its exact boundaries."
 import pandas as pd
 import pytest
 
+from src.engine.costs import intraday_fees
 from src.intraday import strategy as st
 from tests.intraday_helpers import BREAKOUT, VOLS, make_bars
 
@@ -81,7 +82,7 @@ def test_no_breakout_is_signalled_from_a_range_built_out_of_the_wrong_bars():
 
 
 def test_intraday_fees_have_stt_on_sells_only_and_flat_brokerage():
-    buy, sell = st.intraday_fees("BUY", 200_000), st.intraday_fees("SELL", 200_000)
+    buy, sell = intraday_fees("BUY", 200_000), intraday_fees("SELL", 200_000)
     assert sell > buy and 20 < buy < 40 and 60 < sell < 90
 
 

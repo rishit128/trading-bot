@@ -15,11 +15,12 @@ from typing import Callable, Dict, List, Optional, Tuple, cast
 import numpy as np
 import pandas as pd
 
+from src.engine.costs import intraday_fees
 from src.intraday import strategy as st
 
 MAX_SESSION_GAP_DAYS = 6  # a weekend plus a long holiday; further apart, the "previous close" is not the previous session's
 FEE_NOTIONAL = 50_000.0  # a fixed trade value, so fees are a constant fraction and variants compare on expectancy alone
-FEE_FRACTION = (st.intraday_fees("BUY", FEE_NOTIONAL) + st.intraday_fees("SELL", FEE_NOTIONAL)) / FEE_NOTIONAL
+FEE_FRACTION = (intraday_fees("BUY", FEE_NOTIONAL) + intraday_fees("SELL", FEE_NOTIONAL)) / FEE_NOTIONAL
 
 
 @dataclass(frozen=True)

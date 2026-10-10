@@ -8,8 +8,9 @@ from typing import Any
 from src.app.wiring import gapgo_db_url, gaponly_db_url, intraday_db_url, make_paper_broker
 from src.config import load_settings
 from src.data.intraday_bars import BarArchive, fetch_5m_bars
+from src.engine.costs import intraday_fees
 from src.intraday.engine import IntradayEngine, run_together
-from src.intraday.strategy import GAP_ENTRY_UNTIL, GAP_ONLY_ENTRY_UNTIL, find_gap_only_setup, find_gap_setup, intraday_fees
+from src.intraday.strategy import GAP_ENTRY_UNTIL, GAP_ONLY_ENTRY_UNTIL, find_gap_only_setup, find_gap_setup
 from src.intraday.universe import select_universe
 from src.monitoring.telegram import Notifier
 from src.versions import GAPGO_VERSION, GAPONLY_VERSION

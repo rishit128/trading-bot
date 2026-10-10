@@ -15,8 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.app.wiring import gapgo_db_url, gaponly_db_url, intraday_db_url, make_paper_broker  # noqa: E402
 from src.config import load_settings  # noqa: E402
 from src.data.india import IST  # noqa: E402
+from src.engine.costs import intraday_fees  # noqa: E402
 from src.engine.paper_report import group_by_day, group_by_week, merge_periods, totals  # noqa: E402
-from src.intraday.strategy import intraday_fees  # noqa: E402
 
 
 def period_table(title: str, rows: list) -> None:

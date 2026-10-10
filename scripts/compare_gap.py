@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.app.wiring import gapgo_db_url, gaponly_db_url, make_paper_broker  # noqa: E402
 from src.config import load_settings  # noqa: E402
 from src.database import IntradaySignalRecord  # noqa: E402
-from src.intraday.strategy import intraday_fees  # noqa: E402
+from src.engine.costs import intraday_fees  # noqa: E402
 from src.research.gap_compare import capped_signals, compare, format_comparison  # noqa: E402
 
 

@@ -37,7 +37,6 @@ from typing import Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from src.engine.enums import Action
 from src.engine.ports import BAR
 
 RANGE_BARS = 3
@@ -271,13 +270,3 @@ def position_size(
             return 0, f"not enough cash (Rs {cash:,.0f}) for one share at Rs {entry:,.2f}"
         qty = min(qty, by_cash)
     return qty, None
-
-
-def intraday_fees(side: str, value: float) -> float:
-    """Approximate NSE intraday (MIS) equity costs with a flat-fee discount broker: brokerage min(Rs 20, 0.03%) per side,
-    STT 0.025% on sells, stamp 0.003% on buys, exchange 0.00297%, SEBI 0.0001%, 18% GST on brokerage+exchange+SEBI."""
-    brokerage = min(20.0, 0.0003 * value)
-    exchange, sebi = 0.0000297 * value, 0.000001 * value
-    stt = 0.00025 * value if side == Action.SELL else 0.0
-    stamp = 0.00003 * value if side == Action.BUY else 0.0
-    return brokerage + exchange + sebi + stt + stamp + 0.18 * (brokerage + exchange + sebi)
