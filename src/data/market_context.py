@@ -10,6 +10,7 @@ Honesty notes:
     research_cache; any failure returns None so the analysis proceeds without the context step instead of erroring.
   * The provider memoises the index/VIX series in memory, so the whole stock cycle shares one download.
   * VIX percentile needs ~a year of history; below that it is reported as None (neutral), never as a made-up level."""
+
 import logging
 import os
 import threading
@@ -34,6 +35,7 @@ CACHE_MAX_AGE_HOURS = 12.0  # the live bot re-downloads the index/VIX series at 
 @dataclass(frozen=True)
 class MarketContext:
     """What the stock analysis happens against, as of the latest completed bars."""
+
     index_name: str = "NIFTY 50"
     index_price: Optional[float] = None
     index_ma200: Optional[float] = None
@@ -51,9 +53,15 @@ class MarketContextProvider:
 
     `download` is injectable for tests; it must match the (tickers, start, end) signature used by the data layer."""
 
-    def __init__(self, index_ticker: str = INDEX_TICKER, vix_ticker: str = VIX_TICKER, years: int = 3,
-                 cache_dir: Optional[Path] = None, download: Optional[Callable] = None,
-                 today: Callable[[], date] = date.today):
+    def __init__(
+        self,
+        index_ticker: str = INDEX_TICKER,
+        vix_ticker: str = VIX_TICKER,
+        years: int = 3,
+        cache_dir: Optional[Path] = None,
+        download: Optional[Callable] = None,
+        today: Callable[[], date] = date.today,
+    ):
         self._index_ticker, self._vix_ticker = index_ticker, vix_ticker
         # MARKET_CACHE_DIR: a writable folder (the Docker images point it at the /data volume; the bot user cannot
         # write to /app, which silently left every market lookup empty in production until 2026-10-10).
@@ -64,9 +72,14 @@ class MarketContextProvider:
         self._memo: dict = {}  # ticker -> (monotonic load time, series or None)
 
     def _load(self, ticker: str) -> Optional[pd.Series]:
-        return load_index_close(ticker, years=self._years, cache_dir=self._cache_dir, download=self._download,
-                                today=self._today,
-                                max_age_hours=CACHE_MAX_AGE_HOURS)
+        return load_index_close(
+            ticker,
+            years=self._years,
+            cache_dir=self._cache_dir,
+            download=self._download,
+            today=self._today,
+            max_age_hours=CACHE_MAX_AGE_HOURS,
+        )
 
     def _series(self, ticker: str) -> Optional[pd.Series]:
         """The series for a ticker, memoised in memory for CACHE_MAX_AGE_HOURS so a long-running bot re-reads it daily."""

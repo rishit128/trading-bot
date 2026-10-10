@@ -1,4 +1,5 @@
 """How an LLM call fails: the one exception callers see, and the internal classification that decides what to do next."""
+
 from typing import Optional
 
 TRANSIENT, TRUNCATED, FORMAT, PERMANENT = "transient", "truncated", "format", "permanent"
@@ -6,6 +7,7 @@ TRANSIENT, TRUNCATED, FORMAT, PERMANENT = "transient", "truncated", "format", "p
 
 class LLMUnavailable(Exception):
     """Raised when every configured model failed."""
+
     pass
 
 

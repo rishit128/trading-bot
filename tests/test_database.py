@@ -5,6 +5,7 @@ schema migrations are explicit, idempotent, and never invent NOT NULL columns.
 An older database (a subset of today's `decisions`) must be *reported* out of date before anything touches it, dry-run
 must not write, becoming-current-only-via-apply must converge, and a brand-new database must already count as current
 (create_all is a create, not an upgrade)."""
+
 import multiprocessing
 import sqlite3
 import time
@@ -51,8 +52,10 @@ def test_a_concurrent_reader_process_is_never_blocked_or_rejected_by_the_writer_
     duration = 1.5
     w = multiprocessing.Process(target=_writer, args=(path, duration))
     r = multiprocessing.Process(target=_reader, args=(path, duration, errors))
-    w.start(); r.start()
-    w.join(timeout=duration + 5); r.join(timeout=duration + 5)
+    w.start()
+    r.start()
+    w.join(timeout=duration + 5)
+    r.join(timeout=duration + 5)
     assert not w.is_alive() and not r.is_alive()
     assert errors.empty(), errors.get()
 

@@ -1,4 +1,5 @@
 """Outcome labelling: the arithmetic (pure), and the database job around it (idempotent, matured-only, no lookahead)."""
+
 import json
 from datetime import date
 
@@ -29,9 +30,9 @@ def day(i):
 # ---------------------------------------------------------------- the arithmetic
 def test_entry_is_the_next_open_and_exit_is_the_close_horizon_sessions_later():
     o, c = np.full(40, 100.0), np.full(40, 100.0)
-    c[10] = 50.0    # the analysed session closed at 50: irrelevant, the bot cannot trade that close
-    o[11] = 100.0   # the next open is the entry
-    c[15] = 110.0   # 5 sessions after the analysed one
+    c[10] = 50.0  # the analysed session closed at 50: irrelevant, the bot cannot trade that close
+    o[11] = 100.0  # the next open is the entry
+    c[15] = 110.0  # 5 sessions after the analysed one
     out = forward_outcome("X", bars(o, c), day(10), 5, 0.15)
     assert out.entry_price == 100.0 and out.exit_price == 110.0 and out.gross_return == pytest.approx(0.10)
     assert out.entry_date == day(11) and out.exit_date == day(15) and out.horizon == 5 and out.symbol == "X"
@@ -39,10 +40,10 @@ def test_entry_is_the_next_open_and_exit_is_the_close_horizon_sessions_later():
 
 def test_the_worst_return_and_stop_touch_come_from_the_lows_during_the_hold_only():
     lows = np.full(40, 99.0)
-    lows[13] = 80.0    # inside the window (sessions 11..15): a 20% dip
-    lows[30] = 1.0     # long after: must not count
-    lows[9] = 1.0      # before the entry: must not count
-    lows[10] = 1.0     # the analysed session itself: the bot cannot trade it, so it must not count either
+    lows[13] = 80.0  # inside the window (sessions 11..15): a 20% dip
+    lows[30] = 1.0  # long after: must not count
+    lows[9] = 1.0  # before the entry: must not count
+    lows[10] = 1.0  # the analysed session itself: the bot cannot trade it, so it must not count either
     out = forward_outcome("X", bars(lows=lows), day(10), 5, 0.15)
     assert out.worst_return == pytest.approx(-0.20) and out.hit_stop is True
     tight = forward_outcome("X", bars(lows=lows), day(10), 5, 0.25)
@@ -51,10 +52,10 @@ def test_the_worst_return_and_stop_touch_come_from_the_lows_during_the_hold_only
 
 def test_a_session_that_has_not_matured_or_is_not_in_the_data_gives_no_label():
     b = bars()
-    assert forward_outcome("X", b, day(36), 5, 0.15) is None      # only 3 sessions after: not matured
+    assert forward_outcome("X", b, day(36), 5, 0.15) is None  # only 3 sessions after: not matured
     assert forward_outcome("X", b, day(34), 5, 0.15) is not None  # exactly 5 sessions after: matured
-    assert forward_outcome("X", b, day(35), 5, 0.15) is None      # the exit session would be one past the last bar
-    assert forward_outcome("X", b, day(39), 1, 0.15) is None      # the newest bar has no next session to enter on
+    assert forward_outcome("X", b, day(35), 5, 0.15) is None  # the exit session would be one past the last bar
+    assert forward_outcome("X", b, day(39), 1, 0.15) is None  # the newest bar has no next session to enter on
     assert forward_outcome("X", b, "2026-01-10", 5, 0.15) is None  # a Saturday: not a session, never guessed
     assert forward_outcome("X", b, "2025-12-01", 5, 0.15) is None  # before the data starts
 
@@ -77,10 +78,20 @@ def test_a_timezone_aware_index_works_and_a_bad_horizon_is_rejected():
 
 # ---------------------------------------------------------------- the database job
 def decision(symbol, bar_date, action="BUY", conf=0.7, with_column=True):
-    return DecisionRecord(symbol=symbol, price=100.0, final_action=action, final_confidence=conf, reasoning="r",
-                          risk_approved=False, risk_quantity=0, risk_reason="x", bar_date=bar_date if with_column else None,
-                          snapshot_json=json.dumps({"symbol": symbol, "price": 100.0, "ma50": 98.0, "ma200": 95.0, "rsi": 60.0,
-                                                    "volume": 1000, "bar_date": bar_date}))
+    return DecisionRecord(
+        symbol=symbol,
+        price=100.0,
+        final_action=action,
+        final_confidence=conf,
+        reasoning="r",
+        risk_approved=False,
+        risk_quantity=0,
+        risk_reason="x",
+        bar_date=bar_date if with_column else None,
+        snapshot_json=json.dumps(
+            {"symbol": symbol, "price": 100.0, "ma50": 98.0, "ma200": 95.0, "rsi": 60.0, "volume": 1000, "bar_date": bar_date}
+        ),
+    )
 
 
 def seeded(tmp_path, *rows):
@@ -92,8 +103,12 @@ def seeded(tmp_path, *rows):
 
 
 def test_every_analysed_session_is_labelled_once_at_each_matured_horizon(tmp_path):
-    sessions = seeded(tmp_path, decision("AAA", day(0)), decision("AAA", day(0), action="HOLD"),  # the same session twice
-                      decision("BBB", day(5)))
+    sessions = seeded(
+        tmp_path,
+        decision("AAA", day(0)),
+        decision("AAA", day(0), action="HOLD"),  # the same session twice
+        decision("BBB", day(5)),
+    )
     fetched = []
 
     def fetch(symbol):
@@ -104,8 +119,12 @@ def test_every_analysed_session_is_labelled_once_at_each_matured_horizon(tmp_pat
     assert summary.labelled == 4 and summary.not_mature == 0 and sorted(fetched) == ["AAA", "BBB"]  # 2 sessions x 2 horizons
     with sessions() as s:
         rows = list(s.scalars(select(OutcomeRecord)))
-    assert {(r.symbol, r.bar_date, r.horizon) for r in rows} == {("AAA", day(0), 5), ("AAA", day(0), 20),
-                                                                 ("BBB", day(5), 5), ("BBB", day(5), 20)}
+    assert {(r.symbol, r.bar_date, r.horizon) for r in rows} == {
+        ("AAA", day(0), 5),
+        ("AAA", day(0), 20),
+        ("BBB", day(5), 5),
+        ("BBB", day(5), 20),
+    }
     again = label_outcomes(sessions, fetch, horizons=(5, 20), today=date(2026, 6, 1))
     assert again.labelled == 0 and again.already_done == 4  # idempotent: nothing is labelled twice
 
@@ -121,7 +140,9 @@ def test_a_symbol_with_no_price_data_is_reported_not_guessed(tmp_path):
     sessions = seeded(tmp_path, decision("GONE", day(0)), decision("OK", day(0)))
     summary = label_outcomes(sessions, lambda s: None if s == "GONE" else bars(), horizons=(5,), today=date(2026, 3, 30))
     assert summary.labelled == 1 and summary.symbols_without_bars == ("GONE",) and summary.no_data == 1
-    broken = label_outcomes(sessions, lambda s: (_ for _ in ()).throw(ConnectionError("down")), horizons=(5,), today=date(2026, 3, 30))
+    broken = label_outcomes(
+        sessions, lambda s: (_ for _ in ()).throw(ConnectionError("down")), horizons=(5,), today=date(2026, 3, 30)
+    )
     assert broken.labelled == 0 and "GONE" in broken.symbols_without_bars  # a failing fetch is survived, and retried next run
 
 

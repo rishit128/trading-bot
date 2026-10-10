@@ -4,8 +4,15 @@ import pandas as pd
 import pytest
 
 from src.data import india
-from src.data.india import (IndiaClock, IntradayFeed, NseFileMissing, _parse_symbols, load_index_symbols,
-                            load_nse_symbols, yf_bar_fetcher)
+from src.data.india import (
+    IndiaClock,
+    IntradayFeed,
+    NseFileMissing,
+    _parse_symbols,
+    load_index_symbols,
+    load_nse_symbols,
+    yf_bar_fetcher,
+)
 
 UTC = timezone.utc
 
@@ -67,12 +74,19 @@ def test_nothing_usable_raises_a_message_saying_what_failed(tmp_path):
 def test_yahoo_list_keeps_main_board_symbols_and_drops_other_segments_and_illiquid_ones():
     from src.data.india import yahoo_nse_symbols
 
-    quotes = [{"symbol": s + ".NS", "averageDailyVolume3Month": v, "regularMarketPrice": 100.0, "financialCurrency": "INR"}
-              for s, v in (
-        ("RELIANCE", 5e6), ("BAJAJ-AUTO", 1e6), ("KLBRENG-B", 1e6),  # real symbols, hyphens included
-        ("TINY", 1e3),  # Rs 1 lakh a day: well under half the floor
-        ("NOVOL", None),  # no volume from Yahoo: kept, not guessed away
-        ("ABC-SM", 5e6), ("XYZ-IV", 5e6), ("011NSETEST", 5e6))] + [{"symbol": "AAPL"}]
+    quotes = [
+        {"symbol": s + ".NS", "averageDailyVolume3Month": v, "regularMarketPrice": 100.0, "financialCurrency": "INR"}
+        for s, v in (
+            ("RELIANCE", 5e6),
+            ("BAJAJ-AUTO", 1e6),
+            ("KLBRENG-B", 1e6),  # real symbols, hyphens included
+            ("TINY", 1e3),  # Rs 1 lakh a day: well under half the floor
+            ("NOVOL", None),  # no volume from Yahoo: kept, not guessed away
+            ("ABC-SM", 5e6),
+            ("XYZ-IV", 5e6),
+            ("011NSETEST", 5e6),
+        )
+    ] + [{"symbol": "AAPL"}]
     quotes.append({"symbol": "GOLDBEES.NS", "averageDailyVolume3Month": 5e6, "regularMarketPrice": 100.0})  # an ETF
     pages = [{"quotes": quotes[:5], "total": len(quotes)}, {"quotes": quotes[5:], "total": len(quotes)}]
     got = yahoo_nse_symbols(min_traded_value=1e8, screen=lambda offset: pages[0 if offset == 0 else 1], pause=0)
@@ -106,8 +120,11 @@ def test_no_code_downloads_from_nse_websites():
 
     root = Path(__file__).resolve().parent.parent
     pattern = re.compile(r"https?://[^\s\"']*(nseindia\.com|niftyindices\.com)")
-    offenders = [str(p.relative_to(root)) for p in [root / "main.py", *(root / "src").rglob("*.py"), *(root / "scripts").rglob("*.py")]
-                 if pattern.search(p.read_text(encoding="utf-8"))]
+    offenders = [
+        str(p.relative_to(root))
+        for p in [root / "main.py", *(root / "src").rglob("*.py"), *(root / "scripts").rglob("*.py")]
+        if pattern.search(p.read_text(encoding="utf-8"))
+    ]
     assert offenders == []
 
 
@@ -129,7 +146,11 @@ def test_bar_fetcher_returns_long_format_with_plain_symbols_and_skips_unresolvab
     fetch = yf_bar_fetcher(330, download, today=lambda: datetime(2026, 9, 21, 11, 0))
     df = fetch(["AAA", "BBB", "CCC"])
     assert seen["tickers"] == ["AAA.NS", "BBB.NS", "CCC.NS"]
-    assert seen["end"] == "2026-09-21" and seen["start"] == (date(2026, 9, 21) - timedelta(days=330)).isoformat() and seen["interval"] == "1d"
+    assert (
+        seen["end"] == "2026-09-21"
+        and seen["start"] == (date(2026, 9, 21) - timedelta(days=330)).isoformat()
+        and seen["interval"] == "1d"
+    )
     assert sorted(set(df.index.get_level_values(0))) == ["AAA", "BBB"]
     assert list(df.columns) == ["Close", "High", "Low", "Volume"] and len(df) == 10
 
@@ -151,28 +172,31 @@ def test_screener_can_consume_the_indian_bar_format():
 CLOCK = IndiaClock()
 
 
-@pytest.mark.parametrize("when,expected", [
-    (datetime(2026, 9, 18, 5, 0, tzinfo=UTC), True),     # Friday 10:30 IST
-    (datetime(2026, 9, 18, 3, 40, tzinfo=UTC), False),   # 09:10 IST: pre-open, market not trading yet
-    (datetime(2026, 9, 18, 10, 30, tzinfo=UTC), False),  # 16:00 IST: after the close
-    (datetime(2026, 9, 19, 5, 0, tzinfo=UTC), False),    # Saturday
-    (datetime(2026, 9, 20, 5, 0, tzinfo=UTC), False),    # Sunday
-    (datetime(2026, 1, 26, 5, 0, tzinfo=UTC), False),    # Republic Day (a Monday holiday)
-])
+@pytest.mark.parametrize(
+    "when,expected",
+    [
+        (datetime(2026, 9, 18, 5, 0, tzinfo=UTC), True),  # Friday 10:30 IST
+        (datetime(2026, 9, 18, 3, 40, tzinfo=UTC), False),  # 09:10 IST: pre-open, market not trading yet
+        (datetime(2026, 9, 18, 10, 30, tzinfo=UTC), False),  # 16:00 IST: after the close
+        (datetime(2026, 9, 19, 5, 0, tzinfo=UTC), False),  # Saturday
+        (datetime(2026, 9, 20, 5, 0, tzinfo=UTC), False),  # Sunday
+        (datetime(2026, 1, 26, 5, 0, tzinfo=UTC), False),  # Republic Day (a Monday holiday)
+    ],
+)
 def test_clock_matches_real_nse_sessions(when, expected):
     assert CLOCK.is_open(when) is expected
 
 
 def test_clock_open_and_close_boundaries():
-    assert CLOCK.is_open(datetime(2026, 9, 18, 3, 45, tzinfo=UTC)) is True    # 09:15 IST
-    assert CLOCK.is_open(datetime(2026, 9, 18, 9, 59, tzinfo=UTC)) is True    # 15:29 IST
-    assert CLOCK.is_open(datetime(2026, 9, 18, 10, 0, tzinfo=UTC)) is False   # 15:30 IST
+    assert CLOCK.is_open(datetime(2026, 9, 18, 3, 45, tzinfo=UTC)) is True  # 09:15 IST
+    assert CLOCK.is_open(datetime(2026, 9, 18, 9, 59, tzinfo=UTC)) is True  # 15:29 IST
+    assert CLOCK.is_open(datetime(2026, 9, 18, 10, 0, tzinfo=UTC)) is False  # 15:30 IST
 
 
 def test_clock_falls_back_to_weekday_hours_past_the_calendars_last_date():
-    assert CLOCK.is_open(datetime(2027, 6, 1, 5, 0, tzinfo=UTC)) is True     # Tuesday 10:30 IST
-    assert CLOCK.is_open(datetime(2027, 6, 5, 5, 0, tzinfo=UTC)) is False    # Saturday
-    assert CLOCK.is_open(datetime(2027, 6, 1, 12, 0, tzinfo=UTC)) is False   # 17:30 IST
+    assert CLOCK.is_open(datetime(2027, 6, 1, 5, 0, tzinfo=UTC)) is True  # Tuesday 10:30 IST
+    assert CLOCK.is_open(datetime(2027, 6, 5, 5, 0, tzinfo=UTC)) is False  # Saturday
+    assert CLOCK.is_open(datetime(2027, 6, 1, 12, 0, tzinfo=UTC)) is False  # 17:30 IST
 
 
 def test_today_ist_uses_india_date_not_utc_date():
@@ -181,8 +205,15 @@ def test_today_ist_uses_india_date_not_utc_date():
 
 def five_min_bars():
     idx = pd.date_range("2026-09-18 09:15", periods=4, freq="5min", tz="Asia/Kolkata")
-    return pd.DataFrame({"Open": [100, 101, 102, 103.0], "High": [101, 102, 103, 104.0],
-                         "Low": [99, 100, 101, 102.0], "Close": [100.5, 101.5, 102.5, 103.5]}, index=idx)
+    return pd.DataFrame(
+        {
+            "Open": [100, 101, 102, 103.0],
+            "High": [101, 102, 103, 104.0],
+            "Low": [99, 100, 101, 102.0],
+            "Close": [100.5, 101.5, 102.5, 103.5],
+        },
+        index=idx,
+    )
 
 
 def test_intraday_feed_last_price_and_bars_since():
@@ -217,8 +248,12 @@ def test_top_n_ranks_by_traded_value_so_a_stock_missing_its_market_cap_is_not_lo
     from src.data.india import yahoo_nse_symbols
 
     def q(sym, value):
-        return {"symbol": sym + ".NS", "averageDailyVolume3Month": value / 100.0, "regularMarketPrice": 100.0,
-                "financialCurrency": "INR"}
+        return {
+            "symbol": sym + ".NS",
+            "averageDailyVolume3Month": value / 100.0,
+            "regularMarketPrice": 100.0,
+            "financialCurrency": "INR",
+        }
 
     quotes = [q("MID1", 5e8), q("MID2", 4e8), q("SMALL", 1e7), q("RELIANCE", 1.4e10)]  # RELIANCE last, as Yahoo sent it
     got = yahoo_nse_symbols(top=2, screen=lambda offset: {"quotes": quotes if offset == 0 else [], "total": 4}, pause=0)

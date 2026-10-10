@@ -1,5 +1,6 @@
 """`AgentSignal.details` is typed: what is written to the audit table keeps a stable shape, and old rows (including those
 from the removed decision-memory and market-context phases) still load."""
+
 import json
 
 import pytest
@@ -10,8 +11,18 @@ from src.pipeline import details_columns
 from tests.test_agent_analysis import COMPANY, COT_GOOD, MARKET, REFLECT_OK, context, llm
 
 REAL_TOP_LEVEL = {"action", "confidence", "degraded", "details", "raw_model", "reasoning"}
-REAL_REFLECTION_KEYS = {"base_confidence_entering", "bias_check", "biggest_risk", "conviction_adjustments", "critic_confidence",
-                        "final_action", "final_confidence", "humility_reduction", "upheld", "what_proves_us_wrong"}
+REAL_REFLECTION_KEYS = {
+    "base_confidence_entering",
+    "bias_check",
+    "biggest_risk",
+    "conviction_adjustments",
+    "critic_confidence",
+    "final_action",
+    "final_confidence",
+    "humility_reduction",
+    "upheld",
+    "what_proves_us_wrong",
+}
 
 
 def full_signal():
@@ -39,17 +50,42 @@ def test_a_signal_survives_the_round_trip_through_the_audit_table():
 
 def test_a_real_stored_row_from_before_this_change_still_loads():
     """A trimmed copy of a live decision written by the old agent (learning/context sections, pattern_id, a future key)."""
-    legacy = {"action": "BUY", "confidence": 0.6, "reasoning": "r", "degraded": False, "raw_model": None, "details": {
-        "tier": "cot", "raw_model": "nvidia/nemotron-3-super-120b-a12b:free", "edge_confidence": 0.5, "confluence_score": 4,
-        "risks": ["gap"], "reasoning_chain": {"trend": "t", "overbought": "o", "volume": "v"}, "rule_alignment": "agree",
-        "falsification": "a close below 240", "base_confidence": 0.6, "pattern_id": "P>MA50+MA50>MA200|RSI50",
-        "learning": {"win_rate": 0.4}, "context": {"regime": "bull"},
-        "adjusted_signal_confidence": 0.6, "adjustment_reason": "self-critique cut confidence to 0.60",
-        "reflection": {"biggest_risk": "b", "what_proves_us_wrong": "w", "bias_check": ["anchoring"],
-                       "conviction_adjustments": [{"stage": "step1_technical", "conviction": 0.6}],
-                       "final_action": "BUY", "final_confidence": 0.6, "base_confidence_entering": 0.6,
-                       "humility_reduction": 0.1, "critic_confidence": 0.4, "upheld": True},
-        "a_key_from_the_future": 1}}
+    legacy = {
+        "action": "BUY",
+        "confidence": 0.6,
+        "reasoning": "r",
+        "degraded": False,
+        "raw_model": None,
+        "details": {
+            "tier": "cot",
+            "raw_model": "nvidia/nemotron-3-super-120b-a12b:free",
+            "edge_confidence": 0.5,
+            "confluence_score": 4,
+            "risks": ["gap"],
+            "reasoning_chain": {"trend": "t", "overbought": "o", "volume": "v"},
+            "rule_alignment": "agree",
+            "falsification": "a close below 240",
+            "base_confidence": 0.6,
+            "pattern_id": "P>MA50+MA50>MA200|RSI50",
+            "learning": {"win_rate": 0.4},
+            "context": {"regime": "bull"},
+            "adjusted_signal_confidence": 0.6,
+            "adjustment_reason": "self-critique cut confidence to 0.60",
+            "reflection": {
+                "biggest_risk": "b",
+                "what_proves_us_wrong": "w",
+                "bias_check": ["anchoring"],
+                "conviction_adjustments": [{"stage": "step1_technical", "conviction": 0.6}],
+                "final_action": "BUY",
+                "final_confidence": 0.6,
+                "base_confidence_entering": 0.6,
+                "humility_reduction": 0.1,
+                "critic_confidence": 0.4,
+                "upheld": True,
+            },
+            "a_key_from_the_future": 1,
+        },
+    }
     signal = AgentSignal(**legacy)
     assert signal.details.tier == "cot" and signal.details.reflection.upheld is True
     assert signal.details.reasoning_chain.company is None and signal.details.company_json is None

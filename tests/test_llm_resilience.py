@@ -1,5 +1,6 @@
 """The LLM client must survive what the free models really do: overloaded upstreams, answers eaten by hidden reasoning,
 prose-wrapped or malformed JSON, dead or flaky models, and the free tier's request limits."""
+
 import json
 import threading
 import time
@@ -52,14 +53,17 @@ def make(script, **kw):
 
 
 # ------------------------------------------------------------------ tolerant JSON
-@pytest.mark.parametrize("text", [
-    GOOD,
-    f"```json\n{GOOD}\n```",
-    f"Sure! Here is the JSON:\n{GOOD}\nHope that helps.",
-    "{\n" + GOOD,  # a doubled opening brace, seen from nemotron in json_object mode
-    GOOD[:-1] + ",}",  # trailing comma
-    "Use {curly braces} like so:\n```json\n" + GOOD + "\n```",  # stray braces in the prose: only the fence isolates the JSON
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        GOOD,
+        f"```json\n{GOOD}\n```",
+        f"Sure! Here is the JSON:\n{GOOD}\nHope that helps.",
+        "{\n" + GOOD,  # a doubled opening brace, seen from nemotron in json_object mode
+        GOOD[:-1] + ",}",  # trailing comma
+        "Use {curly braces} like so:\n```json\n" + GOOD + "\n```",  # stray braces in the prose: only the fence isolates the JSON
+    ],
+)
 def test_json_is_extracted_from_the_shapes_free_models_produce(text):
     assert extract_json_object(text)["action"] == "BUY"
 
@@ -83,8 +87,11 @@ def test_overloaded_upstream_is_retried_with_exponential_backoff_on_the_same_mod
 
 
 def test_retry_after_from_a_rate_limit_is_honoured():
-    limited = openai.RateLimitError("slow down", response=httpx.Response(
-        429, headers={"retry-after": "30"}, request=httpx.Request("POST", "http://x")), body=None)
+    limited = openai.RateLimitError(
+        "slow down",
+        response=httpx.Response(429, headers={"retry-after": "30"}, request=httpx.Request("POST", "http://x")),
+        body=None,
+    )
     llm, _, sleeps = make({"a": [limited, answer(GOOD)]}, backoff_base=1.0)
     llm.signal("p")
     assert sleeps == [30.0]  # longer than our own 1s backoff
@@ -146,8 +153,9 @@ def test_a_model_that_fails_repeatedly_is_benched_and_the_healthy_one_answers_fi
 
 
 def test_a_rejected_request_does_not_count_against_the_models_health():
-    bad = openai.BadRequestError("context too long", response=httpx.Response(
-        400, request=httpx.Request("POST", "http://x")), body=None)
+    bad = openai.BadRequestError(
+        "context too long", response=httpx.Response(400, request=httpx.Request("POST", "http://x")), body=None
+    )
     llm, _, _ = make({"a": [bad], "b": [answer(GOOD)]}, breaker_threshold=1)
     llm.signal("p")
     assert not llm._benched_until  # with threshold 1 a counted failure would have benched a
@@ -184,8 +192,9 @@ def test_reasoning_is_switched_off_only_when_configured():
 
 
 def test_a_model_that_rejects_the_reasoning_switch_is_asked_without_it_from_then_on():
-    bad = openai.BadRequestError("Unsupported parameter: reasoning", response=httpx.Response(
-        400, request=httpx.Request("POST", "http://x")), body=None)
+    bad = openai.BadRequestError(
+        "Unsupported parameter: reasoning", response=httpx.Response(400, request=httpx.Request("POST", "http://x")), body=None
+    )
     llm, client, _ = make({"a": [bad, answer(GOOD), answer(GOOD)]}, reasoning_off=True)
     llm.signal("p1")
     llm.signal("p2")
@@ -194,8 +203,9 @@ def test_a_model_that_rejects_the_reasoning_switch_is_asked_without_it_from_then
 
 
 def test_an_unrelated_bad_request_skips_the_model_without_retrying():
-    bad = openai.BadRequestError("context too long", response=httpx.Response(
-        400, request=httpx.Request("POST", "http://x")), body=None)
+    bad = openai.BadRequestError(
+        "context too long", response=httpx.Response(400, request=httpx.Request("POST", "http://x")), body=None
+    )
     llm, client, _ = make({"a": [bad], "b": [answer(GOOD)]})
     assert llm.signal("p").action == "BUY" and client.models_called() == ["a", "b"]
 
@@ -262,8 +272,8 @@ def test_from_settings_wires_the_production_values(monkeypatch):
 
 
 # ================================================================== agent level: validation, the fallback ladder, audit tags
-from src.agents.technical import TechnicalAgent  # noqa: E402
 from src.agents.base import AgentContext  # noqa: E402
+from src.agents.technical import TechnicalAgent  # noqa: E402
 from src.data.indicators import Snapshot  # noqa: E402
 
 UP = Snapshot("TESTCO", 250.0, 240.0, 220.0, 58.0, 1_000_000)  # the mechanical filter says BUY
@@ -271,12 +281,21 @@ DOWN = Snapshot("TESTCO", 200.0, 240.0, 220.0, 45.0, 1_000_000)  # price below M
 
 
 def cot(**over):
-    body = {"action": "BUY", "confidence": 0.8, "edge_confidence": 0.5,
-            "step1_trend": "Price is above both averages", "step2_overbought": "RSI 58 leaves room",
-            "step3_volume": "Volume is above its average", "company_check": "Profits are growing",
-            "market_check": "The market is calm", "step4_confluence": 7,
-            "step5_risks": ["earnings gap", "index sell-off"], "final_reasoning": "Clean uptrend with room to run",
-            "rule_alignment": "agree", "falsification": "A close below 240"}
+    body = {
+        "action": "BUY",
+        "confidence": 0.8,
+        "edge_confidence": 0.5,
+        "step1_trend": "Price is above both averages",
+        "step2_overbought": "RSI 58 leaves room",
+        "step3_volume": "Volume is above its average",
+        "company_check": "Profits are growing",
+        "market_check": "The market is calm",
+        "step4_confluence": 7,
+        "step5_risks": ["earnings gap", "index sell-off"],
+        "final_reasoning": "Clean uptrend with room to run",
+        "rule_alignment": "agree",
+        "falsification": "A close below 240",
+    }
     body.update(over)
     return json.dumps(body)
 
@@ -292,10 +311,17 @@ def run(agent, snap):
     return agent.analyze(AgentContext(snap.symbol, snap))
 
 
-@pytest.mark.parametrize("bad", [
-    dict(final_reasoning=""), dict(final_reasoning="n/a"), dict(step1_trend="  "), dict(step3_volume="-"),
-    dict(step5_risks=[]), dict(step5_risks=["", "  "]),
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        dict(final_reasoning=""),
+        dict(final_reasoning="n/a"),
+        dict(step1_trend="  "),
+        dict(step3_volume="-"),
+        dict(step5_risks=[]),
+        dict(step5_risks=["", "  "]),
+    ],
+)
 def test_blank_or_placeholder_reasoning_is_retried_not_traded_on(bad):
     agent, client, snap = agent_for({"a": [answer(cot(**bad)), answer(cot())]})
     signal = run(agent, snap)
@@ -351,8 +377,9 @@ def test_a_skipped_review_leaves_a_mark_in_the_audit_record():
 
 def test_the_pipeline_logs_one_health_line_per_cycle(tmp_path, caplog):
     import logging
-    from tests.test_llm_and_pipeline import FakeBroker, make_pipeline
+
     from src.engine.risk_engine import Portfolio
+    from tests.test_llm_and_pipeline import FakeBroker, make_pipeline
 
     llm, _, _ = make({"a": [overloaded(), answer(GOOD)]})
     llm.signal("p")

@@ -14,6 +14,7 @@ inability to buy a Rs 9,000 stock all matter. This module runs the actual pipeli
 
 The one stand-in is the AI: it is replaced by a constant approval confidence (`confidence`), because a backtest cannot
 replay a live LLM. Whether the AI adds anything is a separate question (ablation)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -22,20 +23,32 @@ from typing import Callable, Dict, List, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from src.research.backtest import Result, curve_metrics, simulate
 from src.config import RiskLimits
 from src.data.indicators import MIN_BARS
-from src.data.universe import (MOMENTUM_BARS, Candidate, ScreenConfig, above_median_delivery, delivery_average, rank,
-                               screen_arrays, select_candidates)
-from src.engine.costs import SLIPPAGE
-from src.engine.costs import india_delivery_fees
+from src.data.universe import (
+    MOMENTUM_BARS,
+    Candidate,
+    ScreenConfig,
+    above_median_delivery,
+    delivery_average,
+    rank,
+    screen_arrays,
+    select_candidates,
+)
+from src.engine.costs import SLIPPAGE, india_delivery_fees
+from src.research.backtest import Result, curve_metrics, simulate
 
 LIVE_LOOKBACK_DAYS = 400  # calendar days of bars the live scanner downloads (`yf_bar_fetcher`); RSI depends on the window
 DEFAULT_CONFIDENCE = 0.75  # stand-in for the AI: about the mean confidence of the live approved BUYs
 
 
-def ranked_candidates(close: pd.DataFrame, volume: pd.DataFrame, dates: Sequence[pd.Timestamp], cfg: ScreenConfig,
-                      delivery_avg: Optional[pd.DataFrame] = None) -> Dict[pd.Timestamp, List[Candidate]]:
+def ranked_candidates(
+    close: pd.DataFrame,
+    volume: pd.DataFrame,
+    dates: Sequence[pd.Timestamp],
+    cfg: ScreenConfig,
+    delivery_avg: Optional[pd.DataFrame] = None,
+) -> Dict[pd.Timestamp, List[Candidate]]:
     """For each decision date, every stock passing the live scanner, best 12-1 momentum first (no top-N cut yet).
 
     Uses only bars up to and including the date, in the same 400-calendar-day window the live scanner downloads.
@@ -73,15 +86,16 @@ def delivery_average_or_none(years: float = 3) -> Optional[pd.DataFrame]:
 
     deliv = load_delivery(years=years)
     if deliv.empty:
-        print(f"no NSE bhavcopy files in {bhavcopy_dir()}: skipping the delivery-filter window "
-              "(see README, 'Files you download')")
+        print(
+            f"no NSE bhavcopy files in {bhavcopy_dir()}: skipping the delivery-filter window (see README, 'Files you download')"
+        )
         return None
     return delivery_average(deliv)
 
 
-def make_buy_source(ranked: Dict[pd.Timestamp, List[Candidate]], cfg: ScreenConfig,
-                    confidence: float = DEFAULT_CONFIDENCE):
+def make_buy_source(ranked: Dict[pd.Timestamp, List[Candidate]], cfg: ScreenConfig, confidence: float = DEFAULT_CONFIDENCE):
     """The entry feed for `simulate`: the day's affordable top candidates in rank order, each at the stand-in confidence."""
+
     def source(signal_day, portfolio):
         picks = select_candidates(ranked.get(signal_day, []), cfg.max_candidates, portfolio.equity, cfg.affordable_pct)
         return [(c.symbol, confidence) for c in picks]
@@ -92,17 +106,26 @@ def make_buy_source(ranked: Dict[pd.Timestamp, List[Candidate]], cfg: ScreenConf
 @dataclass(frozen=True)
 class LiveRun:
     """One live-configuration backtest and how to read it."""
+
     result: Result
     capital: float
     limits: RiskLimits
 
 
-def run_live_config(bars: Dict[str, pd.DataFrame], limits: RiskLimits, cfg: ScreenConfig, capital: float,
-                    dates: Optional[Sequence[pd.Timestamp]] = None, confidence: float = DEFAULT_CONFIDENCE,
-                    delivery_avg: Optional[pd.DataFrame] = None,
-                    fees: Callable[[str, float], float] = india_delivery_fees, slippage: float = SLIPPAGE,
-                    ranked: Optional[Dict[pd.Timestamp, List[Candidate]]] = None,
-                    start: Optional[pd.Timestamp] = None, cash_yield: float = 0.0) -> LiveRun:
+def run_live_config(
+    bars: Dict[str, pd.DataFrame],
+    limits: RiskLimits,
+    cfg: ScreenConfig,
+    capital: float,
+    dates: Optional[Sequence[pd.Timestamp]] = None,
+    confidence: float = DEFAULT_CONFIDENCE,
+    delivery_avg: Optional[pd.DataFrame] = None,
+    fees: Callable[[str, float], float] = india_delivery_fees,
+    slippage: float = SLIPPAGE,
+    ranked: Optional[Dict[pd.Timestamp, List[Candidate]]] = None,
+    start: Optional[pd.Timestamp] = None,
+    cash_yield: float = 0.0,
+) -> LiveRun:
     """Run the live entry/exit/sizing/cost rules over `bars` (symbol -> OHLCV frame) from `capital`.
 
     `ranked` lets several account sizes reuse one (slow) scan, since the ranking does not depend on the account.
@@ -113,9 +136,17 @@ def run_live_config(bars: Dict[str, pd.DataFrame], limits: RiskLimits, cfg: Scre
         volume = pd.DataFrame({s: df["Volume"] for s, df in bars.items()}).sort_index()
         dates = list(close.index if dates is None else dates)
         ranked = ranked_candidates(close, volume, dates, cfg, delivery_avg)
-    result = simulate(bars, {}, limits, start_equity=capital, fees=fees, slippage=slippage,
-                      buy_source=make_buy_source(ranked, cfg, confidence), cash_yield=cash_yield,
-                      cash_yield_from=start)
+    result = simulate(
+        bars,
+        {},
+        limits,
+        start_equity=capital,
+        fees=fees,
+        slippage=slippage,
+        buy_source=make_buy_source(ranked, cfg, confidence),
+        cash_yield=cash_yield,
+        cash_yield_from=start,
+    )
     if start is not None:
         result = Result(result.equity.loc[start:], [t for t in result.trades if t.entry_date >= start], result.open_at_end)
     return LiveRun(result, capital, limits)
@@ -131,8 +162,10 @@ def summarize_run(run: LiveRun) -> dict:
     wins, losses = [p for p in pnl if p > 0], [p for p in pnl if p <= 0]
     trades = len(r.trades)
     return {
-        **m, "cagr": float(total ** (1 / years) - 1) if total > 0 else -1.0,
-        "trades": trades, "open_at_end": r.open_at_end,
+        **m,
+        "cagr": float(total ** (1 / years) - 1) if total > 0 else -1.0,
+        "trades": trades,
+        "open_at_end": r.open_at_end,
         "win_rate": len(wins) / trades if trades else 0.0,
         "expectancy_pct": float(np.mean([t.return_pct for t in r.trades])) if trades else 0.0,
         "profit_factor": (sum(wins) / -sum(losses)) if wins and losses and sum(losses) < 0 else None,
@@ -147,8 +180,7 @@ def research_setup(limits: RiskLimits) -> RiskLimits:
     return replace(limits, max_open_positions=10, min_position_pct=0.05, max_position_pct=0.05)
 
 
-def equal_weight_basket(bars: Dict[str, pd.DataFrame], start: pd.Timestamp, end: pd.Timestamp,
-                        capital: float) -> pd.Series:
+def equal_weight_basket(bars: Dict[str, pd.DataFrame], start: pd.Timestamp, end: pd.Timestamp, capital: float) -> pd.Series:
     """Daily-rebalanced equal-weight holding of every stock in the same universe (same survivorship bias as the runs)."""
     close = pd.DataFrame({s: df["Close"] for s, df in bars.items()}).sort_index().loc[start:end]
     ret = close.pct_change(fill_method=None).mean(axis=1).fillna(0.0)

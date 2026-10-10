@@ -7,6 +7,7 @@ scripts/intraday_archive.py first). Read-only: it reports and changes nothing.
   4. slices by entry time, volume surge, opening gap and market breadth, and what an account of this size can even trade
 
     python scripts/audit_intraday.py [--capital 20000] [--seeds 5]"""
+
 import argparse
 import sys
 from pathlib import Path
@@ -18,8 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.app.wiring import open_bar_archive  # noqa: E402
 from src.config import load_settings  # noqa: E402
-from src.research.intraday_audit import (HEADER, describe, evaluate, first_breakout, random_entry, stock_days,  # noqa: E402
-                                         time_bucket)
+from src.research.intraday_audit import HEADER, describe, evaluate, first_breakout, random_entry, stock_days, time_bucket  # noqa: E402
 
 
 def main():
@@ -36,9 +36,13 @@ def main():
 
     print("\n== 1. does each filter add anything? (full-bar exits) ==\n" + HEADER)
     no_filters = {"use_vwap": False, "use_volume": False, "use_range": False}
-    variants = {"the live rule (range + VWAP + volume)": {}, "without VWAP": {"use_vwap": False},
-                "without volume": {"use_volume": False}, "without the range filter": {"use_range": False},
-                "plain breakout, no filters": no_filters}
+    variants = {
+        "the live rule (range + VWAP + volume)": {},
+        "without VWAP": {"use_vwap": False},
+        "without volume": {"use_volume": False},
+        "without the range filter": {"use_range": False},
+        "plain breakout, no filters": no_filters,
+    }
     trades = {}
     for name, kw in variants.items():
         trades[name] = evaluate(days, lambda d, kw=kw: first_breakout(d, **kw))
@@ -46,13 +50,15 @@ def main():
     live = trades["the live rule (range + VWAP + volume)"]
 
     print("\n== 2. signal vs a RANDOM entry time (same stop, target, exits) ==\n" + HEADER)
-    random_trades = pd.concat([evaluate(days, lambda d, r=np.random.default_rng(seed): random_entry(d, r))
-                               for seed in range(args.seeds)])
+    random_trades = pd.concat(
+        [evaluate(days, lambda d, r=np.random.default_rng(seed): random_entry(d, r)) for seed in range(args.seeds)]
+    )
     print(describe(f"random entry ({args.seeds} seeds pooled)", random_trades))
     print(describe("the live signal", live))
     gap = live["net"].mean() - random_trades["net"].mean()
-    print(f"-> the signal's net edge over random entry: {gap:+.3%} per trade "
-          "(an edge needs this to be clearly above the ± noise)")
+    print(
+        f"-> the signal's net edge over random entry: {gap:+.3%} per trade (an edge needs this to be clearly above the ± noise)"
+    )
 
     print("\n== 3. paper-broker shortcut: only each bar's open examined vs full bars ==\n" + HEADER)
     print(describe("full-bar exits (the backtest)", live))
@@ -64,14 +70,16 @@ def main():
         print(describe(f"entry {k}", g))
     for lo, hi, name in ((1.5, 2, "volume 1.5-2x"), (2, 3, "volume 2-3x"), (3, 1e9, "volume 3x or more")):
         print(describe(name, live[(live.volume_ratio >= lo) & (live.volume_ratio < hi)]))
-    print(describe("stock gapped up >0.3%", live[live.gap > .003]))
-    print(describe("stock gapped down <-0.3%", live[live.gap < -.003]))
-    print(describe("market breadth > 60% up", live[live.breadth > .6]))
-    print(describe("market breadth < 40% up", live[live.breadth < .4]))
+    print(describe("stock gapped up >0.3%", live[live.gap > 0.003]))
+    print(describe("stock gapped down <-0.3%", live[live.gap < -0.003]))
+    print(describe("market breadth > 60% up", live[live.breadth > 0.6]))
+    print(describe("market breadth < 40% up", live[live.breadth < 0.4]))
     cap = args.capital * settings.intraday_max_position_pct
     fits = live.price <= cap
-    print(f"\nwith Rs {args.capital:,.0f} and a {settings.intraday_max_position_pct:.0%} position cap (Rs {cap:,.0f}): "
-          f"{fits.mean():.0%} of these signals can be bought, {1 - fits.mean():.0%} cost more than one position may")
+    print(
+        f"\nwith Rs {args.capital:,.0f} and a {settings.intraday_max_position_pct:.0%} position cap (Rs {cap:,.0f}): "
+        f"{fits.mean():.0%} of these signals can be bought, {1 - fits.mean():.0%} cost more than one position may"
+    )
     print(describe("  tradable", live[fits]))
     print(describe("  too dear for the account", live[~fits]))
 

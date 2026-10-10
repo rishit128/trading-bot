@@ -9,6 +9,7 @@ Migrations are a real action, never silent: default is a dry run, `--apply` is r
 the NOT-NULL guard means a schema-breaking column addition raises instead of being invented. The live
 databases (swing = $DATABASE_URL, intraday = $INTRADAY_DATABASE_URL) are upgraded this way, then the
 bot's normal startup path sees a current schema and does nothing extra."""
+
 import argparse
 import sys
 from pathlib import Path

@@ -1,6 +1,7 @@
 """The intraday command-line scripts run end to end on a small synthetic archive. They import from src and from each other, so a
 renamed function used to break them silently (the backtest script lost its symbol loader and nobody noticed): this is the
 guard."""
+
 import pickle
 import sys
 
@@ -48,15 +49,16 @@ def test_import_cache_accepts_both_pickle_layouts_and_is_idempotent(archive, tmp
     run(intraday_archive, monkeypatch, archive, "import-cache", str(plain))
     assert "added 75 bars" in capsys.readouterr().out
     run(intraday_archive, monkeypatch, archive, "import-cache", str(labelled))
-    assert "added 0 bars" in capsys.readouterr().out                                   # the same session: nothing new
+    assert "added 0 bars" in capsys.readouterr().out  # the same session: nothing new
     with pytest.raises(SystemExit):
-        run(intraday_archive, monkeypatch, archive, "import-cache")                     # no file given
+        run(intraday_archive, monkeypatch, archive, "import-cache")  # no file given
 
 
 def test_refresh_downloads_the_universe_and_stores_the_sessions(archive, monkeypatch, capsys):
     monkeypatch.setattr(intraday_archive, "select_universe", lambda explicit, size=100: (["AAA"], "a test universe"))
-    monkeypatch.setattr(intraday_archive, "fetch_5m_bars",
-                        lambda symbols, period: {"AAA": scripted_session(0)} if period == "59d" else {})
+    monkeypatch.setattr(
+        intraday_archive, "fetch_5m_bars", lambda symbols, period: {"AAA": scripted_session(0)} if period == "59d" else {}
+    )
     run(intraday_archive, monkeypatch, archive, "refresh")
     out = capsys.readouterr().out
     assert "downloading 59 sessions for 1 stocks [a test universe]" in out and "added 75 bars" in out and "1 sessions" in out
@@ -81,8 +83,12 @@ def test_the_audit_script_prints_all_four_sections(archive, monkeypatch, capsys)
     filled(archive, days=4, stocks=10)
     run(audit_intraday, monkeypatch, archive, "--seeds", "1", "--capital", "20000")
     out = capsys.readouterr().out
-    for heading in ("== 1. does each filter add anything?", "== 2. signal vs a RANDOM entry time", "== 3. paper-broker shortcut",
-                    "== 4. slices of the live rule"):
+    for heading in (
+        "== 1. does each filter add anything?",
+        "== 2. signal vs a RANDOM entry time",
+        "== 3. paper-broker shortcut",
+        "== 4. slices of the live rule",
+    ):
         assert heading in out
     assert "the signal's net edge over random entry" in out and "too dear for the account" in out
     empty = BarArchive(make_session_factory("sqlite://"))
@@ -94,8 +100,14 @@ def test_the_research_script_reports_every_hypothesis_and_a_verdict(archive, mon
     filled(archive, days=4, stocks=10)
     run(research_intraday, monkeypatch, archive, "--seeds", "1")
     out = capsys.readouterr().out
-    for name in ("C  ORB long (the live rule)", "H1 ORB short", "H2 gap-and-go", "H3 gap fade", "H4 first-hour momentum",
-                 "H5 last-half-hour momentum"):
+    for name in (
+        "C  ORB long (the live rule)",
+        "H1 ORB short",
+        "H2 gap-and-go",
+        "H3 gap fade",
+        "H4 first-hour momentum",
+        "H5 last-half-hour momentum",
+    ):
         assert name in out
     assert "CANDIDATES:" in out and "criteria: >= 300 trades" in out
     with pytest.raises(SystemExit, match="archive is empty"):

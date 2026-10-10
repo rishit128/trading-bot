@@ -12,15 +12,16 @@ confidence, not as a veto (STRATEGY.md, 2026-10-09).
 
 Reflection (`use_reflect`) is a veto-only critic of a BUY/SELL: if it changes the action the call is dropped; if it
 upholds it the confidence is left alone. The analysis degrades to a HOLD only if the first call fails on every model."""
+
 import logging
 
-from src.agents.base import LEAD, AgentContext, fail_safe_hold
 import src.agents.technical.phases as phases
 import src.agents.technical.prompts as prompts
+from src.agents.base import LEAD, AgentContext, fail_safe_hold
 from src.agents.technical.prompts import mechanical_action
 from src.agents.technical.schemas import COT_SCHEMA, REFLECT_SCHEMA, AdvancedSignal, ReflectionChain
-from src.engine.enums import Action
 from src.engine.agent_signal import AgentSignal, SignalDetails
+from src.engine.enums import Action
 from src.llm import LLMClient, LLMUnavailable
 
 log = logging.getLogger(__name__)
@@ -53,14 +54,12 @@ class TechnicalAgent:
         if not self.use_cot:
             return self.llm.signal(prompts.simple_prompt(ctx.snapshot))
         try:
-            advanced = self.llm.structured_call(prompts.cot_prompt(ctx.snapshot, market, company), AdvancedSignal,
-                                                COT_SCHEMA)
+            advanced = self.llm.structured_call(prompts.cot_prompt(ctx.snapshot, market, company), AdvancedSignal, COT_SCHEMA)
         except LLMUnavailable as e:
             log.warning("full analysis failed for %s (%s); trying the compact prompt", ctx.symbol, str(e)[:200])
             compact = self.llm.signal(prompts.simple_prompt(ctx.snapshot))
             details = SignalDetails(tier="compact", cot_failure=str(e)[:300], raw_model=compact.raw_model or None)
-            return AgentSignal(action=compact.action, confidence=compact.confidence, reasoning=compact.reasoning,
-                               details=details)
+            return AgentSignal(action=compact.action, confidence=compact.confidence, reasoning=compact.reasoning, details=details)
         # Whether the call departs from the mechanical filter is a fact we can compute; a model's own claim about it is
         # unreliable (the live logs showed it labelling a HOLD "deviate" while quoting the filter's BUY), so overwrite it.
         advanced.rule_alignment = "agree" if advanced.action == mechanical_action(ctx.snapshot) else "deviate"
@@ -70,7 +69,9 @@ class TechnicalAgent:
         try:
             out = self.llm.structured_call(
                 prompts.reflection_prompt(base, ctx.symbol, phases.review_summary(base, market, company)),
-                ReflectionChain, REFLECT_SCHEMA)
+                ReflectionChain,
+                REFLECT_SCHEMA,
+            )
         except LLMUnavailable:
             log.warning("reflection failed for %s, keeping current call", ctx.symbol)
             return phases.tag(base, "reflection_skipped", True)
@@ -83,10 +84,13 @@ class TechnicalAgent:
         section = phases.reflection_details(base, out, steps, final_confidence, critic_confidence, upheld)
         details = (base.details or SignalDetails()).model_copy(update={"reflection": section})
         verdict = "upheld" if upheld else f"vetoed to {out.action}"
-        return AgentSignal(action=out.action, confidence=final_confidence,
-                           reasoning=f"{base.reasoning} [reflection {verdict}: {steps[-1][2]} (critic conviction "
-                                     f"{critic_confidence:.2f})]",
-                           degraded=base.degraded, details=details)
+        return AgentSignal(
+            action=out.action,
+            confidence=final_confidence,
+            reasoning=f"{base.reasoning} [reflection {verdict}: {steps[-1][2]} (critic conviction {critic_confidence:.2f})]",
+            degraded=base.degraded,
+            details=details,
+        )
 
     def analyze(self, ctx: AgentContext) -> AgentSignal:
         """Return the AI's signal, or a fail-safe HOLD flagged as degraded if every model fails on the FIRST call."""

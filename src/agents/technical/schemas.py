@@ -1,17 +1,19 @@
 """What the agent asks the model to return: pydantic models (validated on the way in) and the JSON schemas sent with each
 request (so the model is constrained on the way out). One pair per call: the analysis and the six-stage critique."""
+
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from src.engine.agent_signal import AgentSignal, ReasoningChain, SignalDetails
 from src.engine.enums import ACTION_VALUES, Action
-from src.engine.agent_signal import ReasoningChain, AgentSignal, SignalDetails
 
 PLACEHOLDERS = {"n/a", "na", "none", "null", "unknown", "tbd", "todo", "string", "...", "-", "--"}
 
 
 class AdvancedSignal(BaseModel):
     """The chain-of-thought output: a decision plus its step-by-step reasoning, risks and edge rating."""
+
     action: Action
     confidence: float = Field(ge=0.0, le=1.0)
     edge_confidence: float = Field(ge=0.0, le=1.0)
@@ -53,10 +55,21 @@ class AdvancedSignal(BaseModel):
     def to_signal(self) -> AgentSignal:
         """Map to the pipeline's AgentSignal, stashing the reasoning chain so it is logged, persisted and replay-able."""
         details = SignalDetails(
-            tier="cot", edge_confidence=self.edge_confidence, confluence_score=self.step4_confluence, risks=self.step5_risks,
-            reasoning_chain=ReasoningChain(trend=self.step1_trend, overbought=self.step2_overbought, volume=self.step3_volume,
-                                           company=self.company_check, market=self.market_check),
-            raw_model=self.raw_model, rule_alignment=self.rule_alignment, falsification=self.falsification)
+            tier="cot",
+            edge_confidence=self.edge_confidence,
+            confluence_score=self.step4_confluence,
+            risks=self.step5_risks,
+            reasoning_chain=ReasoningChain(
+                trend=self.step1_trend,
+                overbought=self.step2_overbought,
+                volume=self.step3_volume,
+                company=self.company_check,
+                market=self.market_check,
+            ),
+            raw_model=self.raw_model,
+            rule_alignment=self.rule_alignment,
+            falsification=self.falsification,
+        )
         return AgentSignal(action=self.action, confidence=self.confidence, reasoning=self.final_reasoning, details=details)
 
 
@@ -80,8 +93,21 @@ COT_SCHEMA = {
             "rule_alignment": {"type": "string", "enum": ["agree", "deviate"]},
             "falsification": {"type": "string"},
         },
-        "required": ["action", "confidence", "edge_confidence", "step1_trend", "step2_overbought", "step3_volume",
-                     "company_check", "market_check", "step4_confluence", "step5_risks", "final_reasoning", "rule_alignment", "falsification"],
+        "required": [
+            "action",
+            "confidence",
+            "edge_confidence",
+            "step1_trend",
+            "step2_overbought",
+            "step3_volume",
+            "company_check",
+            "market_check",
+            "step4_confluence",
+            "step5_risks",
+            "final_reasoning",
+            "rule_alignment",
+            "falsification",
+        ],
         "additionalProperties": False,
     },
 }
@@ -89,6 +115,7 @@ COT_SCHEMA = {
 
 class ReflectionStage(BaseModel):
     """One stage of the reflection self-critique: a conviction level 0-1 plus a one-sentence reason."""
+
     conviction: float = Field(ge=0.0, le=1.0)
     reason: str
 
@@ -143,8 +170,18 @@ REFLECT_SCHEMA = {
             "what_proves_us_wrong": {"type": "string"},
             "bias_check": {"type": "array", "items": {"type": "string"}},
         },
-        "required": ["action", "confidence", "step2_reflection", "step3_fundamental", "step4_macro",
-                     "step5_integration", "step6_risk", "biggest_risk", "what_proves_us_wrong", "bias_check"],
+        "required": [
+            "action",
+            "confidence",
+            "step2_reflection",
+            "step3_fundamental",
+            "step4_macro",
+            "step5_integration",
+            "step6_risk",
+            "biggest_risk",
+            "what_proves_us_wrong",
+            "bias_check",
+        ],
         "additionalProperties": False,
     },
 }

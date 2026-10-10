@@ -1,6 +1,7 @@
 """Golden tests: one full trading cycle over nine deliberately different situations, pinned end to end (results, broker
 calls, audit rows, alerts). They describe what the bot does TODAY; a restructuring that changes any line here has
 changed behaviour, not just structure, and must say so."""
+
 from pathlib import Path
 
 from tests.characterization import build, observe
@@ -52,8 +53,13 @@ def test_a_live_cycle_over_nine_situations(tmp_path: Path):
 def test_the_same_cycle_as_a_dry_run_records_everything_and_places_nothing(tmp_path: Path):
     seen = observe(*build(tmp_path, dry_run=True))
     assert seen["broker_buys"] == [] and seen["broker_sells"] == []
-    assert seen["orders"] == [("COOL", "BUY", 5, "filled"), ("NEWBUY", "BUY", 50, "DRY_RUN"), ("HELD2", "SELL", 100, "DRY_RUN"),
-                              ("OPENORD", "BUY", 50, "DRY_RUN"), ("COOL", "BUY", 50, "SKIPPED_COOLDOWN")]
+    assert seen["orders"] == [
+        ("COOL", "BUY", 5, "filled"),
+        ("NEWBUY", "BUY", 50, "DRY_RUN"),
+        ("HELD2", "SELL", 100, "DRY_RUN"),
+        ("OPENORD", "BUY", 50, "DRY_RUN"),
+        ("COOL", "BUY", 50, "SKIPPED_COOLDOWN"),
+    ]
     assert seen["alerts"] == ["ERROR processing BROKEN: ValueError: BROKEN: no market data returned"]
     assert seen["decisions"] == LIVE["decisions"] and seen["results"][0][5] == "DRY_RUN"  # same decisions, different execution
 

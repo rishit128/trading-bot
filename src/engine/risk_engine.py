@@ -1,4 +1,5 @@
 """The deterministic risk gate. It is the only place order quantity is decided."""
+
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
@@ -9,6 +10,7 @@ from src.engine.enums import Action
 @dataclass(frozen=True)
 class Portfolio:
     """Account state the risk engine judges a trade against."""
+
     cash: float
     equity: float
     positions: dict = field(default_factory=dict)  # symbol -> market value in account currency
@@ -20,6 +22,7 @@ class Portfolio:
 @dataclass(frozen=True)
 class RiskDecision:
     """Approved or rejected, with the share quantity and the reason."""
+
     approved: bool
     quantity: int
     reason: str
@@ -117,13 +120,15 @@ class RiskEngine:
         budget = min(position_room, exposure_room, p.cash)
 
         if budget < price:
-            return _reject(
-                f"no room: position_room={position_room:,.0f} exposure_room={exposure_room:,.0f} cash={p.cash:,.0f}"
-            )
+            return _reject(f"no room: position_room={position_room:,.0f} exposure_room={exposure_room:,.0f} cash={p.cash:,.0f}")
         qty = int(budget // price)
         if self.fees is not None and lim.max_fee_drag_pct > 0:
             value = qty * price
             drag = (self.fees(Action.BUY, value) + self.fees(Action.SELL, value)) / value
             if drag > lim.max_fee_drag_pct:
-                return _reject(f"fees would cost {drag:.1%} of a {value:,.0f} position (limit {lim.max_fee_drag_pct:.1%}): too small to be worth trading")
-        return RiskDecision(True, qty, f"approved {qty} shares (value {qty * price:,.0f}, sized at {pct:.1%} for confidence {confidence:.2f})")
+                return _reject(
+                    f"fees would cost {drag:.1%} of a {value:,.0f} position (limit {lim.max_fee_drag_pct:.1%}): too small to be worth trading"
+                )
+        return RiskDecision(
+            True, qty, f"approved {qty} shares (value {qty * price:,.0f}, sized at {pct:.1%} for confidence {confidence:.2f})"
+        )

@@ -1,7 +1,8 @@
 """Re-examine stored decisions: the exact prompt the AI saw, what each agent said, and whether the rules reproduce the result.
 
-  python scripts/replay_decision.py 42        one decision by id
-  python scripts/replay_decision.py --last 5  the five most recent decisions"""
+python scripts/replay_decision.py 42        one decision by id
+python scripts/replay_decision.py --last 5  the five most recent decisions"""
+
 import argparse
 import sys
 from pathlib import Path
@@ -32,12 +33,20 @@ def show(r):
                 print(f"      tier: {d.tier}" + (f" (full prompt failed: {d.cot_failure})" if d.cot_failure else ""))
             chain = d.reasoning_chain
             if chain:
-                for step, text in (("trend", chain.trend), ("overbought", chain.overbought), ("volume", chain.volume),
-                                   ("company", chain.company), ("market", chain.market)):
+                for step, text in (
+                    ("trend", chain.trend),
+                    ("overbought", chain.overbought),
+                    ("volume", chain.volume),
+                    ("company", chain.company),
+                    ("market", chain.market),
+                ):
                     if text:
                         print(f"      {step}: {text}")
-            print(f"      confluence: {d.confluence_score} / edge confidence: {d.edge_confidence:.2f}"
-                  if d.edge_confidence is not None else f"      confluence: {d.confluence_score}")
+            print(
+                f"      confluence: {d.confluence_score} / edge confidence: {d.edge_confidence:.2f}"
+                if d.edge_confidence is not None
+                else f"      confluence: {d.confluence_score}"
+            )
             if d.risks:
                 print(f"      risks: {' | '.join(d.risks)}")
             if d.adjustment_reason:
@@ -46,8 +55,10 @@ def show(r):
             if reflection:
                 trail = " -> ".join(f"{c.stage}={c.conviction:.2f}" for c in reflection.conviction_adjustments)
                 verdict_word = {True: "upheld", False: "VETOED", None: ""}[reflection.upheld]
-                print(f"      reflection {verdict_word}: conviction {trail} (final {reflection.final_action} "
-                      f"conf {reflection.final_confidence:.2f})")
+                print(
+                    f"      reflection {verdict_word}: conviction {trail} (final {reflection.final_action} "
+                    f"conf {reflection.final_confidence:.2f})"
+                )
                 print(f"        biggest risk: {reflection.biggest_risk} | exit if: {reflection.what_proves_us_wrong}")
                 if reflection.bias_check:
                     print(f"        biases checked: {' | '.join(reflection.bias_check)}")

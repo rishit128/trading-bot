@@ -74,16 +74,30 @@ def test_older_database_without_signals_column_is_upgraded_in_place(tmp_path):
         technical_action VARCHAR(8) NOT NULL, technical_confidence FLOAT NOT NULL, sentiment_action VARCHAR(8),
         sentiment_confidence FLOAT, final_action VARCHAR(8), final_confidence FLOAT, reasoning TEXT,
         risk_approved BOOLEAN, risk_quantity INTEGER, risk_reason TEXT)""")
-    con.execute("INSERT INTO decisions (symbol, price, technical_action, technical_confidence, final_action, final_confidence,"
-                " reasoning, risk_approved, risk_quantity, risk_reason) VALUES ('OLD', 1.0, 'BUY', 0.5, 'BUY', 0.5, 'r', 1, 1, 'x')")
+    con.execute(
+        "INSERT INTO decisions (symbol, price, technical_action, technical_confidence, final_action, final_confidence,"
+        " reasoning, risk_approved, risk_quantity, risk_reason) VALUES ('OLD', 1.0, 'BUY', 0.5, 'BUY', 0.5, 'r', 1, 1, 'x')"
+    )
     con.commit()
     con.close()
 
     sessions = make_session_factory(f"sqlite:///{path}")
     with sessions() as s:
-        s.add(DecisionRecord(symbol="NEW", price=2.0, technical_action="BUY", technical_confidence=0.9, final_action="BUY",
-                             final_confidence=0.9, reasoning="r", risk_approved=True, risk_quantity=1, risk_reason="x",
-                             signals_json='{"technical": null}'))
+        s.add(
+            DecisionRecord(
+                symbol="NEW",
+                price=2.0,
+                technical_action="BUY",
+                technical_confidence=0.9,
+                final_action="BUY",
+                final_confidence=0.9,
+                reasoning="r",
+                risk_approved=True,
+                risk_quantity=1,
+                risk_reason="x",
+                signals_json='{"technical": null}',
+            )
+        )
         s.commit()
         rows = {r.symbol: r.signals_json for r in s.scalars(select(DecisionRecord))}
     assert rows == {"OLD": None, "NEW": '{"technical": null}'}
@@ -142,8 +156,9 @@ def test_a_waiting_snapshot_is_not_cached_for_the_session_so_the_next_cycle_pick
     published = pd.concat([late, daily_bars(1).set_axis([late.index[-1] + pd.offsets.BDay(1)])])
     downloads = iter([late, published])
     session = date(2026, 9, 21)
-    get = cached_per_session(lambda s: fetch_snapshot(s, as_of=lambda: session, download=lambda *a, **k: next(downloads)),
-                             lambda: session)
+    get = cached_per_session(
+        lambda s: fetch_snapshot(s, as_of=lambda: session, download=lambda *a, **k: next(downloads)), lambda: session
+    )
     with pytest.raises(BarNotReadyError):
         get("X")
     assert get("X").bar_date == "2026-09-21"
@@ -171,15 +186,18 @@ def test_snapshot_keeps_plain_symbol_and_passes_the_yahoo_suffix():
 CLOCK = IndiaClock()
 
 
-@pytest.mark.parametrize("now,expected", [
-    (datetime(2026, 9, 21, 5, 0, tzinfo=UTC), date(2026, 9, 18)),    # Monday 10:30 IST, market open -> Friday's close
-    (datetime(2026, 9, 21, 11, 30, tzinfo=UTC), date(2026, 9, 21)),  # Monday 17:00 IST, after the close -> today's
-    (datetime(2026, 9, 20, 8, 0, tzinfo=UTC), date(2026, 9, 18)),    # Sunday -> Friday
-    (datetime(2026, 1, 26, 5, 0, tzinfo=UTC), date(2026, 1, 23)),    # Republic Day Monday -> previous Friday
-    (datetime(2027, 6, 1, 5, 0, tzinfo=UTC), date(2027, 5, 31)),     # past the calendar: weekday fallback, during hours
-    (datetime(2027, 6, 1, 11, 30, tzinfo=UTC), date(2027, 6, 1)),    # past the calendar, after 15:30 IST
-    (datetime(2027, 6, 6, 5, 0, tzinfo=UTC), date(2027, 6, 4)),      # past the calendar, Sunday -> Friday
-])
+@pytest.mark.parametrize(
+    "now,expected",
+    [
+        (datetime(2026, 9, 21, 5, 0, tzinfo=UTC), date(2026, 9, 18)),  # Monday 10:30 IST, market open -> Friday's close
+        (datetime(2026, 9, 21, 11, 30, tzinfo=UTC), date(2026, 9, 21)),  # Monday 17:00 IST, after the close -> today's
+        (datetime(2026, 9, 20, 8, 0, tzinfo=UTC), date(2026, 9, 18)),  # Sunday -> Friday
+        (datetime(2026, 1, 26, 5, 0, tzinfo=UTC), date(2026, 1, 23)),  # Republic Day Monday -> previous Friday
+        (datetime(2027, 6, 1, 5, 0, tzinfo=UTC), date(2027, 5, 31)),  # past the calendar: weekday fallback, during hours
+        (datetime(2027, 6, 1, 11, 30, tzinfo=UTC), date(2027, 6, 1)),  # past the calendar, after 15:30 IST
+        (datetime(2027, 6, 6, 5, 0, tzinfo=UTC), date(2027, 6, 4)),  # past the calendar, Sunday -> Friday
+    ],
+)
 def test_last_completed_session(now, expected):
     assert CLOCK.last_completed_session(now) == expected
 
@@ -235,22 +253,29 @@ def five_minute_session(day, closes_from=100.0, last="15:25", bars=75):
     idx = pd.date_range(start, periods=bars, freq="5min")
     idx = idx[idx.time <= pd.Timestamp(f"{day} {last}").time()]
     close = [closes_from + i for i in range(len(idx))]
-    return pd.DataFrame({"Open": close, "High": [c + 0.5 for c in close], "Low": [c - 0.5 for c in close],
-                         "Close": close, "Volume": 100.0}, index=idx)
+    return pd.DataFrame(
+        {"Open": close, "High": [c + 0.5 for c in close], "Low": [c - 0.5 for c in close], "Close": close, "Volume": 100.0},
+        index=idx,
+    )
 
 
 def test_a_late_daily_bar_is_completed_from_a_full_session_of_five_minute_bars():
     bars = daily_bars()  # ends Friday 2026-09-18; Monday's daily bar is not posted yet
-    snap = fetch_snapshot("X", as_of=lambda: date(2026, 9, 21), download=lambda *a, **k: bars,
-                          intraday=lambda s: five_minute_session("2026-09-21"))
+    snap = fetch_snapshot(
+        "X", as_of=lambda: date(2026, 9, 21), download=lambda *a, **k: bars, intraday=lambda s: five_minute_session("2026-09-21")
+    )
     assert snap.bar_date == "2026-09-21" and snap.price == 174.0 and snap.volume == 7500
 
 
 def test_a_partial_five_minute_session_is_not_used_and_the_stock_still_waits():
     bars = daily_bars()
     with pytest.raises(BarNotReadyError):
-        fetch_snapshot("X", as_of=lambda: date(2026, 9, 21), download=lambda *a, **k: bars,
-                       intraday=lambda s: five_minute_session("2026-09-21", last="13:00"))
+        fetch_snapshot(
+            "X",
+            as_of=lambda: date(2026, 9, 21),
+            download=lambda *a, **k: bars,
+            intraday=lambda s: five_minute_session("2026-09-21", last="13:00"),
+        )
 
 
 def test_a_failing_five_minute_feed_only_means_waiting():

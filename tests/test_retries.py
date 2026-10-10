@@ -1,4 +1,5 @@
 """Transient network failures are retried once (or twice); definite answers about the data are not."""
+
 import json
 
 import httpx
@@ -6,8 +7,8 @@ import pandas as pd
 import pytest
 from langgraph.types import RetryPolicy
 
-from src.data.indicators import StaleDataError
 from src.data.india import IntradayFeed
+from src.data.indicators import StaleDataError
 from src.data.retry import is_transient_data_error, retry_call
 from src.monitoring.telegram import Notifier
 from src.workflow import build_analysis_graph, build_cycle_graph, build_decision_graph
@@ -43,8 +44,10 @@ def test_the_last_failure_is_reraised_unchanged_when_every_attempt_fails():
     assert len(calls) == 3
 
 
-@pytest.mark.parametrize("error", [ValueError("no market data returned"), StaleDataError("last bar is old"),
-                                   ValueError("need 200 bars for MA200, got 12")])
+@pytest.mark.parametrize(
+    "error",
+    [ValueError("no market data returned"), StaleDataError("last bar is old"), ValueError("need 200 bars for MA200, got 12")],
+)
 def test_a_definite_answer_about_the_data_is_never_retried(error):
     fn, calls = flaky(9, error=error)
     with pytest.raises(type(error)):
@@ -141,7 +144,8 @@ class FlakySnapshot(FakeServices):
 def run(services):
     analysis = build_analysis_graph(services, snapshot_retry=FAST)
     return build_cycle_graph(services, analysis, build_decision_graph(services)).invoke(
-        {"symbols": []}, config={"max_concurrency": 2})["results"]
+        {"symbols": []}, config={"max_concurrency": 2}
+    )["results"]
 
 
 def test_a_transient_snapshot_failure_costs_one_retry_not_the_stock_for_the_cycle():

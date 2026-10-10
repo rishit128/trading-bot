@@ -45,6 +45,7 @@ def telegram_transport(updates, sent):
             return httpx.Response(200, json={"ok": True, "result": updates})
         sent.append(json.loads(request.content))
         return httpx.Response(200, json={"ok": True})
+
     return httpx.MockTransport(handler)
 
 
@@ -138,8 +139,18 @@ def test_positions_command_shows_buy_date_price_and_profit_when_the_broker_has_h
 
     class Detailed(FakeBroker):
         def holdings(self):
-            return [{"symbol": "RELIANCE", "qty": 10, "avg_price": 100.0, "price": 110.0, "pnl": 100.0, "pnl_pct": 0.1, "stop": 92.0,
-                     "opened_at": datetime(2026, 9, 21, tzinfo=timezone.utc)}]
+            return [
+                {
+                    "symbol": "RELIANCE",
+                    "qty": 10,
+                    "avg_price": 100.0,
+                    "price": 110.0,
+                    "pnl": 100.0,
+                    "pnl_pct": 0.1,
+                    "stop": 92.0,
+                    "opened_at": datetime(2026, 9, 21, tzinfo=timezone.utc),
+                }
+            ]
 
     text = handle_command("/positions", control, Detailed(Portfolio(1, 1)), SETTINGS)
     assert isinstance(text, Html) and "<b>RELIANCE</b>  🟢 +10.0% (+₹100)" in text
@@ -151,9 +162,19 @@ def test_history_command_and_html_replies_are_sent_with_parse_mode(control):
 
     class Detailed(FakeBroker):
         def trade_history(self):
-            return [{"symbol": "A<B", "qty": 5, "entry_price": 100.0, "exit_price": 90.0, "reason": "STOP", "fees": 12.0,
-                     "net_pnl": -62.0, "opened_at": datetime(2026, 9, 21, tzinfo=timezone.utc),
-                     "closed_at": datetime(2026, 9, 25, tzinfo=timezone.utc)}]
+            return [
+                {
+                    "symbol": "A<B",
+                    "qty": 5,
+                    "entry_price": 100.0,
+                    "exit_price": 90.0,
+                    "reason": "STOP",
+                    "fees": 12.0,
+                    "net_pnl": -62.0,
+                    "opened_at": datetime(2026, 9, 21, tzinfo=timezone.utc),
+                    "closed_at": datetime(2026, 9, 25, tzinfo=timezone.utc),
+                }
+            ]
 
     text = handle_command("/history", control, Detailed(Portfolio(1, 1)), SETTINGS)
     assert "A&lt;B" in text and "🔴 -10.0% (-₹62)" in text and "21 Sep → 25 Sep" in text and "Realised net</b>  -₹62" in text
@@ -167,8 +188,18 @@ def test_intraday_commands_show_the_separate_account(control):
 
     class Intra(FakeBroker):
         def holdings(self):
-            return [{"symbol": "ORB1", "qty": 10, "avg_price": 100.0, "price": 101.0, "pnl": 10.0, "pnl_pct": 0.01,
-                     "stop": 99.0, "opened_at": datetime(2026, 9, 21, tzinfo=timezone.utc)}]
+            return [
+                {
+                    "symbol": "ORB1",
+                    "qty": 10,
+                    "avg_price": 100.0,
+                    "price": 101.0,
+                    "pnl": 10.0,
+                    "pnl_pct": 0.01,
+                    "stop": 99.0,
+                    "opened_at": datetime(2026, 9, 21, tzinfo=timezone.utc),
+                }
+            ]
 
         def trade_history(self):
             return []
@@ -184,9 +215,17 @@ def test_pnl_command_shows_swing_and_intraday_broken_down_by_day_and_week_and_co
     from datetime import datetime, timezone
 
     def trade(day, net_pnl, symbol="A"):
-        return {"symbol": symbol, "qty": 1, "entry_price": 100.0, "exit_price": 100.0 + net_pnl, "reason": "SIGNAL",
-                "fees": 1.0, "net_pnl": net_pnl, "opened_at": datetime(*day, tzinfo=timezone.utc),
-                "closed_at": datetime(*day, tzinfo=timezone.utc)}
+        return {
+            "symbol": symbol,
+            "qty": 1,
+            "entry_price": 100.0,
+            "exit_price": 100.0 + net_pnl,
+            "reason": "SIGNAL",
+            "fees": 1.0,
+            "net_pnl": net_pnl,
+            "opened_at": datetime(*day, tzinfo=timezone.utc),
+            "closed_at": datetime(*day, tzinfo=timezone.utc),
+        }
 
     class Swing(FakeBroker):
         def trade_history(self):
@@ -209,13 +248,16 @@ def test_pnl_command_works_with_no_intraday_account_and_no_closed_trades(control
 
     assert handle_command("/pnl", control, Empty(Portfolio(1, 1)), SETTINGS) == Html(
         "📈 <b>Profit / loss</b>\n\n<b>Swing</b>  +₹0  (0 closed trades)\n<u>by day</u>\nno closed trades yet\n"
-        "<u>by week</u>\nno closed trades yet")
-    assert handle_command("/pnl", control, FakeBroker(Portfolio(1, 1)), SETTINGS) == HELP  # no trade_history: not a ListsTrades broker
+        "<u>by week</u>\nno closed trades yet"
+    )
+    assert (
+        handle_command("/pnl", control, FakeBroker(Portfolio(1, 1)), SETTINGS) == HELP
+    )  # no trade_history: not a ListsTrades broker
 
 
 def test_pnl_period_lines_skip_zero_trade_rows(control):
-    from src.monitoring.telegram import _period_lines
     from src.engine.paper_report import PeriodPnl
+    from src.monitoring.telegram import _period_lines
 
     rows = [PeriodPnl("2026-09-29", 1, 1, 10.0, 1.0), PeriodPnl("2026-09-30", 0, 0, 0.0, 0.0)]
     assert _period_lines(rows, "₹") == "2026-09-29  +₹10  (1 trade)"
@@ -226,14 +268,16 @@ def test_a_polling_conflict_is_explained_once_in_the_chat_and_rate_limited_in_th
 
     def handler(request: httpx.Request):
         if request.url.path.endswith("/getUpdates"):
-            return httpx.Response(409, json={"ok": False, "error_code": 409,
-                                             "description": "Conflict: terminated by other getUpdates request"})
+            return httpx.Response(
+                409, json={"ok": False, "error_code": 409, "description": "Conflict: terminated by other getUpdates request"}
+            )
         sent.append(json.loads(request.content))
         return httpx.Response(200, json={"ok": True})
 
     caplog.set_level(logging.WARNING)
-    listener = CommandListener("SECRET-TOKEN-123", "111", lambda text: "ok",
-                               client=httpx.Client(transport=httpx.MockTransport(handler)))
+    listener = CommandListener(
+        "SECRET-TOKEN-123", "111", lambda text: "ok", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
     for _ in range(3):
         try:
             listener.poll_once()

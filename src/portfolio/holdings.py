@@ -3,6 +3,7 @@
 The primary source is the Portfolio Analyzer's holdings statement (`from_portfolio_analyzer`, a known layout). As a
 fallback, `from_tables` / `from_json` look for a holdings table by its column headings; anything found that way must add
 up to the portal's own total value (`plausible`), or it is rejected rather than reported."""
+
 import json
 import re
 from dataclasses import asdict, dataclass
@@ -19,11 +20,11 @@ COLUMNS = {  # field -> heading words, most specific first
 }
 NOT_TOTAL_PNL = re.compile(r"day", re.I)  # "Day's Gain" / "Today's P&L" is not the holding's total profit/loss
 SKIP_ROWS = re.compile(r"^(total|grand total|net|summary)\b", re.I)
-CONCENTRATED = 0.20      # one holding above 20% of the portfolio
-SECTOR_HEAVY = 0.30      # one sector above 30%
-TOP5_HEAVY = 0.60        # the five largest above 60%
-DEEP_LOSS = -0.25        # a holding 25% or more below its average cost
-MIN_COST_SHARE = 0.005   # a recorded cost under 0.5% of the value is treated as "no cost recorded" (demerger/bonus)
+CONCENTRATED = 0.20  # one holding above 20% of the portfolio
+SECTOR_HEAVY = 0.30  # one sector above 30%
+TOP5_HEAVY = 0.60  # the five largest above 60%
+DEEP_LOSS = -0.25  # a holding 25% or more below its average cost
+MIN_COST_SHARE = 0.005  # a recorded cost under 0.5% of the value is treated as "no cost recorded" (demerger/bonus)
 
 
 @dataclass(frozen=True)
@@ -35,11 +36,11 @@ class Holding:
     value: float
     invested: Optional[float]
     sector: str = ""
-    cap: str = ""                          # Large / Mid / Small Cap, as the portal classes it
-    realized: Optional[float] = None       # profit already booked on this stock's past sales
-    bought_qty: Optional[float] = None     # all shares ever bought (history)
-    sold_qty: Optional[float] = None       # all shares ever sold (history)
-    price_date: str = ""                   # the date of `ltp`
+    cap: str = ""  # Large / Mid / Small Cap, as the portal classes it
+    realized: Optional[float] = None  # profit already booked on this stock's past sales
+    bought_qty: Optional[float] = None  # all shares ever bought (history)
+    sold_qty: Optional[float] = None  # all shares ever sold (history)
+    price_date: str = ""  # the date of `ltp`
 
     @property
     def cost_recorded(self) -> bool:
@@ -71,8 +72,14 @@ def _column_map(headings: Sequence[str]) -> Dict[str, int]:
     lowered = [re.sub(r"\s+", " ", str(h)).strip().lower() for h in headings]
     for field, words in COLUMNS.items():
         for word in words:
-            hit = next((i for i, h in enumerate(lowered) if word in h and i not in found.values()
-                        and not (field == "pnl" and NOT_TOTAL_PNL.search(h))), None)
+            hit = next(
+                (
+                    i
+                    for i, h in enumerate(lowered)
+                    if word in h and i not in found.values() and not (field == "pnl" and NOT_TOTAL_PNL.search(h))
+                ),
+                None,
+            )
             if hit is not None:
                 found[field] = hit
                 break
@@ -146,9 +153,17 @@ def from_portfolio_analyzer(body) -> List[Holding]:
             value = number(row.get("tsh_valuation"))
             if value is None or value <= 0:
                 continue
-            out.append(Holding(symbol=str(row.get("tsh_isin_desc") or row["tsh_isin"]).strip(), qty=number(row.get("tsh_bal")),
-                               avg=None, ltp=number(row.get("Rate")) or None, value=value, invested=None,
-                               sector=str(row.get("sector_name") or "").strip()))
+            out.append(
+                Holding(
+                    symbol=str(row.get("tsh_isin_desc") or row["tsh_isin"]).strip(),
+                    qty=number(row.get("tsh_bal")),
+                    avg=None,
+                    ltp=number(row.get("Rate")) or None,
+                    value=value,
+                    invested=None,
+                    sector=str(row.get("sector_name") or "").strip(),
+                )
+            )
     return out
 
 
@@ -180,8 +195,7 @@ def from_json(body) -> List[Holding]:
     return best
 
 
-TOTAL_LABELS = {"value": "Total Portfolio Value", "invested": "Total Invested", "gain": "Gain/Loss",
-                "margin": "Available Margin"}
+TOTAL_LABELS = {"value": "Total Portfolio Value", "invested": "Total Invested", "gain": "Gain/Loss", "margin": "Available Margin"}
 
 
 def totals(text: str) -> Dict[str, float]:
@@ -200,15 +214,14 @@ ACRONYMS = {"it", "fmcg", "nbfc", "psu", "lpg", "ites", "bpo", "etf"}
 
 def nice(name: str) -> str:
     """'IT - SOFTWARE' -> 'IT - Software'; 'PAINTS/VARNISH' -> 'Paints/Varnish'."""
-    return re.sub(r"[A-Za-z]+", lambda m: m.group().upper() if m.group().lower() in ACRONYMS
-                  else m.group().capitalize(), name)
+    return re.sub(r"[A-Za-z]+", lambda m: m.group().upper() if m.group().lower() in ACRONYMS else m.group().capitalize(), name)
 
 
 def inr(amount: float) -> str:
     """Indian digit grouping: 1906827.92 -> '₹19,06,828'; negatives as '-₹…'."""
     whole = str(int(round(abs(amount))))
     head, tail = whole[:-3], whole[-3:]
-    groups = [head[max(0, i - 2):i] for i in range(len(head), 0, -2)][::-1]
+    groups = [head[max(0, i - 2) : i] for i in range(len(head), 0, -2)][::-1]
     return ("-" if amount < 0 else "") + "₹" + ",".join(groups + [tail] if head else [tail])
 
 
@@ -248,8 +261,15 @@ def analyse(holdings: List[Holding]) -> dict:
         "top5_weight": round(sum(weights[:5]), 4),
         "sectors": [{"sector": name, "weight": round(w, 4)} for name, w in sector_weights],
         "caps": [{"cap": name, "weight": round(w, 4)} for name, w in sorted(caps.items(), key=lambda kv: -kv[1])],
-        "positions": [{**asdict(h), "weight": round(w, 4), "cost_recorded": h.cost_recorded,
-                       "pnl_pct": None if h.pnl_pct is None else round(h.pnl_pct, 4)} for h, w in zip(ranked, weights)],
+        "positions": [
+            {
+                **asdict(h),
+                "weight": round(w, 4),
+                "cost_recorded": h.cost_recorded,
+                "pnl_pct": None if h.pnl_pct is None else round(h.pnl_pct, 4),
+            }
+            for h, w in zip(ranked, weights)
+        ],
         "flags": flags,
     }
 
@@ -264,8 +284,11 @@ def anonymised(analysis: dict) -> dict:
             item["return_on_cost_pct"] = round(p["pnl_pct"] * 100, 1)
         item.update({k: v for k, v in (("sector", p.get("sector")), ("market_cap", p.get("cap"))) if v})
         positions.append(item)
-    return {"stocks": analysis["holdings"], "spread_like_equal_holdings": analysis["effective_holdings"],
-            "positions": positions,
-            "sectors": [{"sector": s["sector"], "weight_pct": round(s["weight"] * 100, 1)} for s in analysis["sectors"]],
-            "market_caps": [{"cap": c["cap"], "weight_pct": round(c["weight"] * 100, 1)} for c in analysis.get("caps", [])],
-            "flags": analysis["flags"]}
+    return {
+        "stocks": analysis["holdings"],
+        "spread_like_equal_holdings": analysis["effective_holdings"],
+        "positions": positions,
+        "sectors": [{"sector": s["sector"], "weight_pct": round(s["weight"] * 100, 1)} for s in analysis["sectors"]],
+        "market_caps": [{"cap": c["cap"], "weight_pct": round(c["weight"] * 100, 1)} for c in analysis.get("caps", [])],
+        "flags": analysis["flags"],
+    }

@@ -14,20 +14,21 @@ each mark.
 `fetch_bars(symbol)` returns a daily OHLCV frame (the same shape yfinance/backtests use) or None when
 the symbol cannot be priced; a symbol with no bars is skipped, never guessed. The reserve seeds from the
 paper account's own starting cash so returns are directly comparable."""
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import timezone
 from typing import Callable, Dict, Optional
 
 import pandas as pd
 from sqlalchemy import select
 
-from src.research.backtest import RiskLimits, SignalTable, simulate
 from src.database import DecisionRecord, HoldoutMark, PaperAccountRecord
-from src.engine.enums import Action
 from src.engine.costs import SLIPPAGE, india_delivery_fees
-from datetime import timezone
+from src.engine.enums import Action
+from src.research.backtest import RiskLimits, SignalTable, simulate
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ def _bar_date(created_at) -> Optional[pd.Timestamp]:
 @dataclass
 class HoldoutReserve:
     """Decision-only re-simulator producing point-in-time equity marks that live tuning never touches."""
+
     sessions: Callable
     fetch_bars: Callable[[str], Optional[pd.DataFrame]]  # symbol -> daily OHLCV or None
     initial_cash: Optional[float] = None  # None -> seed from the paper account's own starting cash
@@ -64,8 +66,9 @@ class HoldoutReserve:
     def _approved_buys(self) -> list:
         with self.sessions() as s:
             decisions = s.scalars(select(DecisionRecord).order_by(DecisionRecord.id)).all()
-        return [d for d in decisions
-                if d.final_action == Action.BUY and d.risk_approved and d.final_confidence >= self.min_confidence]
+        return [
+            d for d in decisions if d.final_action == Action.BUY and d.risk_approved and d.final_confidence >= self.min_confidence
+        ]
 
     def mark(self) -> dict:
         """Replay every stored approved BUY through the simulator and append one HoldoutMark.
@@ -92,35 +95,65 @@ class HoldoutReserve:
         equity = self.starting_cash
         trades, open_positions = 0, 0
         if signals:  # not `bars`: bars can exist for a symbol whose decision day never matched an index date (e.g. a
-                    # fresh BUY made before that day's bar was posted) - simulating then would let cash_yield accrue
-                    # from day one of the whole fetched history (cash_yield_from=None), a fictitious return for a
-                    # mark that in truth replayed nothing.
+            # fresh BUY made before that day's bar was posted) - simulating then would let cash_yield accrue
+            # from day one of the whole fetched history (cash_yield_from=None), a fictitious return for a
+            # mark that in truth replayed nothing.
             first_decision = min((day for days in signals.values() for day in days), default=None)
-            result = simulate(bars, signals, RiskLimits(min_confidence=self.min_confidence),
-                              start_equity=self.starting_cash, fees=self.fees, slippage=self.slippage,
-                              cash_yield=self.cash_yield, cash_yield_from=first_decision)
+            result = simulate(
+                bars,
+                signals,
+                RiskLimits(min_confidence=self.min_confidence),
+                start_equity=self.starting_cash,
+                fees=self.fees,
+                slippage=self.slippage,
+                cash_yield=self.cash_yield,
+                cash_yield_from=first_decision,
+            )
             if len(result.equity):
                 equity = float(result.equity.iloc[-1])
             trades, open_positions = len(result.trades), result.open_at_end
 
         return_pct = equity / self.starting_cash - 1
         with self.sessions() as s:
-            s.add(HoldoutMark(equity=equity, return_pct=return_pct, decisions=len(signals),
-                              closed_trades=trades, open_positions=open_positions))
+            s.add(
+                HoldoutMark(
+                    equity=equity,
+                    return_pct=return_pct,
+                    decisions=len(signals),
+                    closed_trades=trades,
+                    open_positions=open_positions,
+                )
+            )
             s.commit()
-        return {"equity": equity, "return_pct": return_pct, "decisions": len(signals),
-                "closed_trades": trades, "open_positions": open_positions}
+        return {
+            "equity": equity,
+            "return_pct": return_pct,
+            "decisions": len(signals),
+            "closed_trades": trades,
+            "open_positions": open_positions,
+        }
 
     def report(self, limit: int = 10) -> dict:
         """The reserve's own history (newest first) plus its latest drift vs the paper account's last mark."""
         with self.sessions() as s:
-            marks = s.scalars(select(HoldoutMark).order_by(HoldoutMark.recorded_at.desc(),
-                                                          HoldoutMark.id.desc()).limit(limit)).all()
+            marks = s.scalars(
+                select(HoldoutMark).order_by(HoldoutMark.recorded_at.desc(), HoldoutMark.id.desc()).limit(limit)
+            ).all()
             paper = s.get(PaperAccountRecord, 1)
-        supply = {"initial_cash": self.initial_cash,
-                  "marks": [{"recorded_at": m.recorded_at, "equity": m.equity, "return_pct": m.return_pct,
-                             "decisions": m.decisions, "closed_trades": m.closed_trades,
-                             "open_positions": m.open_positions} for m in marks]}
+        supply = {
+            "initial_cash": self.initial_cash,
+            "marks": [
+                {
+                    "recorded_at": m.recorded_at,
+                    "equity": m.equity,
+                    "return_pct": m.return_pct,
+                    "decisions": m.decisions,
+                    "closed_trades": m.closed_trades,
+                    "open_positions": m.open_positions,
+                }
+                for m in marks
+            ],
+        }
         if not marks:
             supply["drift_vs_paper"] = None
             return supply

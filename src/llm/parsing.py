@@ -1,4 +1,5 @@
 """Reading what comes back: the JSON object inside a model's answer, and the provider's own error details."""
+
 import json
 import re
 from typing import Optional
@@ -14,7 +15,7 @@ def extract_json_object(text: str) -> dict:
     candidates = [s]
     first, last = s.find("{"), s.rfind("}")
     if first != -1 and last > first and (first, last) != (0, len(s) - 1):
-        candidates.append(s[first:last + 1])
+        candidates.append(s[first : last + 1])
     for candidate in candidates:
         for variant in (candidate, re.sub(r"^\{\s*\{", "{", candidate), re.sub(r",\s*([}\]])", r"\1", candidate)):
             try:

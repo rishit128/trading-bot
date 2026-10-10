@@ -3,12 +3,13 @@
 The AI's own answer cannot be regenerated (models are not deterministic), but everything around it can: the exact prompt
 is rebuilt from the stored indicator inputs and the company/market data stored with the lead agent's signal, and the
 combination of the stored signals is recomputed."""
+
 import json
 from dataclasses import dataclass
 from typing import Dict, Mapping, Optional
 
-from src.agents.technical.prompts import cot_prompt
 from src.agents.base import ADVISOR, LEAD
+from src.agents.technical.prompts import cot_prompt
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord
 from src.engine.agent_signal import AgentSignal
@@ -22,6 +23,7 @@ DEFAULT_ROLES = {"technical": LEAD, "sentiment": ADVISOR}
 @dataclass(frozen=True)
 class Replay:
     """A stored decision re-examined: inputs, prompt, signals and whether the rules reproduce it."""
+
     decision_id: int
     symbol: str
     inputs: Optional[Snapshot]
@@ -44,21 +46,31 @@ def replay(record: DecisionRecord, roles: Mapping[str, str] = DEFAULT_ROLES) -> 
     else:  # a row from before the column existed
         rule_based = record.reasoning.startswith(TREND_EXIT_PREFIX)
     if rule_based:
-        recomputed = Action.SELL if snap is not None and trend_broken(snap.price, snap.ma200) else None  # a deterministic override, not an AI call
+        recomputed = (
+            Action.SELL if snap is not None and trend_broken(snap.price, snap.ma200) else None
+        )  # a deterministic override, not an AI call
     else:
         recomputed = combine_signals(signals, roles).action if signals else None
     lead = signals.get("technical")
     shown = lead.details if lead is not None and lead.details is not None else None
-    prompt = (cot_prompt(snap, shown.market_context_json if shown else None,
-                                          shown.company_json if shown else None) if snap is not None else None)
+    prompt = (
+        cot_prompt(snap, shown.market_context_json if shown else None, shown.company_json if shown else None)
+        if snap is not None
+        else None
+    )
     versions = None
     if record.prompt_version or record.feature_version or record.strategy_version:
-        versions = {"strategy": record.strategy_version, "prompt": record.prompt_version,
-                    "feature": record.feature_version}
+        versions = {"strategy": record.strategy_version, "prompt": record.prompt_version, "feature": record.feature_version}
     return Replay(
-        decision_id=record.id, symbol=record.symbol, inputs=snap,
-        prompt=prompt, signals=signals,
-        stored_action=record.final_action, stored_confidence=record.final_confidence, recomputed_action=recomputed,
-        rule_based=rule_based, reproduced=None if recomputed is None else recomputed == record.final_action,
+        decision_id=record.id,
+        symbol=record.symbol,
+        inputs=snap,
+        prompt=prompt,
+        signals=signals,
+        stored_action=record.final_action,
+        stored_confidence=record.final_confidence,
+        recomputed_action=recomputed,
+        rule_based=rule_based,
+        reproduced=None if recomputed is None else recomputed == record.final_action,
         versions=versions,
     )

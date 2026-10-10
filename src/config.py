@@ -1,9 +1,9 @@
 """Settings and risk limits, loaded from environment variables with validation and per-market defaults."""
+
 import os
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
-
 
 load_dotenv()
 
@@ -18,6 +18,7 @@ DEFAULT_MODELS = (
 @dataclass(frozen=True)
 class MarketDefaults:
     """What differs per market: the currency symbol, the scanner's price and liquidity floors, and the default watchlist."""
+
     currency: str
     min_price: float
     min_traded_value: float
@@ -25,8 +26,12 @@ class MarketDefaults:
 
 
 MARKET_DEFAULTS = {
-    "india": MarketDefaults(currency="₹", min_price=100.0, min_traded_value=100_000_000.0,  # Rs 10 crore/day
-                            watchlist=("RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK")),
+    "india": MarketDefaults(
+        currency="₹",
+        min_price=100.0,
+        min_traded_value=100_000_000.0,  # Rs 10 crore/day
+        watchlist=("RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"),
+    ),
 }
 
 
@@ -37,6 +42,7 @@ def _float(name: str, default: float) -> float:
 @dataclass(frozen=True)
 class RiskLimits:
     """Hard risk limits; validated so a typo (for example 5 instead of 0.05) refuses to start."""
+
     # Position size scales linearly with signal confidence: min_position_pct at min_confidence, max_position_pct at
     # confidence 1.0. A flat size treated a 0.61 and a 0.95 signal alike; this puts more capital behind stronger signals.
     # Defaults are equal (flat 5% regardless of confidence) so existing configs are unaffected; set MIN_POSITION_PCT
@@ -65,8 +71,14 @@ class RiskLimits:
         if self.max_open_positions < 1:
             raise ValueError(f"max_open_positions must be >= 1, got {self.max_open_positions}")
         # Percent limits are fractions; a typo like MAX_POSITION_PCT=5 must fail loudly, not allow 500% positions.
-        for name in ("max_position_pct", "min_position_pct", "max_portfolio_exposure_pct", "max_daily_loss_pct",
-                     "max_drawdown_pct", "stop_loss_pct"):
+        for name in (
+            "max_position_pct",
+            "min_position_pct",
+            "max_portfolio_exposure_pct",
+            "max_daily_loss_pct",
+            "max_drawdown_pct",
+            "stop_loss_pct",
+        ):
             if not 0 < getattr(self, name) <= 1:
                 raise ValueError(f"{name} must be a fraction in (0, 1], got {getattr(self, name)}")
         if not 0 <= self.min_confidence <= 1:
@@ -86,6 +98,7 @@ class RiskLimits:
 @dataclass(frozen=True)
 class Settings:
     """All runtime settings for one run."""
+
     market: str = "india"  # NSE via Yahoo + built-in paper broker
     currency: str = "₹"
     paper_initial_cash: float = 1_000_000.0  # India paper account starting balance
@@ -164,9 +177,7 @@ def load_settings() -> Settings:
     models = tuple(dict.fromkeys(m for m in configured + list(DEFAULT_MODELS) if m))
     market = os.getenv("MARKET", "india").strip().lower()
     defaults = MARKET_DEFAULTS.get(market, MARKET_DEFAULTS["india"])
-    watchlist = tuple(
-        s.strip().upper() for s in os.getenv("WATCHLIST", ",".join(defaults.watchlist)).split(",") if s.strip()
-    )
+    watchlist = tuple(s.strip().upper() for s in os.getenv("WATCHLIST", ",".join(defaults.watchlist)).split(",") if s.strip())
     risk = RiskLimits(
         min_position_pct=_float("MIN_POSITION_PCT", _float("MAX_POSITION_PCT", 0.05)),
         max_position_pct=_float("MAX_POSITION_PCT", 0.05),

@@ -1,4 +1,5 @@
 """Runtime switches shared through the database: the kill switch and the drawdown-baseline reset."""
+
 from datetime import datetime, timezone
 from typing import Optional
 

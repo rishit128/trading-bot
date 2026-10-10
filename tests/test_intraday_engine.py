@@ -1,5 +1,6 @@
 """The intraday engine against the real paper broker: entries, exits from the 5-minute bars, the position cap, the daily-loss
 halt, a restart mid-day, what it records and refuses, stale positions, and archiving each finished session."""
+
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -7,8 +8,8 @@ import pytest
 from sqlalchemy import select
 
 from src.data.india import IST
-from src.engine.paper_broker import PaperBroker
 from src.database import IntradaySignalRecord, IntradayUniverseRecord, make_session_factory
+from src.engine.paper_broker import PaperBroker
 from src.intraday.engine import IntradayEngine
 from tests.intraday_helpers import BREAKOUT, DAY, VOLS, make_bars
 from tests.test_paper_broker import FakeClock, FakeFeed
@@ -17,11 +18,26 @@ from tests.test_paper_broker import FakeClock, FakeFeed
 def engine(tmp_path, bars, now_ist, live=True, prices=None, cash=1_000_000.0, db="i.db", **engine_kw):
     feed, clock = FakeFeed({"AAA": 101.5} if prices is None else prices), FakeClock()
     now = [now_ist.astimezone(timezone.utc)]
-    broker = PaperBroker(make_session_factory(f"sqlite:///{tmp_path / db}"), feed, clock, initial_cash=cash,
-                         fees=lambda s, v: 0.0, slippage=0.0, now_fn=lambda: now[0])
+    broker = PaperBroker(
+        make_session_factory(f"sqlite:///{tmp_path / db}"),
+        feed,
+        clock,
+        initial_cash=cash,
+        fees=lambda s, v: 0.0,
+        slippage=0.0,
+        now_fn=lambda: now[0],
+    )
     messages = []
-    eng = IntradayEngine(broker, ["AAA"], clock, fetch_bars=lambda syms: {s: bars[s] for s in syms if s in bars},
-                         notify=messages.append, live=live, now_fn=lambda: now[0], **engine_kw)
+    eng = IntradayEngine(
+        broker,
+        ["AAA"],
+        clock,
+        fetch_bars=lambda syms: {s: bars[s] for s in syms if s in bars},
+        notify=messages.append,
+        live=live,
+        now_fn=lambda: now[0],
+        **engine_kw,
+    )
     return eng, broker, feed, now, messages
 
 
@@ -35,7 +51,7 @@ def at(h, m):
 
 
 def test_engine_buys_a_fresh_breakout_once_with_stop_and_target(tmp_path):
-    eng, broker, *_ , messages = engine(tmp_path, {"AAA": make_bars(BREAKOUT, volumes=VOLS)}, at(9, 45))
+    eng, broker, *_, messages = engine(tmp_path, {"AAA": make_bars(BREAKOUT, volumes=VOLS)}, at(9, 45))
     assert "entered 1" in eng.step() and "entered 0" in eng.step()  # second cycle: one trade per stock per day
     [h] = broker.holdings()
     assert h["symbol"] == "AAA" and h["stop"] == pytest.approx(99.9)
@@ -48,11 +64,11 @@ def test_engine_buys_a_fresh_breakout_once_with_stop_and_target(tmp_path):
 
 def test_engine_sizes_from_its_own_risk_and_cap_settings(tmp_path):
     bars = {"AAA": make_bars(BREAKOUT, volumes=VOLS)}
-    eng, broker, *_ = engine(tmp_path, bars, at(9, 45), max_position_pct=0.10)   # a tighter cap
+    eng, broker, *_ = engine(tmp_path, bars, at(9, 45), max_position_pct=0.10)  # a tighter cap
     eng.step()
     assert broker.holdings()[0]["qty"] == int(1_000_000 * 0.10 / 101.5)
     eng, broker, *_ = engine(tmp_path, bars, at(9, 45), risk_pct=0.0005, db="risk.db")
-    eng.step()                                                                     # a tighter risk budget: Rs 500 / Rs 1.60
+    eng.step()  # a tighter risk budget: Rs 500 / Rs 1.60
     assert broker.holdings()[0]["qty"] == int(1_000_000 * 0.0005 / 1.6)
 
 
@@ -91,12 +107,27 @@ def test_no_entries_before_the_opening_range_completes_or_when_the_market_is_clo
 def session(tmp_path, symbols=("AAA",), prices=None, now_ist=None, **engine_kw):
     feed, clock = FakeFeed(prices or {s: 101.5 for s in symbols}), FakeClock()
     now = [(now_ist or at(9, 45)).astimezone(timezone.utc)]
-    broker = PaperBroker(make_session_factory(f"sqlite:///{tmp_path / 'day.db'}"), feed, clock, initial_cash=1_000_000.0,
-                         fees=lambda s, v: 0.0, slippage=0.0, now_fn=lambda: now[0])
+    broker = PaperBroker(
+        make_session_factory(f"sqlite:///{tmp_path / 'day.db'}"),
+        feed,
+        clock,
+        initial_cash=1_000_000.0,
+        fees=lambda s, v: 0.0,
+        slippage=0.0,
+        now_fn=lambda: now[0],
+    )
     messages = []
     bars = {s: make_bars(BREAKOUT, volumes=VOLS) for s in symbols}
-    eng = IntradayEngine(broker, list(symbols), clock, fetch_bars=lambda syms: {s: bars[s] for s in syms if s in bars},
-                         notify=messages.append, live=True, now_fn=lambda: now[0], **engine_kw)
+    eng = IntradayEngine(
+        broker,
+        list(symbols),
+        clock,
+        fetch_bars=lambda syms: {s: bars[s] for s in syms if s in bars},
+        notify=messages.append,
+        live=True,
+        now_fn=lambda: now[0],
+        **engine_kw,
+    )
     return eng, broker, feed, now, messages, bars
 
 
@@ -140,8 +171,9 @@ def test_the_position_cap_stops_further_entries(tmp_path):
 
 
 def test_the_daily_loss_limit_blocks_new_entries_after_a_losing_stop(tmp_path):
-    eng, broker, feed, now, _, bars = session(tmp_path, symbols=("AAA", "BBB"), max_daily_loss_pct=0.0001,
-                                              risk_pct=0.5, max_position_pct=0.5)
+    eng, broker, feed, now, _, bars = session(
+        tmp_path, symbols=("AAA", "BBB"), max_daily_loss_pct=0.0001, risk_pct=0.5, max_position_pct=0.5
+    )
     eng.universe = ["AAA"]  # enter only AAA first, leaving BBB for after the loss
     eng.step()
     tape(feed, "AAA", at(10, 0), 100.0, 100.1, 98.5, 98.6)
@@ -158,8 +190,9 @@ def test_a_restart_in_the_middle_of_the_day_remembers_what_was_already_traded(tm
     tape(feed, "AAA", at(10, 30), 100.0, 100.2, 99.0, 99.2)
     now[0] = at(10, 35).astimezone(timezone.utc)
     eng.step()  # AAA is stopped out and closed
-    reborn = IntradayEngine(broker, ["AAA", "BBB"], eng.clock, fetch_bars=eng.fetch_bars, notify=messages.append, live=True,
-                            now_fn=lambda: now[0])  # a fresh process with no memory of the morning
+    reborn = IntradayEngine(
+        broker, ["AAA", "BBB"], eng.clock, fetch_bars=eng.fetch_bars, notify=messages.append, live=True, now_fn=lambda: now[0]
+    )  # a fresh process with no memory of the morning
     assert "entered 1" in reborn.step()
     assert [h["symbol"] for h in broker.holdings()] == ["BBB"]  # AAA was traded today, so it is not bought again
 
@@ -198,17 +231,18 @@ def test_every_entry_is_recorded_with_its_levels_size_and_the_system_version(tmp
     assert row.range_high == pytest.approx(100.5) and row.range_low == pytest.approx(99.9)
     assert row.bar_time.startswith("2026-09-21T09:35")
     from src.versions import INTRADAY_VERSION
+
     assert row.system_version == INTRADAY_VERSION
 
 
 def test_a_stock_too_dear_for_the_account_is_skipped_visibly_and_not_retried(tmp_path):
-    dear = make_bars([c * 100 for c in BREAKOUT], volumes=VOLS)          # ~Rs 10,150 a share
+    dear = make_bars([c * 100 for c in BREAKOUT], volumes=VOLS)  # ~Rs 10,150 a share
     eng, broker, *_ = engine(tmp_path, {"AAA": dear}, at(9, 45), prices={"AAA": 10150.0}, cash=20_000.0)
     assert eng.step().endswith("entered 0, skipped 1")
     assert broker.holdings() == []
     [row] = signals(broker)
     assert row.outcome == "SKIPPED" and row.qty == 0 and "costs more than the largest position" in row.reason
-    assert "skipped" not in eng.step()                                    # one attempt per stock per day: not counted again
+    assert "skipped" not in eng.step()  # one attempt per stock per day: not counted again
     assert len(signals(broker)) == 1
 
 
@@ -227,12 +261,13 @@ def test_a_rejected_order_is_recorded_with_the_brokers_reason(tmp_path):
 
 
 def test_cash_spent_on_one_entry_is_not_offered_to_the_next_in_the_same_cycle(tmp_path):
-    eng, broker, feed, now, messages, _ = session(tmp_path, symbols=("AAA", "BBB"), risk_pct=1.0, max_position_pct=1.0,
-                                                  max_positions=2)
+    eng, broker, feed, now, messages, _ = session(
+        tmp_path, symbols=("AAA", "BBB"), risk_pct=1.0, max_position_pct=1.0, max_positions=2
+    )
     # without the running total, BBB would ask for ~all the cash again
     assert "entered 2" in eng.step()
     first, second = sorted(broker.holdings(), key=lambda h: h["symbol"])
-    assert first["qty"] > 9000 and 0 < second["qty"] < 100                # BBB got only what was left
+    assert first["qty"] > 9000 and 0 < second["qty"] < 100  # BBB got only what was left
     assert [r.outcome for r in signals(broker)] == ["ENTERED", "ENTERED"]
 
 
@@ -244,7 +279,8 @@ def test_the_universe_is_recorded_once_per_day_with_its_source(tmp_path):
         with broker.sessions() as s:
             return list(s.scalars(select(IntradayUniverseRecord).order_by(IntradayUniverseRecord.id)))
 
-    eng.step(); eng.step()
+    eng.step()
+    eng.step()
     [row] = rows()
     assert (row.day, row.source, row.size, row.symbols_json) == ("2026-09-21", "a test list", 1, '["AAA"]')
     now[0] = (at(9, 45) + timedelta(days=1)).astimezone(timezone.utc)
@@ -254,7 +290,7 @@ def test_the_universe_is_recorded_once_per_day_with_its_source(tmp_path):
 
 def test_bars_from_a_previous_session_are_never_traded(tmp_path):
     yesterday = make_bars(BREAKOUT, volumes=VOLS)
-    yesterday.index = yesterday.index - timedelta(days=1)                # Yahoo still serving the last session at 09:45
+    yesterday.index = yesterday.index - timedelta(days=1)  # Yahoo still serving the last session at 09:45
     eng, broker, *_ = engine(tmp_path, {"AAA": yesterday}, at(9, 45))
     assert "entered 0" in eng.step() and broker.holdings() == [] and signals(broker) == []
 
@@ -285,7 +321,7 @@ def archiving_engine(tmp_path, bars, now_ist, **kw):
     from src.data.intraday_bars import BarArchive
 
     eng, broker, feed, now, messages = engine(tmp_path, bars, now_ist, **kw)
-    eng.clock.open = False                                   # after the close
+    eng.clock.open = False  # after the close
     eng.archive = BarArchive(broker.sessions)
     return eng, now
 
@@ -298,7 +334,7 @@ def test_a_finished_session_is_archived_once_after_the_close(tmp_path):
     assert eng.step() == "closed" and eng.archive.days() == ["2026-09-21"] and calls == [["AAA"]]
     assert len(eng.archive.load()["AAA"]) == 5
     eng.step()
-    assert calls == [["AAA"]]                                # already done today: no second download
+    assert calls == [["AAA"]]  # already done today: no second download
 
 
 def test_nothing_is_archived_before_the_last_bar_is_published_on_weekends_or_without_an_archive(tmp_path):
@@ -307,25 +343,26 @@ def test_nothing_is_archived_before_the_last_bar_is_published_on_weekends_or_wit
     calls = []
     eng.fetch_bars = lambda syms: calls.append(1) or bars
     eng.step()
-    assert eng.archive.days() == [] and calls == []          # 15:34: the 15:25 bar may not be out yet, so nothing is downloaded
-    now[0] = datetime(2026, 9, 26, 15, 40, tzinfo=IST).astimezone(timezone.utc)   # a Saturday
+    assert eng.archive.days() == [] and calls == []  # 15:34: the 15:25 bar may not be out yet, so nothing is downloaded
+    now[0] = datetime(2026, 9, 26, 15, 40, tzinfo=IST).astimezone(timezone.utc)  # a Saturday
     eng.step()
-    assert eng.archive.days() == [] and calls == []          # no session on a weekend: not even a download
+    assert eng.archive.days() == [] and calls == []  # no session on a weekend: not even a download
     eng.archive = None
     now[0] = at(15, 40).astimezone(timezone.utc)
-    assert eng.step() == "closed"                            # no archive configured: nothing to do, nothing breaks
+    assert eng.step() == "closed"  # no archive configured: nothing to do, nothing breaks
 
 
 def test_a_holiday_saves_nothing_and_is_not_retried_but_a_failed_download_is(tmp_path, caplog):
     yesterday = make_bars(BREAKOUT, volumes=VOLS)
-    yesterday.index = yesterday.index - timedelta(days=1)    # Yahoo still serving the previous session
+    yesterday.index = yesterday.index - timedelta(days=1)  # Yahoo still serving the previous session
     eng, now = archiving_engine(tmp_path, {"AAA": yesterday}, at(15, 40))
     calls = []
     eng.fetch_bars = lambda syms: calls.append(1) or {"AAA": yesterday}
     with caplog.at_level("INFO", logger="src.intraday.engine"):
-        eng.step(); eng.step()
-    assert eng.archive.days() == [] and len(calls) == 1      # not a session: nothing stored, and not asked again
-    assert "archived 0 bars for 0 stocks" in caplog.text    # yesterday's frame is not counted as a stock of today
+        eng.step()
+        eng.step()
+    assert eng.archive.days() == [] and len(calls) == 1  # not a session: nothing stored, and not asked again
+    assert "archived 0 bars for 0 stocks" in caplog.text  # yesterday's frame is not counted as a stock of today
     eng2, _ = archiving_engine(tmp_path, {"AAA": make_bars(BREAKOUT, volumes=VOLS)}, at(15, 40), db="second.db")
     attempts = []
 
@@ -337,9 +374,9 @@ def test_a_holiday_saves_nothing_and_is_not_retried_but_a_failed_download_is(tmp
 
     eng2.fetch_bars = flaky
     eng2.step()
-    assert eng2.archive.days() == []                         # failed: nothing stored
+    assert eng2.archive.days() == []  # failed: nothing stored
     eng2.step()
-    assert eng2.archive.days() == ["2026-09-21"] and len(attempts) == 2   # retried at the next cycle
+    assert eng2.archive.days() == ["2026-09-21"] and len(attempts) == 2  # retried at the next cycle
 
 
 def test_a_bar_still_forming_is_never_acted_on_only_a_finished_one(tmp_path):
@@ -347,4 +384,4 @@ def test_a_bar_still_forming_is_never_acted_on_only_a_finished_one(tmp_path):
     # the 09:35 breakout bar has 2 minutes left: not decided on yet
     assert "entered 0" in eng.step() and broker.holdings() == []
     now[0] = at(9, 40).astimezone(timezone.utc)
-    assert "entered 1" in eng.step()                                      # 09:40:20: the bar has finished
+    assert "entered 1" in eng.step()  # 09:40:20: the bar has finished

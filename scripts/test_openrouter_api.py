@@ -1,5 +1,6 @@
 """Verify the OpenRouter key works and each configured model returns a schema-valid trading signal,
 using the same LLMClient the bot uses (so this tests the real code path, including fallback handling)."""
+
 import os
 import sys
 from pathlib import Path
@@ -10,8 +11,7 @@ from src.config import load_settings  # noqa: E402  (also loads .env)
 from src.llm import LLMClient, LLMUnavailable  # noqa: E402
 
 PROMPT = (
-    "Give a trading signal for a stock at $150 with 50-day MA $148, 200-day MA $145 and RSI 62. "
-    "Reasoning must be one sentence."
+    "Give a trading signal for a stock at $150 with 50-day MA $148, 200-day MA $145 and RSI 62. Reasoning must be one sentence."
 )
 
 

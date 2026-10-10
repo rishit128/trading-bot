@@ -1,5 +1,6 @@
 """The real-portfolio agent's building blocks without a browser: the network guard, the OTP exchange (shared Telegram
 bot), the credential vault, holdings extraction/analysis, the graph's failure path and the /portfolio command."""
+
 import json
 
 import httpx
@@ -8,8 +9,8 @@ import pytest
 from keyring.backend import KeyringBackend
 
 from src.portfolio import cli, vault
-from src.portfolio.runs import RunStore
 from src.portfolio.guard import verdict
+from src.portfolio.runs import RunStore
 from src.portfolio.telegram_otp import OtpCancelled, OtpInbox, OtpTimeout, TelegramError, TelegramOtp
 
 HOST = "webapp.integrated.investments"
@@ -18,33 +19,39 @@ TOKEN = "123456:" + "A" * 35
 
 
 # -- guard -------------------------------------------------------------------------------------------------------
-@pytest.mark.parametrize("method,url,headers", [
-    ("POST", URL, {"App-Action-Name": "PlaceOrder"}),
-    ("POST", URL, {"app-process-name": "OrderEntry", "app-action-name": "Submit"}),
-    ("POST", URL, {"App-Action-Name": "SellHolding"}),
-    ("POST", URL, {"App-Action-Name": "PayoutRequest"}),
-    ("POST", URL, {"App-Action-Name": "PledgeRequest"}),
-    ("POST", URL, {"App-Action-Name": "MfRedeem"}),
-    ("POST", f"https://{HOST}/ODINService/api/v1/Order/Place", {}),
-    ("POST", f"https://{HOST}/CIAMS/api/v1/UserManagement/managecredentials", {}),
-    ("POST", f"https://{HOST}/CIAMS/api/v1/UserManagement/changempin", {}),
-    ("GET", f"https://{HOST}/api/placeorder?qty=1", {}),
-    ("POST", "https://payments.example.com/charge", {}),
-    ("POST", "https://evilintegrated.investments/x", {}),  # a look-alike domain is third-party
-])
+@pytest.mark.parametrize(
+    "method,url,headers",
+    [
+        ("POST", URL, {"App-Action-Name": "PlaceOrder"}),
+        ("POST", URL, {"app-process-name": "OrderEntry", "app-action-name": "Submit"}),
+        ("POST", URL, {"App-Action-Name": "SellHolding"}),
+        ("POST", URL, {"App-Action-Name": "PayoutRequest"}),
+        ("POST", URL, {"App-Action-Name": "PledgeRequest"}),
+        ("POST", URL, {"App-Action-Name": "MfRedeem"}),
+        ("POST", f"https://{HOST}/ODINService/api/v1/Order/Place", {}),
+        ("POST", f"https://{HOST}/CIAMS/api/v1/UserManagement/managecredentials", {}),
+        ("POST", f"https://{HOST}/CIAMS/api/v1/UserManagement/changempin", {}),
+        ("GET", f"https://{HOST}/api/placeorder?qty=1", {}),
+        ("POST", "https://payments.example.com/charge", {}),
+        ("POST", "https://evilintegrated.investments/x", {}),  # a look-alike domain is third-party
+    ],
+)
 def test_the_guard_blocks_anything_that_could_trade_or_move_money(method, url, headers):
     assert verdict(method, url, headers, HOST) is not None
 
 
-@pytest.mark.parametrize("method,url,headers", [
-    ("POST", URL, {"App-Action-Name": "Holdings", "App-Process-Name": "Portfolio"}),
-    ("POST", f"https://{HOST}/ODINService/api/v1/Funds/FundsViewDetailClaim", {}),
-    ("POST", f"https://{HOST}/CIAMS/api/v1/SSAuth/login", {}),
-    ("POST", f"https://{HOST}/CIAMS/api/v1/SSAuth/logout", {"App-Action-Name": "Logout"}),
-    ("POST", f"https://{HOST}/CIAMS/api/v1/TwoFA/coidverify", {}),
-    ("GET", f"https://{HOST}/nv1/Scripts/OrderWindow.js", {}),  # a script file is not an action
-    ("GET", "https://cdnjs.cloudflare.com/ajax/libs/jquery.min.js", {}),
-])
+@pytest.mark.parametrize(
+    "method,url,headers",
+    [
+        ("POST", URL, {"App-Action-Name": "Holdings", "App-Process-Name": "Portfolio"}),
+        ("POST", f"https://{HOST}/ODINService/api/v1/Funds/FundsViewDetailClaim", {}),
+        ("POST", f"https://{HOST}/CIAMS/api/v1/SSAuth/login", {}),
+        ("POST", f"https://{HOST}/CIAMS/api/v1/SSAuth/logout", {"App-Action-Name": "Logout"}),
+        ("POST", f"https://{HOST}/CIAMS/api/v1/TwoFA/coidverify", {}),
+        ("GET", f"https://{HOST}/nv1/Scripts/OrderWindow.js", {}),  # a script file is not an action
+        ("GET", "https://cdnjs.cloudflare.com/ajax/libs/jquery.min.js", {}),
+    ],
+)
 def test_the_guard_lets_reads_login_and_logout_through(method, url, headers):
     assert verdict(method, url, headers, HOST) is None
 
@@ -101,8 +108,12 @@ def test_cancel_and_timeout():
 
     now = [0.0]
     quiet = FakeTelegram()
-    otp = TelegramOtp(TOKEN, "42", client=httpx.Client(transport=httpx.MockTransport(quiet.handler)),
-                      clock=lambda: now.__setitem__(0, now[0] + 30) or now[0])
+    otp = TelegramOtp(
+        TOKEN,
+        "42",
+        client=httpx.Client(transport=httpx.MockTransport(quiet.handler)),
+        clock=lambda: now.__setitem__(0, now[0] + 30) or now[0],
+    )
     with pytest.raises(OtpTimeout):
         otp.wait_for_otp(timeout_s=100)
 
@@ -157,8 +168,10 @@ def test_the_trading_bot_listener_hands_the_otp_over_and_deletes_it():
     from src.monitoring.telegram import CommandListener
 
     calls, replies = [], []
-    updates = [{"update_id": 1, "message": {"message_id": 77, "chat": {"id": 42}, "text": "4321"}},
-               {"update_id": 2, "message": {"message_id": 78, "chat": {"id": 42}, "text": "/status"}}]
+    updates = [
+        {"update_id": 1, "message": {"message_id": 77, "chat": {"id": 42}, "text": "4321"}},
+        {"update_id": 2, "message": {"message_id": 78, "chat": {"id": 42}, "text": "/status"}},
+    ]
 
     def handler(request):
         if request.url.path.endswith("/getUpdates"):
@@ -166,9 +179,13 @@ def test_the_trading_bot_listener_hands_the_otp_over_and_deletes_it():
         calls.append((request.url.path.rsplit("/", 1)[-1], json.loads(request.content)))
         return httpx.Response(200, json={"ok": True})
 
-    listener = CommandListener(TOKEN, "42", lambda text: replies.append(text) or "status",
-                               client=httpx.Client(transport=httpx.MockTransport(handler)),
-                               intercept=lambda text: "OTP received" if text == "4321" else None)
+    listener = CommandListener(
+        TOKEN,
+        "42",
+        lambda text: replies.append(text) or "status",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        intercept=lambda text: "OTP received" if text == "4321" else None,
+    )
     assert listener.poll_once() == 2
     assert replies == ["/status"]  # the OTP never reached the command handler
     assert ("deleteMessage", {"chat_id": "42", "message_id": 77}) in calls
@@ -192,6 +209,7 @@ class MemoryKeyring(KeyringBackend):
     def delete_password(self, service, username):
         if (service, username) not in self.data:
             import keyring.errors
+
             raise keyring.errors.PasswordDeleteError(username)
         del self.data[(service, username)]
 
@@ -350,10 +368,12 @@ def test_numbers_in_indian_formats():
 def test_holdings_are_found_by_their_headings_and_totals_are_skipped():
     from src.portfolio.holdings import from_json, from_tables
 
-    table = [["Scrip Name", "Net Qty", "Avg. Price", "LTP", "Buy Value", "Current Value"],
-             ["NBCC", "1,000", "95.00", "112.40", "95,000", "1,12,400"],
-             ["IRFC", "500", "150", "138.10", "75,000", "69,050"],
-             ["Total", "", "", "", "1,70,000", "1,81,450"]]
+    table = [
+        ["Scrip Name", "Net Qty", "Avg. Price", "LTP", "Buy Value", "Current Value"],
+        ["NBCC", "1,000", "95.00", "112.40", "95,000", "1,12,400"],
+        ["IRFC", "500", "150", "138.10", "75,000", "69,050"],
+        ["Total", "", "", "", "1,70,000", "1,81,450"],
+    ]
     found = from_tables([[["Date", "Amount"], ["1 Sep", "500"]], table])
     assert [(h.symbol, h.value, h.invested) for h in found] == [("NBCC", 112400.0, 95000.0), ("IRFC", 69050.0, 75000.0)]
     body = {"data": {"holdings": [{"tradingsymbol": "TCS", "quantity": 2, "average_price": 3000, "ltp": 3500}]}}
@@ -364,8 +384,9 @@ def test_holdings_are_found_by_their_headings_and_totals_are_skipped():
 def test_analysis_flags_concentration_and_deep_losses_and_the_ai_sees_no_amounts():
     from src.portfolio.holdings import Holding, analyse, anonymised
 
-    holdings = [Holding("BIG", 100, 100, 100, 50_000, 40_000), Holding("LOSER", 10, 100, 60, 600, 1_000)] + \
-        [Holding(f"S{i}", 1, 1, 1, 5_000, 5_000) for i in range(6)]
+    holdings = [Holding("BIG", 100, 100, 100, 50_000, 40_000), Holding("LOSER", 10, 100, 60, 600, 1_000)] + [
+        Holding(f"S{i}", 1, 1, 1, 5_000, 5_000) for i in range(6)
+    ]
     a = analyse(holdings)
     assert a["holdings"] == 8 and a["positions"][0]["symbol"] == "BIG" and a["total_value"] == 80_600
     assert any("BIG is 62%" in f for f in a["flags"]) and any("LOSER is 40% below its average cost" in f for f in a["flags"])
@@ -378,9 +399,11 @@ def test_the_graph_reports_a_failed_login_without_analysing_anything():
     from src.portfolio.graph import build_portfolio_graph
 
     sent = []
-    graph = build_portfolio_graph(lambda: {"error": "login stopped at otp: portal said: Invalid OTP", "blocked": 0,
-                                           "logged_out": True}, sent.append,
-                                  explain=lambda d: pytest.fail("no AI call on a failed run"))
+    graph = build_portfolio_graph(
+        lambda: {"error": "login stopped at otp: portal said: Invalid OTP", "blocked": 0, "logged_out": True},
+        sent.append,
+        explain=lambda d: pytest.fail("no AI call on a failed run"),
+    )
     state = graph.invoke({})
     assert "analysis" not in state and "Invalid OTP" in sent[0] and "Logged out safely" in sent[0]
 
@@ -408,8 +431,10 @@ def test_dashboard_totals_and_indian_digit_grouping():
     from src.portfolio.graph import format_report
     from src.portfolio.holdings import inr, totals
 
-    text = ("My portfolio\nTotal Portfolio Value\n\u20b9 12,34,567.80\n12.00 %\nTotal Invested\n\u20b9 11,00,000.00\n"
-            "Gain/Loss\n\u20b9 1,34,567.80\n100%\nEquity\nAvailable Margin\n\u20b9 250.00\nAdd funds")
+    text = (
+        "My portfolio\nTotal Portfolio Value\n\u20b9 12,34,567.80\n12.00 %\nTotal Invested\n\u20b9 11,00,000.00\n"
+        "Gain/Loss\n\u20b9 1,34,567.80\n100%\nEquity\nAvailable Margin\n\u20b9 250.00\nAdd funds"
+    )
     t = totals(text)
     assert t == {"value": 1234567.8, "invested": 1100000.0, "gain": 134567.8, "margin": 250.0}
     assert totals("nothing here") == {}
@@ -429,8 +454,9 @@ def test_a_days_gain_column_is_not_taken_for_the_total_profit():
 def test_the_report_warns_about_saturday_mock_prices(tmp_path):
     from src.portfolio.graph import extract, format_report
 
-    (tmp_path / "dashboard.txt").write_text("Total Portfolio Value\n\u20b9 100.00\nSATURDAY MOCK TRADING SESSION NOTICE",
-                                            encoding="utf-8")
+    (tmp_path / "dashboard.txt").write_text(
+        "Total Portfolio Value\n\u20b9 100.00\nSATURDAY MOCK TRADING SESSION NOTICE", encoding="utf-8"
+    )
     state = extract({"run_dir": str(tmp_path)})
     assert state["warnings"] and "mock-session prices" in format_report({**state, "pages": {}, "logged_out": True})
     (tmp_path / "dashboard.txt").write_text("Total Portfolio Value\n\u20b9 100.00", encoding="utf-8")
@@ -440,13 +466,25 @@ def test_the_report_warns_about_saturday_mock_prices(tmp_path):
 def _analyzer_body():
     """The Portfolio Analyzer response in the portal's real layout (JSON inside a string), with made-up holdings plus
     the 'ZZZ' sector copies the portal adds, which must be ignored."""
+
     def row(isin, name, qty, rate, value, sector, kind="Stocks"):
-        return {"tsh_isin": isin, "tsh_isin_desc": name, "tsh_bal": qty, "Rate": rate, "tsh_valuation": value,
-                "sector_name": sector, "tsh_acct_desc": kind, "Asset_Type": "EQUITY"}
-    rows = [row("INE000A01011", "Alpha Ltd", "10", 500.0, "5,000.00", "IT"),
-            row("INE000B01012", "Beta Ltd", "30", 100.0, "3,000.00", "BANKS"),
-            row("INE000C01013", "Gamma Ltd", "4", 500.0, "2,000.00", "IT"),
-            row("ZZZ", "ZZZ", "1", 0.0, "7,000.00", "IT", kind="XSTL")]
+        return {
+            "tsh_isin": isin,
+            "tsh_isin_desc": name,
+            "tsh_bal": qty,
+            "Rate": rate,
+            "tsh_valuation": value,
+            "sector_name": sector,
+            "tsh_acct_desc": kind,
+            "Asset_Type": "EQUITY",
+        }
+
+    rows = [
+        row("INE000A01011", "Alpha Ltd", "10", 500.0, "5,000.00", "IT"),
+        row("INE000B01012", "Beta Ltd", "30", 100.0, "3,000.00", "BANKS"),
+        row("INE000C01013", "Gamma Ltd", "4", 500.0, "2,000.00", "IT"),
+        row("ZZZ", "ZZZ", "1", 0.0, "7,000.00", "IT", kind="XSTL"),
+    ]
     return json.dumps([{"LiveStatus": "N", "PayData": rows, "ClientDetails": {"Name": "not read"}}])
 
 
@@ -455,7 +493,10 @@ def test_the_portfolio_analyzer_statement_is_read_field_by_field():
 
     found = from_portfolio_analyzer(_analyzer_body())
     assert [(h.symbol, h.qty, h.value, h.sector) for h in found] == [
-        ("Alpha Ltd", 10.0, 5000.0, "IT"), ("Beta Ltd", 30.0, 3000.0, "BANKS"), ("Gamma Ltd", 4.0, 2000.0, "IT")]
+        ("Alpha Ltd", 10.0, 5000.0, "IT"),
+        ("Beta Ltd", 30.0, 3000.0, "BANKS"),
+        ("Gamma Ltd", 4.0, 2000.0, "IT"),
+    ]
     a = analyse(found)
     assert a["sectors"] == [{"sector": "IT", "weight": 0.7}, {"sector": "BANKS", "weight": 0.3}]
     assert any("IT is 70%" in f for f in a["flags"]) and any("Alpha Ltd is 50%" in f for f in a["flags"])
@@ -475,8 +516,7 @@ def test_extract_prefers_the_statement_and_rejects_market_lists_that_do_not_add_
     (tmp_path / "dashboard.txt").write_text("Total Portfolio Value\n\u20b9 10,000.00", encoding="utf-8")
     assert extract({"run_dir": str(tmp_path)})["holdings"] == []  # adds up to 5 crore, not 10,000: rejected
 
-    (api / "analyzer_00_1_Statements_PortfolioAnalyzer.json").write_text(json.dumps({"body": _analyzer_body()}),
-                                                                         encoding="utf-8")
+    (api / "analyzer_00_1_Statements_PortfolioAnalyzer.json").write_text(json.dumps({"body": _analyzer_body()}), encoding="utf-8")
     state = extract({"run_dir": str(tmp_path)})
     assert state["source"].startswith("analyzer_00") and len(state["holdings"]) == 3 and not state["warnings"]
 
@@ -501,15 +541,24 @@ def test_the_report_lists_every_holding_and_errors_say_what_to_do():
     from src.portfolio.holdings import Holding, analyse
 
     holdings = [Holding(f"Stock {i}", 10, 100.0, 100.0, 1000.0 + i, None, "IT - SOFTWARE", cap="Large Cap") for i in range(25)]
-    state = {"analysis": analyse(holdings), "totals": {}, "pages": {"analyzer": {"reached": True, "data_calls": [1],
-             "tabs": {"Dividend": {"status": "read", "rows": 3, "data_calls": 1}}}}, "logged_out": True,
-             "blocked_list": ["ForceRemoveChild: x", "ForceRemoveChild: x"], "seconds": 70}
+    state = {
+        "analysis": analyse(holdings),
+        "totals": {},
+        "pages": {
+            "analyzer": {"reached": True, "data_calls": [1], "tabs": {"Dividend": {"status": "read", "rows": 3, "data_calls": 1}}}
+        },
+        "logged_out": True,
+        "blocked_list": ["ForceRemoveChild: x", "ForceRemoveChild: x"],
+        "seconds": 70,
+    }
     report = format_report(state)
     assert all(f". Stock {i}" in report for i in range(25)) and "Large Cap · IT - Software" in report
     assert "Portfolio analyser (holdings): read + tabs: Dividend" in report and "(\u00d72)" in report and "took 70s" in report
-    for error, todo in [("login stopped at otp: portal said: Invalid OTP", "type the new OTP"),
-                        ("no OTP: no OTP within 180s", "within 3 minutes"),
-                        ("login stopped at mpin: portal said: Invalid MPIN", "run setup again")]:
+    for error, todo in [
+        ("login stopped at otp: portal said: Invalid OTP", "type the new OTP"),
+        ("no OTP: no OTP within 180s", "within 3 minutes"),
+        ("login stopped at mpin: portal said: Invalid MPIN", "run setup again"),
+    ]:
         failed = format_report({"error": error, "logged_out": True})
         assert "Why: " + error in failed and todo in failed and "Logged out safely" in failed
 

@@ -5,8 +5,8 @@ import pytest
 from sqlalchemy import select
 
 from src.database import PaperPositionRecord, PaperTradeRecord, make_session_factory
-from src.engine.paper_broker import PaperBroker
 from src.engine.costs import india_delivery_fees
+from src.engine.paper_broker import PaperBroker
 
 T0 = datetime(2026, 9, 21, 4, 0, tzinfo=timezone.utc)  # 09:30 IST, a Monday
 
@@ -44,8 +44,9 @@ def no_fees(side, value):
 
 
 def bar(minutes_after_t0, o, h, l, c):
-    return pd.DataFrame({"Open": [o], "High": [h], "Low": [l], "Close": [c]},
-                        index=pd.DatetimeIndex([T0 + timedelta(minutes=minutes_after_t0)]))
+    return pd.DataFrame(
+        {"Open": [o], "High": [h], "Low": [l], "Close": [c]}, index=pd.DatetimeIndex([T0 + timedelta(minutes=minutes_after_t0)])
+    )
 
 
 def make(tmp_path, fees=no_fees, slippage=0.0, cash=1_000_000.0, prices=None, name="p.db"):
@@ -64,7 +65,12 @@ def test_buy_creates_position_with_bracket_levels_from_signal_price(tmp_path):
         pos = s.get(PaperPositionRecord, "AAA")
         assert (pos.qty, pos.avg_price, pos.stop, pos.target) == (100, 100.0, 99.96, 107.1)
     pf = broker.portfolio()
-    assert pf.cash == 990_000.0 and pf.equity == 1_000_000.0 and pf.positions == {"AAA": 10_000.0} and pf.position_qty == {"AAA": 100}
+    assert (
+        pf.cash == 990_000.0
+        and pf.equity == 1_000_000.0
+        and pf.positions == {"AAA": 10_000.0}
+        and pf.position_qty == {"AAA": 100}
+    )
 
 
 def test_open_position_counts_as_open_bracket_order_and_blocks_second_buy(tmp_path):
@@ -95,8 +101,8 @@ def test_slippage_is_adverse_on_both_sides(tmp_path):
 
 def test_indian_delivery_fees_are_realistic():
     buy, sell = india_delivery_fees("BUY", 100_000), india_delivery_fees("SELL", 100_000)
-    assert 118 < buy < 120      # STT 100 + stamp 15 + exchange/SEBI/GST ~3.6
-    assert 119 < sell < 121     # STT 100 + exchange/SEBI/GST ~3.6 + DP 15.93
+    assert 118 < buy < 120  # STT 100 + stamp 15 + exchange/SEBI/GST ~3.6
+    assert 119 < sell < 121  # STT 100 + exchange/SEBI/GST ~3.6 + DP 15.93
     assert 0.0022 < (buy + sell) / 100_000 < 0.0026  # ~0.24% round trip
 
 
@@ -223,10 +229,10 @@ def test_summary_reports_trades_win_rate_fees_and_exits(tmp_path):
     broker, feed, _, _, _ = make(tmp_path, fees=india_delivery_fees, prices={"AAA": 100.0, "BBB": 200.0})
     broker.buy_with_bracket("AAA", 100, 100.0, 0.02, 0.05)
     feed.prices["AAA"] = 110.0
-    broker.sell("AAA", 100)                    # winner
+    broker.sell("AAA", 100)  # winner
     broker.buy_with_bracket("BBB", 50, 200.0, 0.02, 0.05)
     feed.prices["BBB"] = 190.0
-    broker.sell("BBB", 50)                     # loser
+    broker.sell("BBB", 50)  # loser
     s = broker.summary()
     assert s["closed_trades"] == 2 and s["win_rate"] == 0.5 and s["open_positions"] == 0
     assert s["exits"] == {"STOP": 0, "TARGET": 0, "SIGNAL": 2} and s["fees_paid"] > 0
@@ -250,7 +256,9 @@ def test_works_end_to_end_inside_the_trading_pipeline(tmp_path):
     broker, feed, _, _, sessions = make(tmp_path, prices={"AAA": 100.0})
     pipe = TradingPipeline(
         Settings(watchlist=("AAA",), dry_run=False, risk=RiskLimits()),
-        [StubAgent(lambda s: AgentSignal(action="BUY", confidence=0.9, reasoning="t"))], broker, sessions,
+        [StubAgent(lambda s: AgentSignal(action="BUY", confidence=0.9, reasoning="t"))],
+        broker,
+        sessions,
         lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000),
     )
     [r] = pipe.run_once()
@@ -278,7 +286,12 @@ def test_trade_history_lists_closed_trades_newest_first_with_both_dates(tmp_path
     now[0] = T0 + timedelta(days=1)
     broker.sell("BBB", 10)
     first, second = broker.trade_history()
-    assert (first["symbol"], first["net_pnl"], first["opened_at"], first["closed_at"]) == ("BBB", -100.0, T0, T0 + timedelta(days=1))
+    assert (first["symbol"], first["net_pnl"], first["opened_at"], first["closed_at"]) == (
+        "BBB",
+        -100.0,
+        T0,
+        T0 + timedelta(days=1),
+    )
     assert (second["symbol"], second["net_pnl"], second["reason"]) == ("AAA", 200.0, "SIGNAL")
 
 
@@ -346,10 +359,10 @@ def test_a_breach_in_the_tail_of_a_bar_is_caught_once_the_bar_has_finished(tmp_p
     """Regression: the bar in progress at the last look used to be dropped for good, so a stop breached later in that same
     bar was never seen (only each bar's first ~20 seconds were checked)."""
     broker, feed, now, _ = replay_broker(tmp_path)
-    feed.bars["AAA"] = bar(5, 100.5, 100.8, 100.2, 100.6)          # the 09:35 bar, forming: nothing wrong yet
+    feed.bars["AAA"] = bar(5, 100.5, 100.8, 100.2, 100.6)  # the 09:35 bar, forming: nothing wrong yet
     now[0] = T0 + timedelta(minutes=5, seconds=20)
     assert len(broker.portfolio().positions) == 1
-    feed.bars["AAA"] = bar(5, 100.5, 100.8, 98.4, 100.6)           # the same bar, finished: it dipped to 98.4 mid-bar
+    feed.bars["AAA"] = bar(5, 100.5, 100.8, 98.4, 100.6)  # the same bar, finished: it dipped to 98.4 mid-bar
     now[0] = T0 + timedelta(minutes=10, seconds=20)
     assert broker.portfolio().positions == {}
     [t] = broker.trade_history()
@@ -358,7 +371,7 @@ def test_a_breach_in_the_tail_of_a_bar_is_caught_once_the_bar_has_finished(tmp_p
 
 def test_a_bar_still_forming_is_examined_so_a_breach_is_not_delayed(tmp_path):
     broker, feed, now, _ = replay_broker(tmp_path)
-    feed.bars["AAA"] = bar(5, 100.5, 100.8, 98.4, 98.9)            # already through the stop, though the bar is not over
+    feed.bars["AAA"] = bar(5, 100.5, 100.8, 98.4, 98.9)  # already through the stop, though the bar is not over
     now[0] = T0 + timedelta(minutes=5, seconds=20)
     assert broker.portfolio().positions == {}
     assert broker.trade_history()[0]["reason"] == "STOP"
@@ -366,24 +379,25 @@ def test_a_bar_still_forming_is_examined_so_a_breach_is_not_delayed(tmp_path):
 
 def test_a_bar_is_only_marked_as_checked_once_it_has_finished(tmp_path):
     broker, feed, now, sessions = replay_broker(tmp_path)
-    feed.bars["AAA"] = pd.concat([bar(5, 100.5, 100.8, 100.2, 100.6), bar(10, 100.6, 100.9, 100.3, 100.7),
-                                  bar(15, 100.7, 100.9, 100.4, 100.8)])
-    now[0] = T0 + timedelta(minutes=15, seconds=20)                # 09:35 and 09:40 have finished, 09:45 is forming
+    feed.bars["AAA"] = pd.concat(
+        [bar(5, 100.5, 100.8, 100.2, 100.6), bar(10, 100.6, 100.9, 100.3, 100.7), bar(15, 100.7, 100.9, 100.4, 100.8)]
+    )
+    now[0] = T0 + timedelta(minutes=15, seconds=20)  # 09:35 and 09:40 have finished, 09:45 is forming
     broker.portfolio()
-    assert last_checked(sessions) == T0 + timedelta(minutes=10)    # the NEWEST finished bar: not "now", not the forming one
+    assert last_checked(sessions) == T0 + timedelta(minutes=10)  # the NEWEST finished bar: not "now", not the forming one
     now[0] = T0 + timedelta(minutes=17)
     broker.portfolio()
-    assert last_checked(sessions) == T0 + timedelta(minutes=10)    # nothing new has finished: unchanged
+    assert last_checked(sessions) == T0 + timedelta(minutes=10)  # nothing new has finished: unchanged
     now[0] = T0 + timedelta(minutes=20, seconds=20)
     broker.portfolio()
-    assert last_checked(sessions) == T0 + timedelta(minutes=15)    # 09:45 finished
+    assert last_checked(sessions) == T0 + timedelta(minutes=15)  # 09:45 finished
 
 
 def test_prices_printed_before_the_buy_never_trigger_the_stop(tmp_path):
     """The bar the buy happened in also contains prints from before the fill; it is skipped, the next bar is the first one."""
     broker, feed, now, _ = replay_broker(tmp_path)
     now[0] = T0 + timedelta(seconds=20)
-    feed.bars["AAA"] = bar(0, 100.0, 100.4, 90.0, 100.2)            # the entry bar: a 90.0 low from before we owned it
+    feed.bars["AAA"] = bar(0, 100.0, 100.4, 90.0, 100.2)  # the entry bar: a 90.0 low from before we owned it
     assert len(broker.portfolio().positions) == 1
     now[0] = T0 + timedelta(minutes=6)
     assert len(broker.portfolio().positions) == 1
@@ -457,6 +471,7 @@ def test_an_odd_ratio_keeps_whole_shares_and_the_cost_basis(tmp_path):
 
 def test_a_dividend_is_credited_on_its_ex_date_and_the_ledger_still_reconciles(tmp_path):
     from datetime import date
+
     from src.ops.reconciliation import reconcile_paper
 
     broker, _, clock, _, sessions, _ = with_actions(tmp_path, {"AAA": ({}, {date(2026, 9, 24): 4.0})}, fees=india_delivery_fees)

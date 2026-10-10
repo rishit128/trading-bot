@@ -12,6 +12,7 @@
 
 The AI never sees quantities, amounts, names or account IDs, and cannot act: it only writes the note. Every number in
 the report comes from the deterministic nodes."""
+
 import json
 import logging
 import re
@@ -21,8 +22,17 @@ from typing import Callable, List, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from src.portfolio.holdings import (Holding, analyse, anonymised, from_json, from_portfolio_analyzer, from_tables, inr,
-                                    plausible, totals)
+from src.portfolio.holdings import (
+    Holding,
+    analyse,
+    anonymised,
+    from_json,
+    from_portfolio_analyzer,
+    from_tables,
+    inr,
+    plausible,
+    totals,
+)
 from src.portfolio.report import sections, split_message, strip_tags
 from src.portfolio.session import MARKET_DATA
 from src.portfolio.statements import Statements, load, name_key
@@ -33,12 +43,14 @@ MOCK_WARNING = "⚠ The portal is showing mock-session prices today (exchange te
 # A free model's note is used only if it reads like a description of this portfolio: long enough, not an error or a
 # complaint about the input, and not advice to trade (it is told not to, and this checks it did not).
 NOTE_MIN_CHARS = 120
-NOTE_REJECT = re.compile(r"invalid|\bjson\b|no data|not provided|missing|cannot determine|unable to|as an ai|"
-                         r"please (confirm|provide|clarify)|\?\s*$|"
-                         r"\b(you should|i recommend|we recommend|consider (buying|selling)|buy more|sell (it|them|now))\b",
-                         re.I)
+NOTE_REJECT = re.compile(
+    r"invalid|\bjson\b|no data|not provided|missing|cannot determine|unable to|as an ai|"
+    r"please (confirm|provide|clarify)|\?\s*$|"
+    r"\b(you should|i recommend|we recommend|consider (buying|selling)|buy more|sell (it|them|now))\b",
+    re.I,
+)
 PAGE_ORDER = ("analyzer", "portfolio", "dashboard", "account")  # where a holdings table is most likely shown
-ANALYZER = re.compile(r"PortfolioAnalyzer", re.I)       # the saved data response holding the demat statement
+ANALYZER = re.compile(r"PortfolioAnalyzer", re.I)  # the saved data response holding the demat statement
 
 __all__ = ["build_portfolio_graph", "extract", "analyse_node", "format_report", "split_message"]
 
@@ -80,13 +92,18 @@ def extract(state: PortfolioState) -> PortfolioState:
         if ANALYZER.search(name) and (found := from_portfolio_analyzer(body)):
             if plausible(found, portal_value):
                 return {**result, "holdings": [_with_class(h, st) for h in found], "source": name}
-            warnings.append(f"⚠ The holdings statement adds up to {inr(sum(h.value for h in found))}, not the portal's "
-                            f"{inr(found_totals['value'])}; not used.")
+            warnings.append(
+                f"⚠ The holdings statement adds up to {inr(sum(h.value for h in found))}, not the portal's "
+                f"{inr(found_totals['value'])}; not used."
+            )
     best: List[Holding] = []
     source = ""
     for page in PAGE_ORDER:
-        candidates = [(from_json(body), name) for name, body in responses.items()
-                      if name.startswith(f"{page}_") and not MARKET_DATA.search(name)]
+        candidates = [
+            (from_json(body), name)
+            for name, body in responses.items()
+            if name.startswith(f"{page}_") and not MARKET_DATA.search(name)
+        ]
         tables = run_dir / f"{page}.tables.json"
         if tables.exists():
             candidates.append((from_tables(json.loads(tables.read_text(encoding="utf-8"))), tables.name))
@@ -131,6 +148,7 @@ def make_explain(explain_fn: Optional[Callable[[dict], str]]):
             log.warning("portfolio explanation rejected (%d chars)", len(note))
             return {"explanation": ""}
         return {"explanation": note}
+
     return explain
 
 
@@ -148,20 +166,26 @@ def make_report(notify: Callable[[str], object]):
             out = Path(state["run_dir"])
             (out / "report.txt").write_text(text, encoding="utf-8")
             st = state.get("statements")
-            record = {"totals": state.get("totals"), "warnings": state.get("warnings"), "source": state.get("source"),
-                      **(state.get("analysis") or {}), "explanation": state.get("explanation", ""),
-                      "statements": asdict(st) if st is not None else None}
-            (out / "report.json").write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str),
-                                             encoding="utf-8")
+            record = {
+                "totals": state.get("totals"),
+                "warnings": state.get("warnings"),
+                "source": state.get("source"),
+                **(state.get("analysis") or {}),
+                "explanation": state.get("explanation", ""),
+                "statements": asdict(st) if st is not None else None,
+            }
+            (out / "report.json").write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
         for section in parts:
             for message in split_message(section):
                 notify(message)
         return {"report": text}
+
     return report
 
 
-def build_portfolio_graph(fetch: Callable[[], dict], notify: Callable[[str], object],
-                          explain: Optional[Callable[[dict], str]] = None):
+def build_portfolio_graph(
+    fetch: Callable[[], dict], notify: Callable[[str], object], explain: Optional[Callable[[dict], str]] = None
+):
     """Compile the graph. `fetch` is the portal visit (runs.fetch_portfolio bound to credentials and an OTP source)."""
     g = StateGraph(PortfolioState)
     g.add_node("fetch", lambda state: fetch())
@@ -170,8 +194,9 @@ def build_portfolio_graph(fetch: Callable[[], dict], notify: Callable[[str], obj
     g.add_node("explain", make_explain(explain))
     g.add_node("report", make_report(notify))
     g.add_edge(START, "fetch")
-    g.add_conditional_edges("fetch", lambda s: "report" if s.get("error") or not s.get("run_dir") else "extract",
-                            ["extract", "report"])
+    g.add_conditional_edges(
+        "fetch", lambda s: "report" if s.get("error") or not s.get("run_dir") else "extract", ["extract", "report"]
+    )
     g.add_conditional_edges("extract", lambda s: "analyse" if s.get("holdings") else "report", ["analyse", "report"])
     g.add_edge("analyse", "explain")
     g.add_edge("explain", "report")

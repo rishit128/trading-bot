@@ -77,7 +77,9 @@ def test_screener_skips_stocks_whose_data_stops_early():
     cfg = ScreenConfig(min_price=1.0, min_traded_value=1.0, max_daily_volatility=0.5)
     both = pd.concat([frame("LIVE", "2026-09-18"), frame("HALTED", "2026-08-01")])
     assert {c.symbol for c in screen_bars(both, cfg)} == {"LIVE"}
-    assert {c.symbol for c in screen_bars(frame("HALTED", "2026-08-01"), cfg)} == {"HALTED"}  # alone it IS the newest, so it passes
+    assert {c.symbol for c in screen_bars(frame("HALTED", "2026-08-01"), cfg)} == {
+        "HALTED"
+    }  # alone it IS the newest, so it passes
 
 
 # ---------------------------------------------------------------- database

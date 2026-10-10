@@ -9,6 +9,7 @@
 
 The portal sends most of these as JSON inside a string; every reader unwraps it (`decode`) and skips rows it cannot read
 rather than guessing. Personal details (name, address, client/DP IDs) in these responses are never read."""
+
 import json
 import re
 from dataclasses import dataclass, field, replace
@@ -22,7 +23,7 @@ from src.portfolio.holdings import Holding, decode, number
 @dataclass(frozen=True)
 class Lot:
     company: str
-    bought_on: str          # dd/mm/yyyy as the portal prints it
+    bought_on: str  # dd/mm/yyyy as the portal prints it
     qty: float
     rate: float
     days_to_long_term: Optional[int]
@@ -31,7 +32,7 @@ class Lot:
 @dataclass(frozen=True)
 class Dividend:
     company: str
-    record_date: str        # dd/mm/yyyy
+    record_date: str  # dd/mm/yyyy
     qty: float
     per_share: float
     gross: float
@@ -54,8 +55,8 @@ CORPORATE_ACTION = re.compile(r"scheme|merger|demerger|amalgamation|bonus|split|
 @dataclass(frozen=True)
 class Trade:
     company: str
-    on: str                 # dd/mm/yyyy
-    side: str               # Buy / Sell
+    on: str  # dd/mm/yyyy
+    side: str  # Buy / Sell
     qty: float
     rate: float
     note: str
@@ -69,7 +70,7 @@ class Trade:
 @dataclass
 class Statements:
     holdings: List[Holding] = field(default_factory=list)
-    totals: Dict[str, float] = field(default_factory=dict)   # cost, value, realised, unrealised, roi_pct
+    totals: Dict[str, float] = field(default_factory=dict)  # cost, value, realised, unrealised, roi_pct
     lots: List[Lot] = field(default_factory=list)
     dividends: List[Dividend] = field(default_factory=list)
     financial_year: str = ""
@@ -102,16 +103,32 @@ def current_holdings(body) -> Tuple[List[Holding], Dict[str, float]]:
         value, qty = number(row.get("valueAtMarketPrice")), number(row.get("portfolioPosition"))
         if not value or value <= 0 or not qty:
             continue
-        out.append(Holding(
-            symbol=str(row.get("companyName") or "").strip(), qty=qty, avg=number(row.get("averageCostPrice")),
-            ltp=number(row.get("currentMarketPrice")), value=value, invested=number(row.get("valueAtCost")),
-            realized=number(row.get("realizedProfitLoss")), bought_qty=number(row.get("BuyQty")),
-            sold_qty=number(row.get("SellQty")), price_date=str(row.get("lastPriceDate") or "")))
+        out.append(
+            Holding(
+                symbol=str(row.get("companyName") or "").strip(),
+                qty=qty,
+                avg=number(row.get("averageCostPrice")),
+                ltp=number(row.get("currentMarketPrice")),
+                value=value,
+                invested=number(row.get("valueAtCost")),
+                realized=number(row.get("realizedProfitLoss")),
+                bought_qty=number(row.get("BuyQty")),
+                sold_qty=number(row.get("SellQty")),
+                price_date=str(row.get("lastPriceDate") or ""),
+            )
+        )
     grand = ((pa.get("totals") or {}).get("grandTotal")) or {}
-    totals = {k: v for k, v in {"cost": number(grand.get("valueAtCost")), "value": number(grand.get("valueAtMarketPrice")),
-                                "realised": number(grand.get("realizedProfitLoss")),
-                                "unrealised": number(grand.get("unrealizedProfitLoss")),
-                                "roi_pct": number(grand.get("ROIper"))}.items() if v is not None}
+    totals = {
+        k: v
+        for k, v in {
+            "cost": number(grand.get("valueAtCost")),
+            "value": number(grand.get("valueAtMarketPrice")),
+            "realised": number(grand.get("realizedProfitLoss")),
+            "unrealised": number(grand.get("unrealizedProfitLoss")),
+            "roi_pct": number(grand.get("ROIper")),
+        }.items()
+        if v is not None
+    }
     return out, totals
 
 
@@ -125,8 +142,15 @@ def lots(body) -> List[Lot]:
             qty, rate = number(d.get("Quantity")), number(d.get("Rate"))
             if qty and rate:
                 days = number(d.get("RemainingDays"))
-                out.append(Lot(str(company.get("CompanyName") or "").strip(), str(d.get("DateOfTransaction") or ""),
-                               qty, rate, None if days is None else int(days)))
+                out.append(
+                    Lot(
+                        str(company.get("CompanyName") or "").strip(),
+                        str(d.get("DateOfTransaction") or ""),
+                        qty,
+                        rate,
+                        None if days is None else int(days),
+                    )
+                )
     return out
 
 
@@ -140,9 +164,17 @@ def dividends(body) -> List[Dividend]:
             continue
         isin = row.get("ISIN") or {}
         tds = next((_num(v) for k, v in row.items() if k.upper().startswith("TDS")), 0.0)
-        out.append(Dividend(str(isin.get("Description") or "").strip(), str(row.get("RecordDate") or ""),
-                            _num(row.get("EligibleQuantity")), _num(row.get("DividendPerShare")), gross, tds,
-                            _num(row.get("NetDividentAmount"), gross - tds)))
+        out.append(
+            Dividend(
+                str(isin.get("Description") or "").strip(),
+                str(row.get("RecordDate") or ""),
+                _num(row.get("EligibleQuantity")),
+                _num(row.get("DividendPerShare")),
+                gross,
+                tds,
+                _num(row.get("NetDividentAmount"), gross - tds),
+            )
+        )
     return out
 
 
@@ -150,8 +182,16 @@ def realised(body) -> Tuple[str, List[Sale]]:
     """Portfolio/RealizedGainLoss: the financial year and each sale in it."""
     root = decode(body)
     st = (root.get("portfolioGainLossStatement") if isinstance(root, dict) else None) or {}
-    sales = [Sale(str(t.get("company") or "").strip(), _num(t.get("SoldQuantity")), _num(t.get("BoughtValue")),
-                  _num(t.get("SoldValue")), _num(t.get("GainOrLoss"))) for t in st.get("transactions") or []]
+    sales = [
+        Sale(
+            str(t.get("company") or "").strip(),
+            _num(t.get("SoldQuantity")),
+            _num(t.get("BoughtValue")),
+            _num(t.get("SoldValue")),
+            _num(t.get("GainOrLoss")),
+        )
+        for t in st.get("transactions") or []
+    ]
     return str(st.get("financialYear") or ""), sales
 
 
@@ -164,9 +204,16 @@ def trades(body) -> List[Trade]:
         for t in holding.get("transactions") or []:
             credit, debit = _num(t.get("creditQty")), _num(t.get("debitQty"))
             if credit or debit:
-                out.append(Trade(str(holding.get("fundName") or "").strip(), str(t.get("transactionDate") or ""),
-                                 "Buy" if credit else "Sell", credit or debit, _num(t.get("rate")),
-                                 re.sub(r"\s+", " ", str(t.get("description") or "")).strip()))
+                out.append(
+                    Trade(
+                        str(holding.get("fundName") or "").strip(),
+                        str(t.get("transactionDate") or ""),
+                        "Buy" if credit else "Sell",
+                        credit or debit,
+                        _num(t.get("rate")),
+                        re.sub(r"\s+", " ", str(t.get("description") or "")).strip(),
+                    )
+                )
     return out
 
 
@@ -177,14 +224,17 @@ def classes(body) -> Dict[str, Tuple[str, str]]:
     out = {}
     for row in rows if isinstance(rows, list) else []:
         if isinstance(row, dict) and row.get("isindesc") and number(row.get("valuation")):
-            out[name_key(row["isindesc"])] = (str(row.get("sectorname") or "").strip(),
-                                              str(row.get("Market_cap") or "").strip())
+            out[name_key(row["isindesc"])] = (str(row.get("sectorname") or "").strip(), str(row.get("Market_cap") or "").strip())
     return out
 
 
 READERS = {  # file-name pattern of the saved data response -> what to do with it
-    "Portfolio_Present": "holdings", "HoldingsTurnings": "lots", "Statements_Dividend": "dividends",
-    "RealizedGainLoss": "realised", "StatementOfTransaction": "trades", "EquityPortfolioAnalyzer": "classes",
+    "Portfolio_Present": "holdings",
+    "HoldingsTurnings": "lots",
+    "Statements_Dividend": "dividends",
+    "RealizedGainLoss": "realised",
+    "StatementOfTransaction": "trades",
+    "EquityPortfolioAnalyzer": "classes",
 }
 
 

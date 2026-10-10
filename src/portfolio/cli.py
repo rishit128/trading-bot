@@ -6,6 +6,7 @@
 
 To run the agent: `python main.py --portfolio` (OTP on Telegram), or send /portfolio to the running trading bot.
 """
+
 import argparse
 import getpass
 import shutil
@@ -31,8 +32,9 @@ def setup(store: RunStore) -> int:
     values = {
         "mobile": _ask("Mobile number registered with Integrated", True, old.mobile if old else ""),
         "mpin": _ask("MPIN", True, old.mpin if old else ""),
-        "customer_id": _ask("Customer ID (only if several are linked to the mobile; else Enter)", False,
-                            old.customer_id if old else ""),
+        "customer_id": _ask(
+            "Customer ID (only if several are linked to the mobile; else Enter)", False, old.customer_id if old else ""
+        ),
     }
     wrong = vault.problems(values)
     if wrong:
@@ -73,8 +75,9 @@ def forget(store: RunStore, profile: bool) -> int:
 
 
 def main(argv=None, store: Optional[RunStore] = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m src.portfolio", description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        prog="python -m src.portfolio", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("setup")
     sub.add_parser("check")

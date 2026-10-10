@@ -40,8 +40,9 @@ class _AnalysisOnlyServices:
         return AgentContext(symbol, snapshot, market=lambda: None)
 
 
-FAST_RETRY = RetryPolicy(max_attempts=2, initial_interval=0.01, backoff_factor=1.0, jitter=False,
-                         retry_on=is_transient_data_error)
+FAST_RETRY = RetryPolicy(
+    max_attempts=2, initial_interval=0.01, backoff_factor=1.0, jitter=False, retry_on=is_transient_data_error
+)
 
 
 # ---------------------------------------------------------------- fetch_data's RetryPolicy (SNAPSHOT_RETRY)
@@ -54,8 +55,9 @@ def test_a_transient_snapshot_failure_is_retried_and_recovers(tmp_path):
             raise ConnectionError("dropped connection")
         return Snapshot(symbol, 100.0, 98.0, 95.0, 60.0, 1000)
 
-    graph = build_analysis_graph(_AnalysisOnlyServices(flaky, {"technical": stub("technical", lambda s: signal_for("BUY"))}),
-                                 snapshot_retry=FAST_RETRY)
+    graph = build_analysis_graph(
+        _AnalysisOnlyServices(flaky, {"technical": stub("technical", lambda s: signal_for("BUY"))}), snapshot_retry=FAST_RETRY
+    )
     out = graph.invoke({"symbol": "AAPL"})
     assert len(calls) == 2  # failed once, retried once, succeeded
     assert out["signals"]["technical"].action == "BUY"
@@ -68,8 +70,10 @@ def test_a_definite_data_error_is_not_retried(tmp_path):
         calls.append(symbol)
         raise ValueError(f"{symbol}: last bar is stale")
 
-    graph = build_analysis_graph(_AnalysisOnlyServices(always_stale, {"technical": stub("technical", lambda s: signal_for("BUY"))}),
-                                 snapshot_retry=FAST_RETRY)
+    graph = build_analysis_graph(
+        _AnalysisOnlyServices(always_stale, {"technical": stub("technical", lambda s: signal_for("BUY"))}),
+        snapshot_retry=FAST_RETRY,
+    )
     with pytest.raises(ValueError, match="stale"):
         graph.invoke({"symbol": "AAPL"})
     assert len(calls) == 1  # a definite fact about the data must not cost a second attempt
@@ -79,13 +83,29 @@ def test_a_definite_data_error_is_not_retried(tmp_path):
 def test_graphs_are_built_from_the_registered_agents(tmp_path):
     pipe, _, _ = make_pipeline(tmp_path)
     assert set(pipe.analysis_graph.get_graph().nodes) == {
-        "__start__", "fetch_data", "agent_technical", "agent_sentiment", "collect", "__end__"}
+        "__start__",
+        "fetch_data",
+        "agent_technical",
+        "agent_sentiment",
+        "collect",
+        "__end__",
+    }
     assert set(pipe.decision_graph.get_graph().nodes) == {"__start__", "decide", "execute", "__end__"}
     assert set(pipe.cycle_graph.get_graph().nodes) == {
-        "__start__", "open_cycle", "select_universe", "analyze_symbol", "execute_cycle", "__end__"}
+        "__start__",
+        "open_cycle",
+        "select_universe",
+        "analyze_symbol",
+        "execute_cycle",
+        "__end__",
+    }
     edges = {(e.source, e.target) for e in pipe.analysis_graph.get_graph().edges}
-    assert {("fetch_data", "agent_technical"), ("fetch_data", "agent_sentiment"),
-            ("agent_technical", "collect"), ("agent_sentiment", "collect")} <= edges
+    assert {
+        ("fetch_data", "agent_technical"),
+        ("fetch_data", "agent_sentiment"),
+        ("agent_technical", "collect"),
+        ("agent_sentiment", "collect"),
+    } <= edges
 
 
 def test_duplicate_agent_names_and_empty_registry_are_rejected(tmp_path):
@@ -109,8 +129,10 @@ def test_any_number_of_agents_run_in_parallel(tmp_path):
         return stub(name, fn, role)
 
     pipe, _, _ = make_pipeline(tmp_path)
-    pipe.agents = {a.name: a for a in [waiting("technical", LEAD), waiting("trend", LEAD),
-                                       waiting("fundamentals", ADVISOR), waiting("macro", ADVISOR)]}
+    pipe.agents = {
+        a.name: a
+        for a in [waiting("technical", LEAD), waiting("trend", LEAD), waiting("fundamentals", ADVISOR), waiting("macro", ADVISOR)]
+    }
     pipe.rebuild_graphs()
     [r] = pipe.run_once()
     assert r.action == "BUY" and r.error is None
@@ -200,8 +222,13 @@ class LedgerBroker(FakeBroker):
 
     def buy_with_bracket(self, symbol, qty, price, stop, take):
         pf = self._portfolio
-        self._portfolio = Portfolio(pf.cash - qty * price, pf.equity, {**pf.positions, symbol: qty * price},
-                                    {**pf.position_qty, symbol: qty}, pf.start_of_day_equity)
+        self._portfolio = Portfolio(
+            pf.cash - qty * price,
+            pf.equity,
+            {**pf.positions, symbol: qty * price},
+            {**pf.position_qty, symbol: qty},
+            pf.start_of_day_equity,
+        )
         return super().buy_with_bracket(symbol, qty, price, stop, take)
 
 
@@ -209,8 +236,9 @@ def test_decisions_run_one_at_a_time_against_fresh_portfolio_state(tmp_path):
     from src.config import RiskLimits as RL
 
     broker = LedgerBroker()
-    pipe, _, _ = make_pipeline(tmp_path, dry_run=False, broker=broker, watchlist=("A", "B", "C"), analysis_workers=3,
-                               risk=RL(max_open_positions=2))
+    pipe, _, _ = make_pipeline(
+        tmp_path, dry_run=False, broker=broker, watchlist=("A", "B", "C"), analysis_workers=3, risk=RL(max_open_positions=2)
+    )
     results = pipe.run_once()
     assert [r.order_status for r in results] == ["accepted", "accepted", None]
     assert "max open positions" in results[2].risk.reason and len(broker.buys) == 2
@@ -240,7 +268,7 @@ def test_approved_trades_reach_execute_with_the_risk_engine_quantity(tmp_path):
     original = pipe._place
     pipe._place = lambda *a: seen.append(a) or original(*a)
     pipe.run_once()
-    (decision_id, symbol, action, qty, price), = seen
+    ((decision_id, symbol, action, qty, price),) = seen
     assert (symbol, action, qty, price) == ("AAPL", "BUY", 50, 100.0) and isinstance(decision_id, int)
 
 
@@ -274,7 +302,9 @@ def test_no_quote_is_fetched_for_hold_decisions(tmp_path):
 
 def test_an_advisors_veto_flows_through_the_graph_and_is_audited(tmp_path):
     pipe, _, sessions = make_pipeline(tmp_path)
-    pipe.agents["sentiment"] = stub("sentiment", lambda s: AgentSignal(action="SELL", confidence=0.9, reasoning="bad news"), ADVISOR)
+    pipe.agents["sentiment"] = stub(
+        "sentiment", lambda s: AgentSignal(action="SELL", confidence=0.9, reasoning="bad news"), ADVISOR
+    )
     [r] = pipe.run_once()
     assert r.action == "HOLD"
     with sessions() as s:
@@ -298,15 +328,19 @@ def test_analysis_graph_can_be_invoked_directly(tmp_path):
 def test_pipeline_with_a_single_lead_agent_and_no_advisors(tmp_path):
     settings = Settings(watchlist=("X",), dry_run=True, risk=RiskLimits())
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'one.db'}")
-    pipe = TradingPipeline(settings, [stub("technical", lambda s: signal_for("BUY"))],
-                           FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)), sessions,
-                           lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000))
+    pipe = TradingPipeline(
+        settings,
+        [stub("technical", lambda s: signal_for("BUY"))],
+        FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)),
+        sessions,
+        lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000),
+    )
     assert set(pipe.analysis_graph.get_graph().nodes) == {"__start__", "fetch_data", "agent_technical", "collect", "__end__"}
     assert pipe.run_once()[0].action == "BUY"
 
 
 # ---------------------------------------------------------------- deterministic trend exit
-BROKEN = lambda sym: Snapshot(sym, 90.0, 96.0, 95.0, 40.0, 1000)   # noqa: E731  price 90 < 200-day average 95
+BROKEN = lambda sym: Snapshot(sym, 90.0, 96.0, 95.0, 40.0, 1000)  # noqa: E731  price 90 < 200-day average 95
 INTACT = lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000)  # noqa: E731
 
 
@@ -315,8 +349,9 @@ def holding_broker():
 
 
 def test_held_stock_below_its_200_day_average_is_sold_even_if_every_agent_says_buy(tmp_path):
-    pipe, broker, sessions = make_pipeline(tmp_path, technical_action="BUY", dry_run=False, broker=holding_broker(),
-                                           snapshot_fn=BROKEN)
+    pipe, broker, sessions = make_pipeline(
+        tmp_path, technical_action="BUY", dry_run=False, broker=holding_broker(), snapshot_fn=BROKEN
+    )
     [r] = pipe.run_once()
     assert r.action == "SELL" and r.order_status == "accepted" and broker.sells == [("AAPL", 50)] and broker.buys == []
     with sessions() as s:
@@ -331,8 +366,7 @@ def test_trend_exit_sells_the_full_holding_at_full_confidence(tmp_path):
 
 
 def test_held_stock_with_an_intact_trend_is_left_to_the_agents(tmp_path):
-    pipe, broker, _ = make_pipeline(tmp_path, technical_action="HOLD", dry_run=False, broker=holding_broker(),
-                                    snapshot_fn=INTACT)
+    pipe, broker, _ = make_pipeline(tmp_path, technical_action="HOLD", dry_run=False, broker=holding_broker(), snapshot_fn=INTACT)
     [r] = pipe.run_once()
     assert r.action == "HOLD" and broker.sells == []
 
@@ -344,8 +378,9 @@ def test_a_broken_trend_alone_never_buys_or_shorts_a_stock_we_do_not_hold(tmp_pa
 
 
 def test_trend_exit_can_be_switched_off(tmp_path):
-    pipe, broker, _ = make_pipeline(tmp_path, technical_action="HOLD", dry_run=False, broker=holding_broker(),
-                                    snapshot_fn=BROKEN, trend_exit=False)
+    pipe, broker, _ = make_pipeline(
+        tmp_path, technical_action="HOLD", dry_run=False, broker=holding_broker(), snapshot_fn=BROKEN, trend_exit=False
+    )
     assert pipe.run_once()[0].action == "HOLD" and broker.sells == []
 
 

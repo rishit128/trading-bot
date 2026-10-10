@@ -1,4 +1,5 @@
 """Command-line entry point: builds the market kit, agents and pipeline, then runs one cycle, a loop, or a utility command."""
+
 import argparse
 import dataclasses
 import logging
@@ -6,11 +7,10 @@ import os
 import sys
 
 from src.agents.technical import TechnicalAgent
-from src.learning.jobs import DailyOutcomeLabelling, WeeklyLearningReport
 from src.app.intraday_cli import run_intraday
 from src.app.portfolio_agent import PortfolioCommand, make_explainer, run_standalone, strip_html
-from src.app.wiring import build_market_wiring, gapgo_db_url, gaponly_db_url, intraday_db_url, make_paper_broker
 from src.app.reports import print_candidates, print_graphs, print_positions, print_report
+from src.app.wiring import build_market_wiring, gapgo_db_url, gaponly_db_url, intraday_db_url, make_paper_broker
 from src.config import load_settings
 from src.control import Control
 from src.data.fundamentals import FundamentalsProvider
@@ -19,11 +19,12 @@ from src.data.market_context import MarketContextProvider
 from src.data.market_data import fetch_daily_bars
 from src.database import make_session_factory
 from src.intraday.strategy import intraday_fees
+from src.learning.jobs import DailyOutcomeLabelling, WeeklyLearningReport
 from src.llm import LLMClient
 from src.logging_setup import configure_logging
 from src.monitoring.telegram import CommandListener, Notifier, handle_command
-from src.pipeline import TradingPipeline
 from src.ops.preflight import build_checks, critical_failures, format_results, run_checks
+from src.pipeline import TradingPipeline
 from src.runner import run_cycle, run_loop
 
 log = logging.getLogger(__name__)
@@ -60,9 +61,14 @@ def build_pipeline(live: bool) -> TradingPipeline:
         # /portfolio: the read-only real-account agent. It shares this Telegram bot, so this listener hands it the OTP.
         portfolio = PortfolioCommand(notify, make_explainer(llm))
         extra = {"/portfolio": (PortfolioCommand.HELP, portfolio)}
-        CommandListener(token, chat_id, lambda text: handle_command(text, control, kit.broker, settings, intraday_broker, extra,
-                                                                 gapgo_broker, gaponly_broker),
-                        intercept=portfolio.inbox.offer).start()
+        CommandListener(
+            token,
+            chat_id,
+            lambda text: handle_command(
+                text, control, kit.broker, settings, intraday_broker, extra, gapgo_broker, gaponly_broker
+            ),
+            intercept=portfolio.inbox.offer,
+        ).start()
     else:
         print("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID); alerts and /pause disabled")
     market_provider = MarketContextProvider()
@@ -77,9 +83,18 @@ def build_pipeline(live: bool) -> TradingPipeline:
 
     agents = [TechnicalAgent(llm, use_cot=settings.llm_cot, use_reflect=settings.llm_reflect)]
     pipeline = TradingPipeline(
-        settings, agents, kit.broker, sessions, kit.snapshot_fn, control=control, notify=notify,
-        universe_fn=kit.screener.symbols_for if kit.screener else None, quote_fn=kit.quote_fn,
-        market_context_fn=market_context, fundamentals_fn=FundamentalsProvider(), broker_label=kit.broker_label,
+        settings,
+        agents,
+        kit.broker,
+        sessions,
+        kit.snapshot_fn,
+        control=control,
+        notify=notify,
+        universe_fn=kit.screener.symbols_for if kit.screener else None,
+        quote_fn=kit.quote_fn,
+        market_context_fn=market_context,
+        fundamentals_fn=FundamentalsProvider(),
+        broker_label=kit.broker_label,
     )
     return pipeline
 
@@ -90,7 +105,11 @@ def preflight(pipeline) -> list:
         settings = pipeline.settings if pipeline is not None else load_settings()
     except ValueError as e:
         sys.exit(f"Invalid configuration: {e}")
-    broker = pipeline.broker if pipeline is not None else build_market_wiring(settings, make_session_factory(settings.database_url)).broker
+    broker = (
+        pipeline.broker
+        if pipeline is not None
+        else build_market_wiring(settings, make_session_factory(settings.database_url)).broker
+    )
     results = run_checks(build_checks(settings, broker, os.environ))
     print("Startup checks:\n" + format_results(results))
     return critical_failures(results)
@@ -98,16 +117,21 @@ def preflight(pipeline) -> list:
 
 def build_outcome_labeller(pipeline) -> DailyOutcomeLabelling:
     """The once-a-day job that attaches real outcomes to the decisions the bot has made, so it can learn from all of them."""
-    return DailyOutcomeLabelling(pipeline.sessions, pipeline.control, lambda symbol: fetch_daily_bars(symbol, suffix=SUFFIX),
-                                 stop_pct=pipeline.settings.risk.stop_loss_pct, notify=pipeline.notify)
+    return DailyOutcomeLabelling(
+        pipeline.sessions,
+        pipeline.control,
+        lambda symbol: fetch_daily_bars(symbol, suffix=SUFFIX),
+        stop_pct=pipeline.settings.risk.stop_loss_pct,
+        notify=pipeline.notify,
+    )
 
 
 def build_holdout_callback(pipeline):
     """The per-cycle hook for --holdout: replays the approved decisions into the independent reserve and prints a mark."""
+    import yfinance as yf
+
     from src.engine.costs import SLIPPAGE
     from src.ops.holdout import HoldoutReserve
-
-    import yfinance as yf
 
     def reserve_bars(sym: str):
         """Daily OHLCV for one symbol; a failure means the symbol is priced out of the reserve, never guessed."""
@@ -120,16 +144,19 @@ def build_holdout_callback(pipeline):
             log.warning("holdout: no daily bars for %s (%s); excluded", sym, e)
             return None
 
-    reserve = HoldoutReserve(pipeline.sessions, reserve_bars, slippage=SLIPPAGE,
-                             cash_yield=pipeline.settings.cash_yield_pct)
+    reserve = HoldoutReserve(pipeline.sessions, reserve_bars, slippage=SLIPPAGE, cash_yield=pipeline.settings.cash_yield_pct)
 
     def mark_reserve():
         m = reserve.mark()
-        print(f"holdout reserve: equity {m['equity']:,.2f} (return {m['return_pct']:.2%}), "
-              f"{m['closed_trades']} closed, {m['open_positions']} open, {m['decisions']} decisions replayed")
+        print(
+            f"holdout reserve: equity {m['equity']:,.2f} (return {m['return_pct']:.2%}), "
+            f"{m['closed_trades']} closed, {m['open_positions']} open, {m['decisions']} decisions replayed"
+        )
 
-    print("holdout reserve enabled: every cycle replays the approved decisions into an independent account "
-          "(never tuned, never read back by the paper account)")
+    print(
+        "holdout reserve enabled: every cycle replays the approved decisions into an independent account "
+        "(never tuned, never read back by the paper account)"
+    )
     return mark_reserve
 
 
@@ -152,8 +179,15 @@ def run_portfolio_agent(show: bool, otp_from: str, use_ai: bool) -> int:
 
     use_ai = use_ai and bool(settings.models) and bool(os.getenv("OPENROUTER_API_KEY"))
     explain = make_explainer(LLMClient.from_settings(settings)) if use_ai else None
-    result = run_standalone(token, chat_id, notify, explain, headless=not show, otp_from=otp_from,
-                            ask_terminal=lambda: getpass.getpass("OTP sent to your mobile (4 digits): ").strip())
+    result = run_standalone(
+        token,
+        chat_id,
+        notify,
+        explain,
+        headless=not show,
+        otp_from=otp_from,
+        ask_terminal=lambda: getpass.getpass("OTP sent to your mobile (4 digits): ").strip(),
+    )
     if result.get("run_dir"):
         print(f"saved under {result['run_dir']}")
     return 1 if result.get("error") else 0
@@ -167,20 +201,37 @@ def main() -> None:
     parser.add_argument("--loop", type=int, metavar="MINUTES", help="repeat every N minutes while the market is open (N >= 1)")
     parser.add_argument("--screen", action="store_true", help="only scan the whole market and print the candidates")
     parser.add_argument("--graph", action="store_true", help="print the LangGraph decision workflow as a Mermaid diagram")
-    parser.add_argument("--check", action="store_true", help="test keys and connectivity (OpenRouter, broker, data, Telegram) and exit")
+    parser.add_argument(
+        "--check", action="store_true", help="test keys and connectivity (OpenRouter, broker, data, Telegram) and exit"
+    )
     parser.add_argument("--report", action="store_true", help="print the paper-trading account summary (India simulator)")
-    parser.add_argument("--positions", action="store_true", help="every open position (P&L, buy date), closed-trade history, overall status")
-    parser.add_argument("--intraday", action="store_true", help="run the intraday engines: breakout, gap-and-go and gap-only, each with its own paper account "
-                                                                 "(add --live to place paper orders)")
-    parser.add_argument("--intraday-report", action="store_true", help="positions, trade history and status of the intraday paper accounts")
+    parser.add_argument(
+        "--positions", action="store_true", help="every open position (P&L, buy date), closed-trade history, overall status"
+    )
+    parser.add_argument(
+        "--intraday",
+        action="store_true",
+        help="run the intraday engines: breakout, gap-and-go and gap-only, each with its own paper account "
+        "(add --live to place paper orders)",
+    )
+    parser.add_argument(
+        "--intraday-report", action="store_true", help="positions, trade history and status of the intraday paper accounts"
+    )
     parser.add_argument("--live", action="store_true", help="place paper orders (default: dry run, decisions only)")
-    parser.add_argument("--holdout", action="store_true",
-                        help="after each cycle, mark the independent holdout reserve account (see docs/holdout.md)")
-    parser.add_argument("--portfolio", action="store_true",
-                        help="read the REAL Integrated account (read-only; OTP on Telegram), analyse it, log out")
+    parser.add_argument(
+        "--holdout",
+        action="store_true",
+        help="after each cycle, mark the independent holdout reserve account (see docs/holdout.md)",
+    )
+    parser.add_argument(
+        "--portfolio",
+        action="store_true",
+        help="read the REAL Integrated account (read-only; OTP on Telegram), analyse it, log out",
+    )
     parser.add_argument("--show", action="store_true", help="with --portfolio: show the browser window")
-    parser.add_argument("--otp-from", choices=("telegram", "terminal"), default="telegram",
-                        help="with --portfolio: where you give the OTP")
+    parser.add_argument(
+        "--otp-from", choices=("telegram", "terminal"), default="telegram", help="with --portfolio: where you give the OTP"
+    )
     parser.add_argument("--no-ai", action="store_true", help="with --portfolio: skip the AI-written note")
     args = parser.parse_args()
     if args.loop is not None and args.loop < 1:
@@ -200,17 +251,23 @@ def main() -> None:
             settings = load_settings()
         except ValueError as e:
             sys.exit(f"Invalid configuration: {e}")
-        for title, url in (("INTRADAY: opening-range breakout", intraday_db_url()),
-                           ("GAP-AND-GO (paper experiment)", gapgo_db_url()),
-                           ("GAP-ONLY (paper control for gap-and-go)", gaponly_db_url())):
+        for title, url in (
+            ("INTRADAY: opening-range breakout", intraday_db_url()),
+            ("GAP-AND-GO (paper experiment)", gapgo_db_url()),
+            ("GAP-ONLY (paper control for gap-and-go)", gaponly_db_url()),
+        ):
             print("=" * 60)
             print(title)
             print("=" * 60)
             print_positions(settings, url)
         return
     # Read-only reports; if more than one flag is given, the first match here wins.
-    REPORT_COMMANDS = (("graph", print_graphs), ("screen", print_candidates), ("positions", print_positions),
-                       ("report", print_report))
+    REPORT_COMMANDS = (
+        ("graph", print_graphs),
+        ("screen", print_candidates),
+        ("positions", print_positions),
+        ("report", print_report),
+    )
     report_fn = next((fn for name, fn in REPORT_COMMANDS if getattr(args, name)), None)
     if report_fn is not None:
         try:
@@ -229,7 +286,9 @@ def main() -> None:
     if failed:
         sys.exit("Startup checks failed: " + "; ".join(f"{r.name} ({r.detail})" for r in failed))
     mode = f"PAPER ORDERS ({pipeline.broker_label})" if not st.dry_run else "DRY RUN"
-    scope = f"whole {st.market.upper()} market (top candidates + holdings)" if pipeline.universe_fn else f"watchlist {st.watchlist}"
+    scope = (
+        f"whole {st.market.upper()} market (top candidates + holdings)" if pipeline.universe_fn else f"watchlist {st.watchlist}"
+    )
     print(f"market={st.market.upper()} mode={mode} universe={scope}")
     print("note: news sentiment is disabled (no reliable free Indian news source)")
 

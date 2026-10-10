@@ -1,11 +1,12 @@
 """Mistake analysis: facts with their uncertainty, never a verdict on too little data."""
+
 import json
 
 import pytest
 
 from src.database import DecisionRecord, OutcomeRecord, make_session_factory
-from src.learning.mistakes import (Judged, breakdown, confidence_bucket, group_stats, load_judged, missed_gains, worst_calls)
 from src.engine.costs import ROUND_TRIP_COST
+from src.learning.mistakes import Judged, breakdown, confidence_bucket, group_stats, load_judged, missed_gains, worst_calls
 
 
 def j(ret, action="BUY", conf=0.75, stop=False, symbol="X"):
@@ -39,10 +40,35 @@ def test_load_judged_uses_the_latest_decision_and_subtracts_costs(tmp_path):
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'x.db'}")
     with sessions() as s:
         for action in ("BUY", "HOLD"):  # the same session decided twice: the later call stands
-            s.add(DecisionRecord(symbol="AAA", price=1.0, final_action=action, final_confidence=0.6, reasoning="r", risk_approved=False,
-                                 risk_quantity=0, risk_reason="x", bar_date="2025-01-06", snapshot_json=json.dumps({})))
-        s.add(OutcomeRecord(symbol="AAA", bar_date="2025-01-06", horizon=20, entry_date="2025-01-07", exit_date="2025-02-04",
-                            entry_price=100.0, exit_price=110.0, gross_return=0.10, worst_return=-0.02, hit_stop=False, stop_pct=0.15))
+            s.add(
+                DecisionRecord(
+                    symbol="AAA",
+                    price=1.0,
+                    final_action=action,
+                    final_confidence=0.6,
+                    reasoning="r",
+                    risk_approved=False,
+                    risk_quantity=0,
+                    risk_reason="x",
+                    bar_date="2025-01-06",
+                    snapshot_json=json.dumps({}),
+                )
+            )
+        s.add(
+            OutcomeRecord(
+                symbol="AAA",
+                bar_date="2025-01-06",
+                horizon=20,
+                entry_date="2025-01-07",
+                exit_date="2025-02-04",
+                entry_price=100.0,
+                exit_price=110.0,
+                gross_return=0.10,
+                worst_return=-0.02,
+                hit_stop=False,
+                stop_pct=0.15,
+            )
+        )
         s.commit()
     (row,) = load_judged(sessions, 20)
     assert row.action == "HOLD" and row.net_return == pytest.approx(0.10 - ROUND_TRIP_COST)
@@ -54,10 +80,36 @@ def test_a_veto_is_recognised_from_the_reasoning_and_model_fields_are_loaded(tmp
     assert not Judged("X", "d", "BUY", 0.7, None, "base [reflection upheld: fine]", 0.0, False).vetoed
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'v.db'}")
     with sessions() as s:
-        s.add(DecisionRecord(symbol="AAA", price=1.0, final_action="BUY", final_confidence=0.6, reasoning="r", risk_approved=False,
-                             risk_quantity=0, risk_reason="x", bar_date="2025-01-06", raw_model="m1", rule_alignment="agree"))
-        s.add(OutcomeRecord(symbol="AAA", bar_date="2025-01-06", horizon=20, entry_date="a", exit_date="b", entry_price=1.0,
-                            exit_price=1.0, gross_return=0.0, worst_return=0.0, hit_stop=False, stop_pct=0.15))
+        s.add(
+            DecisionRecord(
+                symbol="AAA",
+                price=1.0,
+                final_action="BUY",
+                final_confidence=0.6,
+                reasoning="r",
+                risk_approved=False,
+                risk_quantity=0,
+                risk_reason="x",
+                bar_date="2025-01-06",
+                raw_model="m1",
+                rule_alignment="agree",
+            )
+        )
+        s.add(
+            OutcomeRecord(
+                symbol="AAA",
+                bar_date="2025-01-06",
+                horizon=20,
+                entry_date="a",
+                exit_date="b",
+                entry_price=1.0,
+                exit_price=1.0,
+                gross_return=0.0,
+                worst_return=0.0,
+                hit_stop=False,
+                stop_pct=0.15,
+            )
+        )
         s.commit()
     (row,) = load_judged(sessions, 20)
     assert row.model == "m1" and row.rule_alignment == "agree"

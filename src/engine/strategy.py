@@ -1,10 +1,11 @@
 """Combining agent signals into one decision by role."""
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Mapping, Optional
 
+from src.engine.agent_signal import AgentSignal
 from src.engine.enums import Action, DecisionSource, Role
 from src.engine.rules import trend_broken
-from src.engine.agent_signal import AgentSignal
 
 if TYPE_CHECKING:  # only for the annotation: the engine must not import the data layer at run time
     from src.data.indicators import Snapshot
@@ -15,6 +16,7 @@ TREND_EXIT_PREFIX = "trend exit:"  # how a rule-based exit announces itself in t
 @dataclass(frozen=True)
 class Decision:
     """The combined call: action, confidence, the reasoning, and who made it (the agents, or a rule that overrides them)."""
+
     action: Action
     confidence: float
     reasoning: str
@@ -25,8 +27,12 @@ def trend_exit_decision(snapshot: "Snapshot", held_qty: int, enabled: bool = Tru
     """The deterministic exit: a held stock whose last completed close is below its 200-day average is sold, whatever the
     AI says. Like the risk engine this is plain code, not an opinion. None when the rule does not apply."""
     if enabled and held_qty > 0 and trend_broken(snapshot.price, snapshot.ma200):
-        return Decision(Action.SELL, 1.0, f"{TREND_EXIT_PREFIX} last close {snapshot.price:,.2f} is below the 200-day average "
-                                          f"{snapshot.ma200:,.2f}", DecisionSource.TREND_EXIT)
+        return Decision(
+            Action.SELL,
+            1.0,
+            f"{TREND_EXIT_PREFIX} last close {snapshot.price:,.2f} is below the 200-day average {snapshot.ma200:,.2f}",
+            DecisionSource.TREND_EXIT,
+        )
     return None
 
 
@@ -60,8 +66,7 @@ def combine_signals(signals: Mapping[str, Optional[AgentSignal]], roles: Mapping
         why = " | ".join(s.reasoning for s in leads.values())
         return Decision(Action.HOLD, _mean(s.confidence for s in leads.values()), f"{label} HOLD: {why}")
 
-    advisors = {n: s for n, s in signals.items()
-                if roles.get(n) != Role.LEAD and s is not None and s.action != Action.HOLD}
+    advisors = {n: s for n, s in signals.items() if roles.get(n) != Role.LEAD and s is not None and s.action != Action.HOLD}
     for n, s in advisors.items():
         if s.action != action:
             return Decision(Action.HOLD, 0.0, f"conflict: {label} {action} vs {n} {s.action}")
@@ -71,4 +76,3 @@ def combine_signals(signals: Mapping[str, Optional[AgentSignal]], roles: Mapping
     if advisors:
         return Decision(action, _mean(confidences), f"{label} and {' and '.join(advisors)} agree {action}: {reasons}")
     return Decision(action, _mean(confidences), f"{label} {action}: {reasons}")
-

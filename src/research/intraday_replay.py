@@ -12,9 +12,12 @@ What the replay must assume (Yahoo's live behaviour cannot be reproduced from fi
   * an order fills at that open plus the broker's 0.05% slippage, like the live fill at the latest price;
   * stop and target orders fill at their level (or the open on a gap): no circuit limits, no partial fills;
   * volume is the final volume of each bar, whereas live sees it settle (Yahoo revises recent bars)."""
+
 import tempfile
 from dataclasses import dataclass, field
-from datetime import date as Date, datetime, time as dtime, timezone
+from datetime import date as Date
+from datetime import datetime, timezone
+from datetime import time as dtime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -30,8 +33,16 @@ from src.engine.costs import SLIPPAGE
 from src.engine.paper_broker import PaperBroker
 from src.engine.ports import BAR
 from src.intraday.engine import IntradayEngine
-from src.intraday.strategy import (ENTRY_UNTIL, GAP_ENTRY_UNTIL, GAP_ONLY_ENTRY_UNTIL, find_gap_only_setup, find_gap_setup,
-                                   Setup, find_setup, intraday_fees)
+from src.intraday.strategy import (
+    ENTRY_UNTIL,
+    GAP_ENTRY_UNTIL,
+    GAP_ONLY_ENTRY_UNTIL,
+    Setup,
+    find_gap_only_setup,
+    find_gap_setup,
+    find_setup,
+    intraday_fees,
+)
 from src.versions import GAPGO_VERSION, GAPONLY_VERSION, INTRADAY_VERSION
 
 FIRST_CYCLE, LAST_CYCLE = dtime(9, 20, 15), dtime(15, 25, 15)  # the engine's cycles, 15 s past each 5-minute boundary
@@ -44,7 +55,7 @@ class ReplayFeed:
         self.now = datetime(1970, 1, 1, tzinfo=timezone.utc)
         frames = {s: df.sort_index() for s, df in bars.items() if len(df)}
         self._index = {s: pd.DatetimeIndex(df.index) for s, df in frames.items()}
-        self._values = {s: df[COLUMNS].to_numpy(float) for s, df in frames.items()}   # columns: Open High Low Close Volume
+        self._values = {s: df[COLUMNS].to_numpy(float) for s, df in frames.items()}  # columns: Open High Low Close Volume
         self._starts = {s: idx.tz_convert("UTC").astype("int64").to_numpy() for s, idx in self._index.items()}
         self._bar_ns = int(BAR.total_seconds() * 1e9)
 
@@ -52,12 +63,12 @@ class ReplayFeed:
         """Finished bars up to now, plus the bar in progress with only its open printed."""
         starts = self._starts[symbol]
         now_ns = pd.Timestamp(self.now).value
-        finished = int(np.searchsorted(starts + self._bar_ns, now_ns, side="right"))   # bars that ended at or before now
+        finished = int(np.searchsorted(starts + self._bar_ns, now_ns, side="right"))  # bars that ended at or before now
         end = finished + 1 if finished < len(starts) and starts[finished] <= now_ns else finished
         low = 0 if since_ns is None else int(np.searchsorted(starts, since_ns, side="left"))
         values = self._values[symbol][low:end].copy()
         if end > finished and len(values):
-            values[-1, 1:4] = values[-1, 0]      # High = Low = Close = Open: only the first print of the forming bar is known
+            values[-1, 1:4] = values[-1, 0]  # High = Low = Close = Open: only the first print of the forming bar is known
         return pd.DataFrame(values, index=self._index[symbol][low:end], columns=COLUMNS)
 
     def last_price(self, symbol: str) -> float:
@@ -76,7 +87,7 @@ class ReplayFeed:
         """What the gap-and-go engine's 5-day download returns: the last week's bars up to now, so the previous session's
         close is there."""
         session_start = pd.Timestamp(self.now).tz_convert(IST).normalize().tz_convert("UTC").value
-        since = session_start - 7 * 24 * 3600 * 10 ** 9   # a week back, in nanoseconds like the bar index
+        since = session_start - 7 * 24 * 3600 * 10**9  # a week back, in nanoseconds like the bar index
         return {s: view for s in symbols if s in self._values and len(view := self._upto(s, since_ns=since))}
 
     def today(self, symbols: List[str]) -> Dict[str, pd.DataFrame]:
@@ -95,6 +106,7 @@ class ReplayFeed:
 class ReplayConfig:
     """The engine's settings for a replay. The defaults ARE the settings' defaults (read from `Settings`, not copied), so a
     replay cannot drift from what the engine trades with unless a value is overridden on purpose."""
+
     capital: float = Settings.paper_initial_cash
     risk_pct: float = Settings.intraday_risk_pct
     max_position_pct: float = Settings.intraday_max_position_pct
@@ -105,17 +117,21 @@ class ReplayConfig:
     @classmethod
     def from_settings(cls, settings: Settings, capital: Optional[float] = None) -> "ReplayConfig":
         """The configuration the live intraday engine runs with (INTRADAY_* settings), optionally on a different account size."""
-        return cls(capital=settings.paper_initial_cash if capital is None else capital, risk_pct=settings.intraday_risk_pct,
-                   max_position_pct=settings.intraday_max_position_pct, max_positions=settings.intraday_max_positions,
-                   max_daily_loss_pct=settings.risk.max_daily_loss_pct)
+        return cls(
+            capital=settings.paper_initial_cash if capital is None else capital,
+            risk_pct=settings.intraday_risk_pct,
+            max_position_pct=settings.intraday_max_position_pct,
+            max_positions=settings.intraday_max_positions,
+            max_daily_loss_pct=settings.risk.max_daily_loss_pct,
+        )
 
 
 @dataclass
 class ReplayResult:
     config: ReplayConfig
-    trades: pd.DataFrame        # closed trades, oldest first
-    signals: pd.DataFrame       # every breakout the engine saw and what it did (ENTERED / SKIPPED ...)
-    daily_equity: pd.Series     # equity at the end of each session
+    trades: pd.DataFrame  # closed trades, oldest first
+    signals: pd.DataFrame  # every breakout the engine saw and what it did (ENTERED / SKIPPED ...)
+    daily_equity: pd.Series  # equity at the end of each session
     days: List[Date] = field(default_factory=list)
 
 
@@ -143,9 +159,15 @@ STRATEGIES: Dict[str, Tuple[Rule, dtime, str, str]] = {
 }
 
 
-def replay(bars: Dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(), universe: Optional[List[str]] = None,
-           start: Optional[str] = None, end: Optional[str] = None,
-           progress: Optional[Callable[[Date], None]] = None, strategy: str = "orb") -> ReplayResult:
+def replay(
+    bars: Dict[str, pd.DataFrame],
+    config: ReplayConfig = ReplayConfig(),
+    universe: Optional[List[str]] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    progress: Optional[Callable[[Date], None]] = None,
+    strategy: str = "orb",
+) -> ReplayResult:
     """Run the live engine over every stored session in [start, end] and return what it did. One continuous account, so
     equity compounds and drawdowns carry across days exactly as they would live. `strategy` picks the rule the same way
     the launcher (src/app/intraday_cli.py) does: "orb", "gapgo" or "gaponly"."""
@@ -157,16 +179,35 @@ def replay(bars: Dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(),
     # ignore_cleanup_errors: on Windows SQLite still holds replay.db open when the folder is removed
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         sessions = make_session_factory(f"sqlite:///{Path(tmp) / 'replay.db'}")
-        broker = PaperBroker(sessions, feed, clock, initial_cash=config.capital, fees=intraday_fees,
-                             now_fn=lambda: feed.now,
-                             slippage=SLIPPAGE if config.slippage is None else config.slippage)
+        broker = PaperBroker(
+            sessions,
+            feed,
+            clock,
+            initial_cash=config.capital,
+            fees=intraday_fees,
+            now_fn=lambda: feed.now,
+            slippage=SLIPPAGE if config.slippage is None else config.slippage,
+        )
         rule, until, label, version = STRATEGIES[strategy]
         gap = strategy != "orb"  # the gap rules need the previous session's close and record capped signals, as live
-        engine = IntradayEngine(broker, symbols, clock, fetch_bars=feed.recent if gap else feed.today, live=True,
-                                max_positions=config.max_positions, risk_pct=config.risk_pct,
-                                max_position_pct=config.max_position_pct, max_daily_loss_pct=config.max_daily_loss_pct,
-                                universe_source="", now_fn=lambda: feed.now, find_setup=rule, entry_until=until,
-                                label=label, version=version, record_capped=gap)
+        engine = IntradayEngine(
+            broker,
+            symbols,
+            clock,
+            fetch_bars=feed.recent if gap else feed.today,
+            live=True,
+            max_positions=config.max_positions,
+            risk_pct=config.risk_pct,
+            max_position_pct=config.max_position_pct,
+            max_daily_loss_pct=config.max_daily_loss_pct,
+            universe_source="",
+            now_fn=lambda: feed.now,
+            find_setup=rule,
+            entry_until=until,
+            label=label,
+            version=version,
+            record_capped=gap,
+        )
         equity: Dict[Date, float] = {}
         for day in days:
             _run_session(engine, feed, day)
@@ -175,26 +216,31 @@ def replay(bars: Dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(),
                 progress(day)
         trades = pd.DataFrame(broker.trade_history()[::-1])
         with sessions() as s:
-            signals = pd.DataFrame([{c.name: getattr(r, c.name) for c in IntradaySignalRecord.__table__.columns}
-                                    for r in s.scalars(select(IntradaySignalRecord).order_by(IntradaySignalRecord.id))])
+            signals = pd.DataFrame(
+                [
+                    {c.name: getattr(r, c.name) for c in IntradaySignalRecord.__table__.columns}
+                    for r in s.scalars(select(IntradaySignalRecord).order_by(IntradaySignalRecord.id))
+                ]
+            )
     return ReplayResult(config, trades, signals, pd.Series(equity, dtype=float), days)
 
 
 @dataclass(frozen=True)
 class ReplaySummary:
     """Headline numbers of a replay."""
+
     sessions: int
     trades: int
     start: float
     end: float
     total_return: float
-    max_drawdown: float        # deepest fall of the end-of-session equity curve from its running peak (0 or negative)
-    sharpe: float              # annualised, from the daily P&L
-    profitable_days: float     # share of sessions with a positive P&L
-    win_rate: float            # share of trades with a positive net P&L
+    max_drawdown: float  # deepest fall of the end-of-session equity curve from its running peak (0 or negative)
+    sharpe: float  # annualised, from the daily P&L
+    profitable_days: float  # share of sessions with a positive P&L
+    win_rate: float  # share of trades with a positive net P&L
     fees: float
-    exits: Dict[str, int]      # STOP / TARGET / SIGNAL (the 15:15 square-off), by count
-    signals: Dict[str, int]    # ENTERED / SKIPPED / ..., by count
+    exits: Dict[str, int]  # STOP / TARGET / SIGNAL (the 15:15 square-off), by count
+    signals: Dict[str, int]  # ENTERED / SKIPPED / ..., by count
     first_half_pnl: float
     second_half_pnl: float
 
@@ -208,7 +254,11 @@ def summarise(result: ReplayResult) -> ReplaySummary:
     trades, signals = result.trades, result.signals
     half = len(daily_pnl) // 2
     return ReplaySummary(
-        sessions=len(result.days), trades=len(trades), start=start, end=end, total_return=end / start - 1,
+        sessions=len(result.days),
+        trades=len(trades),
+        start=start,
+        end=end,
+        total_return=end / start - 1,
         max_drawdown=float((curve / curve.cummax() - 1).min()),
         sharpe=float(daily_pnl.mean() / daily_pnl.std() * np.sqrt(252)) if len(daily_pnl) > 1 and daily_pnl.std() > 0 else 0.0,
         profitable_days=float((daily_pnl > 0).mean()) if len(daily_pnl) else 0.0,
@@ -216,14 +266,19 @@ def summarise(result: ReplayResult) -> ReplaySummary:
         fees=float(trades["fees"].sum()) if len(trades) else 0.0,
         exits={str(k): int(v) for k, v in trades["reason"].value_counts().items()} if len(trades) else {},
         signals={str(k): int(v) for k, v in signals["outcome"].value_counts().items()} if len(signals) else {},
-        first_half_pnl=float(daily_pnl.iloc[:half].sum()), second_half_pnl=float(daily_pnl.iloc[half:].sum()))
+        first_half_pnl=float(daily_pnl.iloc[:half].sum()),
+        second_half_pnl=float(daily_pnl.iloc[half:].sum()),
+    )
 
 
 def format_summary(r: ReplaySummary) -> str:
     """The summary as text for a terminal."""
-    return "\n".join([
-        f"{r.sessions} sessions, {r.trades} trades | win rate {r.win_rate:.0%} | fees paid Rs {r.fees:,.0f}",
-        f"exits {r.exits} | signals {r.signals}",
-        f"start Rs {r.start:,.0f} -> end Rs {r.end:,.0f} ({r.total_return:+.2%})",
-        f"daily Sharpe (annualised) {r.sharpe:.2f} | max drawdown {r.max_drawdown:.1%} | profitable days {r.profitable_days:.0%}",
-        f"first half P&L {r.first_half_pnl:+,.0f} | second half P&L {r.second_half_pnl:+,.0f}"])
+    return "\n".join(
+        [
+            f"{r.sessions} sessions, {r.trades} trades | win rate {r.win_rate:.0%} | fees paid Rs {r.fees:,.0f}",
+            f"exits {r.exits} | signals {r.signals}",
+            f"start Rs {r.start:,.0f} -> end Rs {r.end:,.0f} ({r.total_return:+.2%})",
+            f"daily Sharpe (annualised) {r.sharpe:.2f} | max drawdown {r.max_drawdown:.1%} | profitable days {r.profitable_days:.0%}",
+            f"first half P&L {r.first_half_pnl:+,.0f} | second half P&L {r.second_half_pnl:+,.0f}",
+        ]
+    )

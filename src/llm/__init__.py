@@ -6,10 +6,21 @@
 
 The names callers need are re-exported here. `AgentSignal` is re-exported too (its home is `src.engine.agent_signal`;
 production code imports it from there directly, but tests widely import it from here for convenience)."""
+
 from src.engine.agent_signal import AgentSignal
 from src.llm.client import RETRY_HINT, SIGNAL_SCHEMA, LLMClient
 from src.llm.errors import FORMAT, PERMANENT, TRANSIENT, TRUNCATED, LLMUnavailable
 from src.llm.parsing import extract_json_object
 
-__all__ = ["LLMClient", "LLMUnavailable", "AgentSignal", "SIGNAL_SCHEMA", "RETRY_HINT", "extract_json_object",
-           "TRANSIENT", "TRUNCATED", "FORMAT", "PERMANENT"]
+__all__ = [
+    "LLMClient",
+    "LLMUnavailable",
+    "AgentSignal",
+    "SIGNAL_SCHEMA",
+    "RETRY_HINT",
+    "extract_json_object",
+    "TRANSIENT",
+    "TRUNCATED",
+    "FORMAT",
+    "PERMANENT",
+]

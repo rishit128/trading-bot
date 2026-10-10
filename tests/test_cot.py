@@ -1,38 +1,43 @@
 """Chain-of-thought: the structured schema, the client's generic structured call, prompt construction,
 agent fail-safes, and that the reasoning chain is persisted and replay-able."""
+
 import json
 
 import pandas as pd
 import pytest
 from sqlalchemy import select
 
-from src.agents.technical import AdvancedSignal, COT_SCHEMA, TechnicalAgent
-from src.agents.technical.prompts import cot_prompt
 from src.agents.base import ADVISOR, LEAD, AgentContext
+from src.agents.technical import COT_SCHEMA, AdvancedSignal, TechnicalAgent
+from src.agents.technical.prompts import cot_prompt
 from src.config import RiskLimits, Settings, load_settings
 from src.data.indicators import Snapshot, build_snapshot
 from src.database import DecisionRecord, make_session_factory
 from src.engine.ports import Fill
 from src.engine.risk_engine import Portfolio
 from src.llm import LLMClient, LLMUnavailable
-from src.pipeline import TradingPipeline
 from src.ops.replay import replay
+from src.pipeline import TradingPipeline
 from tests.test_llm_and_pipeline import FakeOpenAI, StubAgent, api_error
 
 SNAP = Snapshot("AAPL", 100.0, 98.0, 95.0, 60.0, 1000)
 CTX = AgentContext("AAPL", SNAP)
 
-COT_GOOD = json.dumps({
-    "action": "BUY", "confidence": 0.75, "edge_confidence": 0.6,
-    "step1_trend": "Uptrend; price above MA50 and MA50 above MA200.",
-    "step2_overbought": "RSI 55; not overbought.",
-    "step3_volume": "Volume 1.3x average; confirms the move.",
-    "company_check": "Sales and profit growing year on year; low debt.",
-    "market_check": "Nifty above its 200-day average; calm VIX.",
-    "step4_confluence": 8,
-    "step5_risks": ["Earnings next week", "Sector rotation"],
-    "final_reasoning": "Clear uptrend, volume confirms, not overbought.",
-})
+COT_GOOD = json.dumps(
+    {
+        "action": "BUY",
+        "confidence": 0.75,
+        "edge_confidence": 0.6,
+        "step1_trend": "Uptrend; price above MA50 and MA50 above MA200.",
+        "step2_overbought": "RSI 55; not overbought.",
+        "step3_volume": "Volume 1.3x average; confirms the move.",
+        "company_check": "Sales and profit growing year on year; low debt.",
+        "market_check": "Nifty above its 200-day average; calm VIX.",
+        "step4_confluence": 8,
+        "step5_risks": ["Earnings next week", "Sector rotation"],
+        "final_reasoning": "Clear uptrend, volume confirms, not overbought.",
+    }
+)
 
 
 def test_cot_agent_parses_into_signal_with_details():
@@ -106,9 +111,12 @@ def sample_snapshot(sym: str) -> Snapshot:
 
 def make_details_pipeline(tmp_path):
     """A pipeline whose lead agent returns a chain-of-thought AgentSignal with full details."""
-    details = {"edge_confidence": 0.6, "confluence_score": 8, "risks": ["earnings next week"],
-               "reasoning_chain": {"trend": "uptrend above MA50", "overbought": "RSI 55 not overbought",
-                                   "volume": "volume confirms"}}
+    details = {
+        "edge_confidence": 0.6,
+        "confluence_score": 8,
+        "risks": ["earnings next week"],
+        "reasoning_chain": {"trend": "uptrend above MA50", "overbought": "RSI 55 not overbought", "volume": "volume confirms"},
+    }
     tech = StubAgent(lambda s: Signal_stub(details), "technical", LEAD)
     sent = StubAgent(lambda s: None, "sentiment", ADVISOR)
     sessions = make_session_factory(f"sqlite:///{tmp_path / 't.db'}")
@@ -129,13 +137,15 @@ def make_details_pipeline(tmp_path):
         def sell(self, *a):
             return Fill("y", "accepted")
 
-    pipe = TradingPipeline(Settings(watchlist=("AAPL",), dry_run=True, risk=RiskLimits()),
-                           [tech, sent], FakeBroker(), sessions, sample_snapshot)
+    pipe = TradingPipeline(
+        Settings(watchlist=("AAPL",), dry_run=True, risk=RiskLimits()), [tech, sent], FakeBroker(), sessions, sample_snapshot
+    )
     return pipe, sessions
 
 
 def Signal_stub(details):
     from src.llm import AgentSignal
+
     return AgentSignal(action="BUY", confidence=0.75, reasoning="r", details=details)
 
 
@@ -165,8 +175,7 @@ def test_cot_columns_are_null_for_a_signal_without_details(tmp_path):
 
 
 def test_snapshot_records_avg_volume():
-    bars = pd.DataFrame({"Close": [float(i) for i in range(1, 251)],
-                         "Volume": [1000.0] * 230 + [2000.0] * 20})
+    bars = pd.DataFrame({"Close": [float(i) for i in range(1, 251)], "Volume": [1000.0] * 230 + [2000.0] * 20})
     s = build_snapshot("X", bars)
     assert s.avg_volume == 2000 and s.volume == 2000
 

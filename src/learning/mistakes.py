@@ -2,6 +2,7 @@
 
 Read-only. It reports facts with their uncertainty and never changes a setting: a group smaller than `min_samples` is
 listed as insufficient rather than judged, and every mean carries a 95% interval so noise is not read as a lesson."""
+
 import math
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence
@@ -15,6 +16,7 @@ from src.engine.costs import ROUND_TRIP_COST
 @dataclass(frozen=True)
 class Judged:
     """One analysed stock-session: what the bot decided and what the market then did (net of estimated costs)."""
+
     symbol: str
     bar_date: str
     action: str
@@ -36,8 +38,8 @@ class Judged:
 class GroupStats:
     label: str
     n: int
-    mean_net: Optional[float]   # None when insufficient
-    ci95: Optional[float]       # half-width of the 95% interval of the mean
+    mean_net: Optional[float]  # None when insufficient
+    ci95: Optional[float]  # half-width of the 95% interval of the mean
     win_rate: Optional[float]
     stop_rate: Optional[float]
     sufficient: bool
@@ -45,17 +47,35 @@ class GroupStats:
 
 def load_judged(sessions, horizon: int = 20, cost: float = ROUND_TRIP_COST) -> List[Judged]:
     """The latest decision per stock-session joined to its outcome at `horizon`."""
-    latest = (select(func.max(DecisionRecord.id)).where(DecisionRecord.bar_date.isnot(None))
-              .group_by(DecisionRecord.symbol, DecisionRecord.bar_date))
-    query = (select(DecisionRecord.symbol, DecisionRecord.bar_date, DecisionRecord.final_action, DecisionRecord.final_confidence,
-                    DecisionRecord.decision_source, DecisionRecord.reasoning, OutcomeRecord.gross_return, OutcomeRecord.hit_stop,
-                    DecisionRecord.raw_model, DecisionRecord.rule_alignment)
-             .join(OutcomeRecord, (OutcomeRecord.symbol == DecisionRecord.symbol) & (OutcomeRecord.bar_date == DecisionRecord.bar_date))
-             .where(DecisionRecord.id.in_(latest), OutcomeRecord.horizon == horizon)
-             .order_by(DecisionRecord.bar_date, DecisionRecord.symbol))
+    latest = (
+        select(func.max(DecisionRecord.id))
+        .where(DecisionRecord.bar_date.isnot(None))
+        .group_by(DecisionRecord.symbol, DecisionRecord.bar_date)
+    )
+    query = (
+        select(
+            DecisionRecord.symbol,
+            DecisionRecord.bar_date,
+            DecisionRecord.final_action,
+            DecisionRecord.final_confidence,
+            DecisionRecord.decision_source,
+            DecisionRecord.reasoning,
+            OutcomeRecord.gross_return,
+            OutcomeRecord.hit_stop,
+            DecisionRecord.raw_model,
+            DecisionRecord.rule_alignment,
+        )
+        .join(
+            OutcomeRecord, (OutcomeRecord.symbol == DecisionRecord.symbol) & (OutcomeRecord.bar_date == DecisionRecord.bar_date)
+        )
+        .where(DecisionRecord.id.in_(latest), OutcomeRecord.horizon == horizon)
+        .order_by(DecisionRecord.bar_date, DecisionRecord.symbol)
+    )
     with sessions() as s:
-        return [Judged(sym, bd, act, conf, src, why, gross - cost, bool(stop), model, align)
-                for sym, bd, act, conf, src, why, gross, stop, model, align in s.execute(query)]
+        return [
+            Judged(sym, bd, act, conf, src, why, gross - cost, bool(stop), model, align)
+            for sym, bd, act, conf, src, why, gross, stop, model, align in s.execute(query)
+        ]
 
 
 def group_stats(label: str, judged: Sequence[Judged], min_samples: int) -> GroupStats:
@@ -65,8 +85,9 @@ def group_stats(label: str, judged: Sequence[Judged], min_samples: int) -> Group
     returns = [j.net_return for j in judged]
     mean = sum(returns) / n
     sd = math.sqrt(sum((r - mean) ** 2 for r in returns) / (n - 1))
-    return GroupStats(label, n, mean, 1.96 * sd / math.sqrt(n), sum(r > 0 for r in returns) / n,
-                      sum(j.hit_stop for j in judged) / n, True)
+    return GroupStats(
+        label, n, mean, 1.96 * sd / math.sqrt(n), sum(r > 0 for r in returns) / n, sum(j.hit_stop for j in judged) / n, True
+    )
 
 
 def breakdown(judged: Sequence[Judged], key: Callable[[Judged], str], min_samples: int) -> List[GroupStats]:
@@ -106,4 +127,4 @@ def missed_gains(judged: Sequence[Judged], count: int = 10) -> List[Judged]:
 def fmt(g: GroupStats) -> str:
     if not g.sufficient:
         return f"{g.label:<22} n={g.n:<5} insufficient data"
-    return (f"{g.label:<22} n={g.n:<5} mean {g.mean_net:+.2%} (±{g.ci95:.2%})  win {g.win_rate:.0%}  stop hit {g.stop_rate:.0%}")
+    return f"{g.label:<22} n={g.n:<5} mean {g.mean_net:+.2%} (±{g.ci95:.2%})  win {g.win_rate:.0%}  stop hit {g.stop_rate:.0%}"

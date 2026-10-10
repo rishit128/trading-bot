@@ -1,4 +1,5 @@
 """Telegram alerts and remote commands (/status, /positions, /history, /pnl, /pause, /resume, /rebase)."""
+
 import html
 import logging
 import threading
@@ -7,18 +8,20 @@ from typing import Callable, Mapping, Optional, Tuple
 
 import httpx
 
-from src.data.retry import retry_call
-from src.engine.ports import ListsHoldings, ListsTrades
 from src.data.india import IST
+from src.data.retry import retry_call
 from src.engine.paper_report import group_by_day, group_by_week, merge_periods, totals
+from src.engine.ports import ListsHoldings, ListsTrades
 
 log = logging.getLogger(__name__)
 API = "https://api.telegram.org"
-HELP = ("/status - equity, cash, mode\n/positions - open positions with profit/loss\n/history - closed trades\n/pnl - profit/loss by day and week, both accounts\n"
-        "/intraday - intraday account and open positions\n/intraday_history - intraday closed trades\n"
-        "/gapgo - gap-and-go paper account\n/gapgo_history - gap-and-go closed trades\n"
-        "/gaponly - gap-only control account\n/gaponly_history - gap-only closed trades\n/pause - stop placing orders\n/resume - allow orders again\n"
-        "/rebase - reset the peak-equity baseline (clears a drawdown halt)")
+HELP = (
+    "/status - equity, cash, mode\n/positions - open positions with profit/loss\n/history - closed trades\n/pnl - profit/loss by day and week, both accounts\n"
+    "/intraday - intraday account and open positions\n/intraday_history - intraday closed trades\n"
+    "/gapgo - gap-and-go paper account\n/gapgo_history - gap-and-go closed trades\n"
+    "/gaponly - gap-only control account\n/gaponly_history - gap-only closed trades\n/pause - stop placing orders\n/resume - allow orders again\n"
+    "/rebase - reset the peak-equity baseline (clears a drawdown halt)"
+)
 
 # The bot token is part of every request URL; never let the HTTP library log it.
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -49,52 +52,71 @@ def format_positions(held: list, cur: str) -> Html:
     """Open positions as small cards, best first, with a total."""
     if not held:
         return Html("No open positions.")
-    cards = [f"<b>{_e(h['symbol'])}</b>  {_pl(h['pnl'], h['pnl_pct'], cur)}\n"
-             f"   {h['qty']} sh · bought {h['opened_at']:%d %b} at {cur}{h['avg_price']:,.2f}\n"
-             f"   now {cur}{h['price']:,.2f} · stop {cur}{h['stop']:,.2f}" for h in held]
+    cards = [
+        f"<b>{_e(h['symbol'])}</b>  {_pl(h['pnl'], h['pnl_pct'], cur)}\n"
+        f"   {h['qty']} sh · bought {h['opened_at']:%d %b} at {cur}{h['avg_price']:,.2f}\n"
+        f"   now {cur}{h['price']:,.2f} · stop {cur}{h['stop']:,.2f}"
+        for h in held
+    ]
     total, cost = sum(h["pnl"] for h in held), sum(h["qty"] * h["avg_price"] for h in held)
     up = sum(1 for h in held if h["pnl"] > 0)
     head = f"📊 <b>Open positions ({len(held)})</b>  ·  {up} up, {len(held) - up} down"
-    return Html(head + "\n\n" + "\n\n".join(cards) + f"\n\n<b>Total unrealised</b>  {_pl(total, total / cost if cost else 0.0, cur)}")
+    return Html(
+        head + "\n\n" + "\n\n".join(cards) + f"\n\n<b>Total unrealised</b>  {_pl(total, total / cost if cost else 0.0, cur)}"
+    )
 
 
 def format_history(trades: list, cur: str, limit: int = 15) -> Html:
     """Closed trades as small cards, newest first."""
     if not trades:
         return Html("No closed trades yet.")
-    cards = [f"<b>{_e(t['symbol'])}</b>  {_pl(t['net_pnl'], t['exit_price'] / t['entry_price'] - 1, cur)}  · {_e(t['reason'])}\n"
-             f"   {t['qty']} sh · {t['opened_at']:%d %b} → {t['closed_at']:%d %b}\n"
-             f"   {cur}{t['entry_price']:,.2f} → {cur}{t['exit_price']:,.2f} · fees {cur}{t['fees']:,.0f}" for t in trades[:limit]]
+    cards = [
+        f"<b>{_e(t['symbol'])}</b>  {_pl(t['net_pnl'], t['exit_price'] / t['entry_price'] - 1, cur)}  · {_e(t['reason'])}\n"
+        f"   {t['qty']} sh · {t['opened_at']:%d %b} → {t['closed_at']:%d %b}\n"
+        f"   {cur}{t['entry_price']:,.2f} → {cur}{t['exit_price']:,.2f} · fees {cur}{t['fees']:,.0f}"
+        for t in trades[:limit]
+    ]
     total = sum(t["net_pnl"] for t in trades)
     wins = sum(1 for t in trades if t["net_pnl"] > 0)
     head = f"📜 <b>Closed trades ({len(trades)})</b>  ·  {wins} won, {len(trades) - wins} lost"
-    return Html(head + "\n\n" + "\n\n".join(cards) + f"\n\n<b>Realised net</b>  {'+' if total >= 0 else '-'}{cur}{abs(total):,.0f}")
+    return Html(
+        head + "\n\n" + "\n\n".join(cards) + f"\n\n<b>Realised net</b>  {'+' if total >= 0 else '-'}{cur}{abs(total):,.0f}"
+    )
 
 
 def _period_lines(rows: list, cur: str) -> str:
     """Up to the last 8 period rows as plain lines, newest first; empty periods are left out."""
-    lines = [f"{r.label}  {'+' if r.net_pnl >= 0 else '-'}{cur}{abs(r.net_pnl):,.0f}  ({r.trades} trade{'s' if r.trades != 1 else ''})"
-             for r in rows if r.trades]
+    lines = [
+        f"{r.label}  {'+' if r.net_pnl >= 0 else '-'}{cur}{abs(r.net_pnl):,.0f}  ({r.trades} trade{'s' if r.trades != 1 else ''})"
+        for r in rows
+        if r.trades
+    ]
     return "\n".join(lines[-8:]) if lines else "no closed trades yet"
 
 
 def format_pnl(swing_trades: list, intraday_trades: Optional[list], cur: str, tz=IST) -> Html:
     """Realized profit/loss by day and by week: the swing account, the intraday account (if given), and both combined."""
     swing_total = totals(swing_trades, tz)
-    parts = [f"📈 <b>Profit / loss</b>\n\n<b>Swing</b>  {'+' if swing_total.net_pnl >= 0 else '-'}{cur}{abs(swing_total.net_pnl):,.0f}"
-             f"  ({swing_total.trades} closed trade{'s' if swing_total.trades != 1 else ''})\n"
-             f"<u>by day</u>\n{_period_lines(group_by_day(swing_trades, tz), cur)}\n"
-             f"<u>by week</u>\n{_period_lines(group_by_week(swing_trades, tz), cur)}"]
+    parts = [
+        f"📈 <b>Profit / loss</b>\n\n<b>Swing</b>  {'+' if swing_total.net_pnl >= 0 else '-'}{cur}{abs(swing_total.net_pnl):,.0f}"
+        f"  ({swing_total.trades} closed trade{'s' if swing_total.trades != 1 else ''})\n"
+        f"<u>by day</u>\n{_period_lines(group_by_day(swing_trades, tz), cur)}\n"
+        f"<u>by week</u>\n{_period_lines(group_by_week(swing_trades, tz), cur)}"
+    ]
     if intraday_trades is not None:
         intraday_total = totals(intraday_trades, tz)
-        parts.append(f"<b>Intraday</b>  {'+' if intraday_total.net_pnl >= 0 else '-'}{cur}{abs(intraday_total.net_pnl):,.0f}"
-                     f"  ({intraday_total.trades} closed trade{'s' if intraday_total.trades != 1 else ''})\n"
-                     f"<u>by day</u>\n{_period_lines(group_by_day(intraday_trades, tz), cur)}\n"
-                     f"<u>by week</u>\n{_period_lines(group_by_week(intraday_trades, tz), cur)}")
+        parts.append(
+            f"<b>Intraday</b>  {'+' if intraday_total.net_pnl >= 0 else '-'}{cur}{abs(intraday_total.net_pnl):,.0f}"
+            f"  ({intraday_total.trades} closed trade{'s' if intraday_total.trades != 1 else ''})\n"
+            f"<u>by day</u>\n{_period_lines(group_by_day(intraday_trades, tz), cur)}\n"
+            f"<u>by week</u>\n{_period_lines(group_by_week(intraday_trades, tz), cur)}"
+        )
         combined = swing_total.net_pnl + intraday_total.net_pnl
         combined_day = merge_periods(group_by_day(swing_trades, tz), group_by_day(intraday_trades, tz))
-        parts.append(f"<b>Combined</b>  {'+' if combined >= 0 else '-'}{cur}{abs(combined):,.0f}\n"
-                     f"<u>by day</u>\n{_period_lines(combined_day, cur)}")
+        parts.append(
+            f"<b>Combined</b>  {'+' if combined >= 0 else '-'}{cur}{abs(combined):,.0f}\n"
+            f"<u>by day</u>\n{_period_lines(combined_day, cur)}"
+        )
     return Html("\n\n".join(parts))
 
 
@@ -108,14 +130,16 @@ def _worth_retrying(exc: BaseException) -> bool:
 class Notifier:
     """Best-effort alerts: a Telegram outage must never break trading."""
 
-    def __init__(self, token: str, chat_id: str, client: Optional[httpx.Client] = None,
-                 sleep: Callable[[float], None] = time.sleep):
+    def __init__(
+        self, token: str, chat_id: str, client: Optional[httpx.Client] = None, sleep: Callable[[float], None] = time.sleep
+    ):
         self.token, self.chat_id = token, str(chat_id)
         self.http = client or httpx.Client(timeout=15)
         self._sleep = sleep
 
     def send(self, text: str) -> bool:
         """Send an alert; never raises."""
+
         def post() -> None:
             self.http.post(f"{API}/bot{self.token}/sendMessage", json=_payload(self.chat_id, text)).raise_for_status()
 
@@ -127,8 +151,16 @@ class Notifier:
             return False
 
 
-def handle_command(text: str, control, broker, settings, intraday=None,
-                   extra: Optional[Mapping[str, Tuple[str, Callable[[], str]]]] = None, gapgo=None, gaponly=None) -> str:
+def handle_command(
+    text: str,
+    control,
+    broker,
+    settings,
+    intraday=None,
+    extra: Optional[Mapping[str, Tuple[str, Callable[[], str]]]] = None,
+    gapgo=None,
+    gaponly=None,
+) -> str:
     """Turn a command text into a reply, applying pause/resume/rebase as needed. `extra` adds commands:
     {"/name": (help line, handler)}."""
     cmd = (text or "").strip().split()[0].split("@")[0].lower() if (text or "").strip() else ""
@@ -143,8 +175,10 @@ def handle_command(text: str, control, broker, settings, intraday=None,
     if cmd == "/rebase":
         control.rebase_peak()
         p = broker.portfolio()
-        return (f"Peak-equity baseline reset to {settings.currency}{p.equity:,.2f}. "
-                "A drawdown halt clears on the next cycle; the daily-loss limit is unaffected.")
+        return (
+            f"Peak-equity baseline reset to {settings.currency}{p.equity:,.2f}. "
+            "A drawdown halt clears on the next cycle; the daily-loss limit is unaffected."
+        )
     if cmd == "/status":
         p = broker.portfolio()
         mode = "DRY RUN" if settings.dry_run else "PAPER ORDERS"
@@ -152,15 +186,19 @@ def handle_command(text: str, control, broker, settings, intraday=None,
         day = f"{(p.equity / p.start_of_day_equity - 1):+.2%} today" if p.start_of_day_equity else "n/a"
         cur = settings.currency
         icon = "⏸" if state == "PAUSED" else "▶️"
-        return Html(f"{icon} <b>{state}</b>  ·  {mode}\n\n💰 Equity   <b>{cur}{p.equity:,.2f}</b> ({day})\n"
-                    f"💵 Cash       {cur}{p.cash:,.2f}\n📦 Positions  {len(p.positions)}")
+        return Html(
+            f"{icon} <b>{state}</b>  ·  {mode}\n\n💰 Equity   <b>{cur}{p.equity:,.2f}</b> ({day})\n"
+            f"💵 Cash       {cur}{p.cash:,.2f}\n📦 Positions  {len(p.positions)}"
+        )
     if cmd == "/positions":
         if isinstance(broker, ListsHoldings):
             return format_positions(broker.holdings(), settings.currency)
         p = broker.portfolio()
         if not p.positions:
             return "No open positions."
-        return "\n".join(f"{s}: {p.position_qty.get(s, 0)} sh, {settings.currency}{v:,.0f}" for s, v in sorted(p.positions.items()))
+        return "\n".join(
+            f"{s}: {p.position_qty.get(s, 0)} sh, {settings.currency}{v:,.0f}" for s, v in sorted(p.positions.items())
+        )
     if cmd == "/history" and isinstance(broker, ListsTrades):
         return format_history(broker.trade_history(), settings.currency)
     if cmd == "/pnl" and isinstance(broker, ListsTrades):
@@ -186,8 +224,14 @@ def _account_view(account, name: str, history: bool, cur: str) -> str:
 class CommandListener:
     """Long-polls Telegram and answers commands, but only from the one authorised chat."""
 
-    def __init__(self, token: str, chat_id: str, respond: Callable[[str], str], client: Optional[httpx.Client] = None,
-                 intercept: Optional[Callable[[str], Optional[str]]] = None):
+    def __init__(
+        self,
+        token: str,
+        chat_id: str,
+        respond: Callable[[str], str],
+        client: Optional[httpx.Client] = None,
+        intercept: Optional[Callable[[str], Optional[str]]] = None,
+    ):
         """`intercept` sees each authorised message first. It returns None to leave the message to `respond`, or a
         reply ("" for none) when it consumed the message; a consumed message is deleted from the chat (it may be a
         one-time password)."""
@@ -232,9 +276,11 @@ class CommandListener:
         except httpx.HTTPError as e:
             log.warning("telegram delete failed: %s", type(e).__name__)
 
-    CONFLICT_NOTICE = ("Another program is reading this bot's messages (Telegram reports a polling conflict), so your "
-                       "commands may reach it instead of this bot. If it is not yours, revoke the token in BotFather "
-                       "(/revoke) and put the new one in TELEGRAM_BOT_TOKEN.")
+    CONFLICT_NOTICE = (
+        "Another program is reading this bot's messages (Telegram reports a polling conflict), so your "
+        "commands may reach it instead of this bot. If it is not yours, revoke the token in BotFather "
+        "(/revoke) and put the new one in TELEGRAM_BOT_TOKEN."
+    )
 
     def _poll_failed(self, e: Exception) -> None:
         """Log a failed poll usefully. A 409 means another program polls the same token: Telegram gives each update to

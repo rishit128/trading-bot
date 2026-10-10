@@ -6,8 +6,10 @@ The rule is not re-implemented here: `first_breakout` calls the same numpy core 
 
 Reading the result: `gross` is the trade's return before slippage and fees; `net` is after both. A rule has an edge only if
 its net beats a RANDOM entry with the same stop, target and exits by more than the noise."""
+
 from dataclasses import dataclass
-from datetime import date as Date, time as dtime
+from datetime import date as Date
+from datetime import time as dtime
 from typing import Callable, Dict, List, Optional, Tuple, cast
 
 import numpy as np
@@ -23,10 +25,11 @@ FEE_FRACTION = (st.intraday_fees("BUY", FEE_NOTIONAL) + st.intraday_fees("SELL",
 @dataclass(frozen=True)
 class StockDay:
     """One stock's regular session as arrays, with the previous session's close (None for the first day seen)."""
+
     symbol: str
     date: Date
-    t: np.ndarray            # each bar's start time (datetime.time)
-    minutes: np.ndarray      # the same, as minutes since midnight
+    t: np.ndarray  # each bar's start time (datetime.time)
+    minutes: np.ndarray  # the same, as minutes since midnight
     o: np.ndarray
     h: np.ndarray
     l: np.ndarray
@@ -38,10 +41,11 @@ class StockDay:
 @dataclass(frozen=True)
 class Entry:
     """A breakout entry of the live rule: the bar it happens on and the range it broke."""
-    index: int          # the bar whose close is the entry price
+
+    index: int  # the bar whose close is the entry price
     range_high: float
-    range_low: float    # also the stop
-    width: float        # opening range as a fraction of its high
+    range_low: float  # also the stop
+    width: float  # opening range as a fraction of its high
     volume_ratio: float
 
 
@@ -56,10 +60,20 @@ def stock_days(data: Dict[str, pd.DataFrame], min_bars: int = 60) -> List[StockD
             adjacent = prev_day is not None and (cast(Date, day) - prev_day).days <= MAX_SESSION_GAP_DAYS
             if len(g) >= min_bars and st.opening_range_intact(g):
                 stamps = pd.DatetimeIndex(g.index)
-                out.append(StockDay(symbol, cast(Date, day), np.array([x.time() for x in g.index]),
-                                    (stamps.hour * 60 + stamps.minute).to_numpy(), g["Open"].to_numpy(float),
-                                    g["High"].to_numpy(float), g["Low"].to_numpy(float), g["Close"].to_numpy(float),
-                                    g["Volume"].to_numpy(float), prev if adjacent else None))
+                out.append(
+                    StockDay(
+                        symbol,
+                        cast(Date, day),
+                        np.array([x.time() for x in g.index]),
+                        (stamps.hour * 60 + stamps.minute).to_numpy(),
+                        g["Open"].to_numpy(float),
+                        g["High"].to_numpy(float),
+                        g["Low"].to_numpy(float),
+                        g["Close"].to_numpy(float),
+                        g["Volume"].to_numpy(float),
+                        prev if adjacent else None,
+                    )
+                )
             prev, prev_day = float(g["Close"].iloc[-1]), cast(Date, day)
     return out
 
@@ -72,12 +86,12 @@ def first_breakout(d: StockDay, use_vwap: bool = True, use_volume: bool = True, 
 
 def random_entry(d: StockDay, rng: np.random.Generator) -> Optional[Entry]:
     """The null hypothesis: a random entry bar in the same window, anywhere still above the range low (so the stop is valid)."""
-    range_high, range_low = float(d.h[:st.RANGE_BARS].max()), float(d.l[:st.RANGE_BARS].min())
+    range_high, range_low = float(d.h[: st.RANGE_BARS].max()), float(d.l[: st.RANGE_BARS].min())
     width = (range_high - range_low) / range_high
     if not st.MIN_RANGE <= width <= st.MAX_RANGE:
         return None
     in_window = (d.minutes >= st.minute_of_day(st.ENTRY_FROM)) & (d.minutes < st.minute_of_day(st.ENTRY_UNTIL))
-    hits = np.flatnonzero(in_window & (d.c > range_low))    # (the window opens at 09:30, after the range bars)
+    hits = np.flatnonzero(in_window & (d.c > range_low))  # (the window opens at 09:30, after the range bars)
     if len(hits) == 0:
         return None
     return Entry(int(rng.choice(hits)), range_high, range_low, width, 0.0)
@@ -86,6 +100,7 @@ def random_entry(d: StockDay, rng: np.random.Generator) -> Optional[Entry]:
 @dataclass(frozen=True)
 class Plan:
     """A trade to simulate: enter at the close of bar `index`, long (+1) or short (-1), with an optional stop and target."""
+
     index: int
     side: int = 1
     stop: Optional[float] = None
@@ -134,17 +149,29 @@ def simulate(d: StockDay, e: Entry, mode: str = "full") -> Tuple[float, str]:
     return simulate_plan(d, orb_plan(d, e), mode)
 
 
-def _trade_row(d: StockDay, index: int, side: int, exit_price: float, why: str, slippage: float,
-               breadth: Dict[Date, float]) -> dict:
+def _trade_row(
+    d: StockDay, index: int, side: int, exit_price: float, why: str, slippage: float, breadth: Dict[Date, float]
+) -> dict:
     entry = float(d.c[index])
     gross, net = trade_returns(entry, exit_price, side, slippage)
-    return {"symbol": d.symbol, "date": d.date, "t": d.t[index], "side": side, "why": why, "price": entry, "exit": exit_price,
-            "gross": gross, "net": net, "gap": (d.o[0] / d.prev_close - 1) if d.prev_close else np.nan,
-            "breadth": breadth.get(d.date, np.nan)}
+    return {
+        "symbol": d.symbol,
+        "date": d.date,
+        "t": d.t[index],
+        "side": side,
+        "why": why,
+        "price": entry,
+        "exit": exit_price,
+        "gross": gross,
+        "net": net,
+        "gap": (d.o[0] / d.prev_close - 1) if d.prev_close else np.nan,
+        "breadth": breadth.get(d.date, np.nan),
+    }
 
 
-def evaluate(days: List[StockDay], pick: Callable[[StockDay], Optional[Entry]], mode: str = "full",
-             slippage: float = 0.0005) -> pd.DataFrame:
+def evaluate(
+    days: List[StockDay], pick: Callable[[StockDay], Optional[Entry]], mode: str = "full", slippage: float = 0.0005
+) -> pd.DataFrame:
     """One row per trade of the live rule (or a variant of it): returns, exit reason, entry time and price, the breakout's
     width and volume surge, and the day's context."""
     breadth = _breadth(days)
@@ -158,8 +185,9 @@ def evaluate(days: List[StockDay], pick: Callable[[StockDay], Optional[Entry]], 
     return pd.DataFrame(rows)
 
 
-def evaluate_plans(days: List[StockDay], pick: Callable[[StockDay], Optional[Plan]], mode: str = "full",
-                   slippage: float = 0.0005) -> pd.DataFrame:
+def evaluate_plans(
+    days: List[StockDay], pick: Callable[[StockDay], Optional[Plan]], mode: str = "full", slippage: float = 0.0005
+) -> pd.DataFrame:
     """One row per trade for any long/short plan (see `simulate_plan`)."""
     breadth = _breadth(days)
     rows = []
@@ -185,13 +213,22 @@ def describe(name: str, trades: pd.DataFrame) -> str:
     if trades.empty:
         return f"{name:<44} no trades"
     interval = 1.96 * trades["net"].std() / np.sqrt(len(trades))
-    return (f"{name:<44}{len(trades):>7}{(trades['net'] > 0).mean():>6.0%}{trades['gross'].mean():>+9.3%}"
-            f"{trades['net'].mean():>+9.3%} (±{interval:.2%}){(trades['why'] == 'STOP').mean():>6.0%}")
+    return (
+        f"{name:<44}{len(trades):>7}{(trades['net'] > 0).mean():>6.0%}{trades['gross'].mean():>+9.3%}"
+        f"{trades['net'].mean():>+9.3%} (±{interval:.2%}){(trades['why'] == 'STOP').mean():>6.0%}"
+    )
 
 
 HEADER = f"{'':<44}{'trades':>7}{'win':>6}{'gross':>9}{'net':>9}{'':>10}{'stops':>6}"
 
 
 def time_bucket(x: dtime) -> str:
-    return ("09:35-10:00" if x < dtime(10, 0) else "10:00-11:00" if x < dtime(11, 0)
-            else "11:00-12:30" if x < dtime(12, 30) else "12:30-14:00")
+    return (
+        "09:35-10:00"
+        if x < dtime(10, 0)
+        else "10:00-11:00"
+        if x < dtime(11, 0)
+        else "11:00-12:30"
+        if x < dtime(12, 30)
+        else "12:30-14:00"
+    )

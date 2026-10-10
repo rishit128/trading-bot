@@ -8,6 +8,7 @@ closed trades hide: buys that lost, and stocks it passed on (or vetoed) that the
 
 `forward_outcome` is a pure function of a price table, so the arithmetic is testable on its own; `label_outcomes` applies it
 to the decisions in the database, is idempotent, and only labels a session once `horizon` further sessions have closed."""
+
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -26,6 +27,7 @@ HORIZONS = (5, 20, 60)  # sessions held after entry: a week, a month, a quarter
 @dataclass(frozen=True)
 class Outcome:
     """One stock, one analysed session, one holding period."""
+
     symbol: str
     bar_date: str
     horizon: int
@@ -47,8 +49,11 @@ def forward_outcome(symbol: str, bars: pd.DataFrame, bar_date: str, horizon: int
     guessed) or when fewer than `horizon` sessions have closed since (not yet matured)."""
     if horizon < 1:
         raise ValueError(f"horizon must be >= 1, got {horizon}")
-    index = pd.DatetimeIndex(bars.index).tz_localize(None).normalize() if pd.DatetimeIndex(bars.index).tz is not None \
+    index = (
+        pd.DatetimeIndex(bars.index).tz_localize(None).normalize()
+        if pd.DatetimeIndex(bars.index).tz is not None
         else pd.DatetimeIndex(bars.index).normalize()
+    )
     day = pd.Timestamp(bar_date).normalize()
     pos = int(index.searchsorted(day))
     if pos >= len(index) or index[pos] != day or pos + horizon >= len(index):
@@ -59,9 +64,19 @@ def forward_outcome(symbol: str, bars: pd.DataFrame, bar_date: str, horizon: int
         return None
     exit_price = float(bars["Close"].iloc[pos + horizon])
     lows = bars["Low"].iloc[window].astype(float)
-    return Outcome(symbol, bar_date, horizon, str(index[pos + 1].date()), str(index[pos + horizon].date()), entry, exit_price,
-                   exit_price / entry - 1,
-                   float(lows.min()) / entry - 1, bool((lows <= entry * (1 - stop_pct)).any()), stop_pct)
+    return Outcome(
+        symbol,
+        bar_date,
+        horizon,
+        str(index[pos + 1].date()),
+        str(index[pos + horizon].date()),
+        entry,
+        exit_price,
+        exit_price / entry - 1,
+        float(lows.min()) / entry - 1,
+        bool((lows <= entry * (1 - stop_pct)).any()),
+        stop_pct,
+    )
 
 
 def backfill_bar_dates(sessions) -> int:
@@ -70,7 +85,9 @@ def backfill_bar_dates(sessions) -> int:
 
     filled = 0
     with sessions() as s:
-        for d in s.scalars(select(DecisionRecord).where(DecisionRecord.bar_date.is_(None), DecisionRecord.snapshot_json.isnot(None))):
+        for d in s.scalars(
+            select(DecisionRecord).where(DecisionRecord.bar_date.is_(None), DecisionRecord.snapshot_json.isnot(None))
+        ):
             try:
                 d.bar_date = json.loads(d.snapshot_json).get("bar_date")
             except (ValueError, TypeError):
@@ -83,6 +100,7 @@ def backfill_bar_dates(sessions) -> int:
 @dataclass(frozen=True)
 class LabelSummary:
     """What a labelling run did."""
+
     labelled: int = 0
     already_done: int = 0
     not_mature: int = 0
@@ -95,16 +113,25 @@ def _matured(bar_date: str, horizon: int, today: date) -> bool:
     return (pd.Timestamp(bar_date) + pd.offsets.BDay(horizon)).date() < today
 
 
-def label_outcomes(sessions, fetch_bars: Callable[[str], Optional[pd.DataFrame]], horizons: Sequence[int] = HORIZONS,
-                   stop_pct: float = 0.15, today: Optional[date] = None) -> LabelSummary:
+def label_outcomes(
+    sessions,
+    fetch_bars: Callable[[str], Optional[pd.DataFrame]],
+    horizons: Sequence[int] = HORIZONS,
+    stop_pct: float = 0.15,
+    today: Optional[date] = None,
+) -> LabelSummary:
     """Label every analysed (stock, session) that has matured and is not labelled yet. Idempotent and safe to interrupt.
 
     `fetch_bars(symbol)` returns that stock's daily bars or None. Only stocks with something to label are fetched."""
     today = today or datetime.now(timezone.utc).date()
     backfill_bar_dates(sessions)
     with sessions() as s:
-        analysed: Set[Tuple[str, str]] = {(sym, bd) for sym, bd in s.execute(
-            select(DecisionRecord.symbol, DecisionRecord.bar_date).where(DecisionRecord.bar_date.isnot(None)).distinct())}
+        analysed: Set[Tuple[str, str]] = {
+            (sym, bd)
+            for sym, bd in s.execute(
+                select(DecisionRecord.symbol, DecisionRecord.bar_date).where(DecisionRecord.bar_date.isnot(None)).distinct()
+            )
+        }
         done: Set[Tuple[str, str, int]] = {(o.symbol, o.bar_date, o.horizon) for o in s.scalars(select(OutcomeRecord))}
     wanted: Dict[str, List[Tuple[str, int]]] = {}
     already = not_mature = 0
@@ -134,9 +161,21 @@ def label_outcomes(sessions, fetch_bars: Callable[[str], Optional[pd.DataFrame]]
                 if o is None:
                     no_data += 1
                     continue
-                s.add(OutcomeRecord(symbol=symbol, bar_date=bar_date, horizon=h, entry_date=o.entry_date, exit_date=o.exit_date,
-                                    entry_price=o.entry_price, exit_price=o.exit_price, gross_return=o.gross_return,
-                                    worst_return=o.worst_return, hit_stop=o.hit_stop, stop_pct=stop_pct))
+                s.add(
+                    OutcomeRecord(
+                        symbol=symbol,
+                        bar_date=bar_date,
+                        horizon=h,
+                        entry_date=o.entry_date,
+                        exit_date=o.exit_date,
+                        entry_price=o.entry_price,
+                        exit_price=o.exit_price,
+                        gross_return=o.gross_return,
+                        worst_return=o.worst_return,
+                        hit_stop=o.hit_stop,
+                        stop_pct=stop_pct,
+                    )
+                )
                 labelled += 1
             s.commit()
     return LabelSummary(labelled, already, not_mature, no_data, tuple(sorted(missing)))

@@ -1,5 +1,6 @@
 """The learning loop's chores: the daily outcome labelling and the weekly report that scores the AI against the plain
 rule. Both must never hurt trading: failures are logged, retried next cycle and never raised."""
+
 import json
 from datetime import date
 
@@ -11,9 +12,17 @@ from src.learning.jobs import LABELLED_ON, DailyOutcomeLabelling
 
 
 def snap_dict(symbol="X", rsi=60.0, adx=35.0, volume=1000, bar_date="2025-01-06"):
-    return {"symbol": symbol, "price": 100.0, "ma50": 98.0, "ma200": 95.0, "rsi": rsi, "volume": volume, "avg_volume": 1000,
-            "adx": adx, "bar_date": bar_date}
-
+    return {
+        "symbol": symbol,
+        "price": 100.0,
+        "ma50": 98.0,
+        "ma200": 95.0,
+        "rsi": rsi,
+        "volume": volume,
+        "avg_volume": 1000,
+        "adx": adx,
+        "bar_date": bar_date,
+    }
 
 
 def seed(tmp_path, observations, name="m.db"):
@@ -21,15 +30,37 @@ def seed(tmp_path, observations, name="m.db"):
     sessions = make_session_factory(f"sqlite:///{tmp_path / name}")
     with sessions() as s:
         for symbol, bar_date, kw, gross, exit_date in observations:
-            s.add(DecisionRecord(symbol=symbol, price=100.0, final_action="BUY", final_confidence=0.7, reasoning="r",
-                                 risk_approved=False, risk_quantity=0, risk_reason="x", bar_date=bar_date,
-                                 snapshot_json=json.dumps(snap_dict(symbol=symbol, bar_date=bar_date, **kw))))
-            s.add(OutcomeRecord(symbol=symbol, bar_date=bar_date, horizon=20, entry_date=bar_date, exit_date=exit_date,
-                                entry_price=100.0, exit_price=100 * (1 + gross), gross_return=gross, worst_return=min(0.0, gross),
-                                hit_stop=False, stop_pct=0.15))
+            s.add(
+                DecisionRecord(
+                    symbol=symbol,
+                    price=100.0,
+                    final_action="BUY",
+                    final_confidence=0.7,
+                    reasoning="r",
+                    risk_approved=False,
+                    risk_quantity=0,
+                    risk_reason="x",
+                    bar_date=bar_date,
+                    snapshot_json=json.dumps(snap_dict(symbol=symbol, bar_date=bar_date, **kw)),
+                )
+            )
+            s.add(
+                OutcomeRecord(
+                    symbol=symbol,
+                    bar_date=bar_date,
+                    horizon=20,
+                    entry_date=bar_date,
+                    exit_date=exit_date,
+                    entry_price=100.0,
+                    exit_price=100 * (1 + gross),
+                    gross_return=gross,
+                    worst_return=min(0.0, gross),
+                    hit_stop=False,
+                    stop_pct=0.15,
+                )
+            )
         s.commit()
     return sessions
-
 
 
 # ---------------------------------------------------------------- the daily job
@@ -46,6 +77,7 @@ def test_the_job_runs_once_a_day_and_a_failure_is_retried_and_never_raised(tmp_p
     monkey = {"fail": True}
 
     import src.learning.jobs as jobs
+
     real = jobs.label_outcomes
 
     def fake(*a, **k):
@@ -56,12 +88,12 @@ def test_the_job_runs_once_a_day_and_a_failure_is_retried_and_never_raised(tmp_p
 
     jobs.label_outcomes = fake
     try:
-        assert run() is None and control.get_flag(LABELLED_ON) is None       # failed: not marked done, no exception
+        assert run() is None and control.get_flag(LABELLED_ON) is None  # failed: not marked done, no exception
         monkey["fail"] = False
         assert run() is not None and control.get_flag(LABELLED_ON) == d1.isoformat()
-        assert run() is None and len(calls) == 2                             # already done today: no second run
+        assert run() is None and len(calls) == 2  # already done today: no second run
         today[0] = d2
-        assert run() is not None and len(calls) == 3                         # a new day runs again
+        assert run() is not None and len(calls) == 3  # a new day runs again
     finally:
         jobs.label_outcomes = real
 

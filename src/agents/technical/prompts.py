@@ -2,6 +2,7 @@
 quotes. Pure functions of their inputs (no model, no I/O), so a stored decision can rebuild the very prompt that was
 sent (`scripts/replay_decision.py`) and a wording change is a one-file diff. Changing any text here means bumping
 `PROMPT_VERSION` in src/versions.py."""
+
 from typing import Optional
 
 from src.engine.enums import Action
@@ -19,8 +20,10 @@ def mechanical_baseline(s) -> str:
     """Human-readable form of the mechanical verdict, rendered into the prompt."""
     above, stacked = above_ma50(s.price, s.ma50), ma_stack_bullish(s.ma50, s.ma200)
     if entry_filter(s.price, s.ma50, s.ma200, s.rsi):
-        return (f"BUY (price above MA50, MA50 above MA200, RSI(14) below {RSI_OVERBOUGHT:.0f} - the technical filter "
-                "this candidate passed)")
+        return (
+            f"BUY (price above MA50, MA50 above MA200, RSI(14) below {RSI_OVERBOUGHT:.0f} - the technical filter "
+            "this candidate passed)"
+        )
     divergences = []
     if not above:
         divergences.append(f"price {s.price:.2f} is below MA50 {s.ma50:.2f}")
@@ -73,12 +76,19 @@ def market_text(m) -> str:
     trend = "n/a" if above is None else ("above" if above else "BELOW")
     vix = "n/a"
     if get("vix") is not None:
-        vix = f"{get('vix'):.1f}" + (f" ({get('vix_percentile'):.0%} of the past year's range)"
-                                     if get("vix_percentile") is not None else "")
+        vix = f"{get('vix'):.1f}" + (
+            f" ({get('vix_percentile'):.0%} of the past year's range)" if get("vix_percentile") is not None else ""
+        )
     rsi = f"{get('index_rsi'):.0f}" if get("index_rsi") is not None else "n/a"
-    return (f"Nifty 50 {get('index_price'):,.0f}, {trend} its 200-day average {get('index_ma200'):,.0f}; index RSI(14) {rsi}; "
+    return (
+        (
+            f"Nifty 50 {get('index_price'):,.0f}, {trend} its 200-day average {get('index_ma200'):,.0f}; index RSI(14) {rsi}; "
             f"6-month index return {_pct(get('index_mom_6m'))}; India VIX {vix}; this stock vs the index over 6 months "
-            f"{_pct(get('vs_index_6m'))}") if get("index_price") is not None else "no market data available"
+            f"{_pct(get('vs_index_6m'))}"
+        )
+        if get("index_price") is not None
+        else "no market data available"
+    )
 
 
 def cot_prompt(s, market=None, company=None) -> str:
@@ -92,10 +102,13 @@ def cot_prompt(s, market=None, company=None) -> str:
     vol_trend = f"{s.volume_trend:+.1%} vs the prior 20 days" if s.volume_trend is not None else "n/a"
     atr = f"{s.atr / s.price:.1%} of price" if s.atr is not None and s.price else "n/a"
     adx = f"{s.adx:.0f} of 100" if s.adx is not None else "n/a"
-    strength = (f"Its 12-month momentum (return from 12 months ago to 1 month ago) is {s.momentum_12_1:+.0%}: the scanner "
-                "ranks NSE stocks by this, the one signal that beat holding the whole market in this strategy's 9-year "
-                "research. Strong stocks often look stretched on a chart; that is expected, not a flaw.\n"
-                if s.momentum_12_1 is not None else "")
+    strength = (
+        f"Its 12-month momentum (return from 12 months ago to 1 month ago) is {s.momentum_12_1:+.0%}: the scanner "
+        "ranks NSE stocks by this, the one signal that beat holding the whole market in this strategy's 9-year "
+        "research. Strong stocks often look stretched on a chart; that is expected, not a flaw.\n"
+        if s.momentum_12_1 is not None
+        else ""
+    )
     return (
         f"You are the analyst in a momentum strategy for Indian stocks. {s.symbol} is a candidate the scanner selected "
         "(or a stock already held). The scanner has already confirmed the price trend; your job is to judge what a "
@@ -107,8 +120,11 @@ def cot_prompt(s, market=None, company=None) -> str:
         f"MECHANICAL BASELINE (the deterministic filter): {mechanical_baseline(s)}\n"
         f"COMPANY: {company_text(company)}\n"
         f"MARKET: {market_text(market)}\n"
-        "STEP 1 (trend): is price above MA50 (" + ("yes" if above else "no") + ") and MA50 above MA200 ("
-        + ("yes" if stacked else "no") + ")? Fresh breakout or extended run? step1_trend: one sentence.\n"
+        "STEP 1 (trend): is price above MA50 ("
+        + ("yes" if above else "no")
+        + ") and MA50 above MA200 ("
+        + ("yes" if stacked else "no")
+        + ")? Fresh breakout or extended run? step1_trend: one sentence.\n"
         "STEP 2 (overbought): RSI, MACD and the Bollinger position in one sentence. step2_overbought.\n"
         "STEP 3 (volume): is the move confirmed by volume? step3_volume: one sentence.\n"
         "COMPANY CHECK: company_check: one sentence quoting the numbers: are sales and profit growing or shrinking over "

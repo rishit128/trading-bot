@@ -1,6 +1,7 @@
 """The login/read/logout flow in a real Chromium against a local fake of the Integrated portal that reproduces its page
 flow, element IDs, error box and redirects (mapped from the portal's public login scripts). Includes a trap: the fake
 dashboard tries to place an order, which the guard must stop before it reaches the server."""
+
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,8 +16,10 @@ from src.portfolio.vault import Credentials  # noqa: E402
 
 MOBILE, OTP, MPIN = "9876543210", "4321", "135790"
 CREDS = Credentials(MOBILE, MPIN, "")
-NOTE = ("Two holdings: NBCC is the larger one and shows a gain on its cost, while IRFC is smaller and sits "
-        "below its cost, so the result depends mostly on NBCC.")
+NOTE = (
+    "Two holdings: NBCC is the larger one and shows a gain on its cost, while IRFC is smaller and sits "
+    "below its cost, so the result depends mostly on NBCC."
+)
 
 ALERT_JS = """<script>function alertBox(m){document.body.insertAdjacentHTML('beforeend',
  '<div class="mask-overlay"><div class="alert-box"><p>'+m+'</p></div></div>')}
@@ -53,7 +56,7 @@ function go(r){{sessionStorage.setItem('CustomerId',r.value);
 d.innerHTML=ids.map(c=>'<input type=radio name=CustomerId data-mpinsts="'+c[1]+'" value="'+c[0]+'">').join('');
 Submitbtn.onclick=()=>go(document.querySelector("input[name='CustomerId']:checked"));
 if(ids.length==1){{d.style.display='none';document.querySelector("input[name='CustomerId']").checked=true;Submitbtn.click()}}</script>""",
-        "/nv1/login/MpinPassword.html": f"""{ALERT_JS}{''.join(f'<input id=MpinTxt{i} class=InputBox maxlength=1>' for i in range(1, 7))}
+        "/nv1/login/MpinPassword.html": f"""{ALERT_JS}{"".join(f"<input id=MpinTxt{i} class=InputBox maxlength=1>" for i in range(1, 7))}
 <input type=button id=Submitbtn value=Login disabled>
 <script>document.querySelectorAll('.InputBox').forEach(b=>b.addEventListener('keyup',()=>{{
  Submitbtn.disabled=[...document.querySelectorAll('.InputBox')].some(x=>!x.value)}}));
@@ -107,8 +110,7 @@ class FakePortal:
                     self.wfile.flush()
                     portal.closing.wait(120)
                     return
-                self._reply(200, json.dumps(portal.api(path, self.headers.get("App-Action-Name", ""), body)),
-                            "application/json")
+                self._reply(200, json.dumps(portal.api(path, self.headers.get("App-Action-Name", ""), body)), "application/json")
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -125,8 +127,13 @@ class FakePortal:
         if action == "Dividend":
             return {"ok": True, "amount": "250.00"}
         if action == "Holdings":
-            return {"ok": True, "rows": [{"Symbol": "NBCC", "Qty": 1000, "AvgPrice": 95.0, "LTP": 112.4},
-                                         {"Symbol": "IRFC", "Qty": 500, "AvgPrice": 150.0, "LTP": 138.1}]}
+            return {
+                "ok": True,
+                "rows": [
+                    {"Symbol": "NBCC", "Qty": 1000, "AvgPrice": 95.0, "LTP": 112.4},
+                    {"Symbol": "IRFC", "Qty": 500, "AvgPrice": 150.0, "LTP": 138.1},
+                ],
+            }
         return {"ok": True} if path.endswith("logout") else wrong
 
     def calls(self, suffix):
@@ -173,7 +180,12 @@ def test_logs_in_reads_every_page_blocks_the_order_and_logs_out(portal, tmp_path
     assert asked == [1] and r.logged_out is True
     assert all(e["reached"] for e in summary.values())
     assert "NBCC" in (tmp_path / "out" / "portfolio.txt").read_text(encoding="utf-8")
-    assert json.loads((tmp_path / "out" / "portfolio.tables.json").read_text(encoding="utf-8"))[0][1] == ["NBCC", "1000", "95", "112.4"]
+    assert json.loads((tmp_path / "out" / "portfolio.tables.json").read_text(encoding="utf-8"))[0][1] == [
+        "NBCC",
+        "1000",
+        "95",
+        "112.4",
+    ]
     holdings = [c for e in summary.values() for c in e["data_calls"] if c["action"].startswith("Holdings")]
     assert holdings and all((tmp_path / "out" / "api" / c["file"]).exists() for c in holdings)
     # the trap: every load of the dashboard/holdings pages tried to place an order; the server never saw one
@@ -265,7 +277,6 @@ def test_a_portal_that_stops_responding_times_out_instead_of_hanging(portal, tmp
     assert r.logged_out is None  # the login never completed: nothing to log out of; the browser is closed
 
 
-
 def test_the_langgraph_agent_end_to_end_with_its_mpin_lockout(portal, tmp_path):
     """fetch (fake portal) -> extract -> analyse -> explain -> report, then a wrong MPIN blocks the next run."""
     from src.portfolio.graph import build_portfolio_graph
@@ -274,9 +285,11 @@ def test_the_langgraph_agent_end_to_end_with_its_mpin_lockout(portal, tmp_path):
     fake, store, sent, seen_by_ai = portal(), RunStore(tmp_path / "data"), [], []
 
     def agent(creds):
-        return build_portfolio_graph(lambda: fetch_portfolio(creds, lambda: OTP, store, base=fake.base, step_timeout_s=10,
-                                                             progress=sent.append),
-                                     sent.append, explain=lambda data: seen_by_ai.append(data) or NOTE)
+        return build_portfolio_graph(
+            lambda: fetch_portfolio(creds, lambda: OTP, store, base=fake.base, step_timeout_s=10, progress=sent.append),
+            sent.append,
+            explain=lambda data: seen_by_ai.append(data) or NOTE,
+        )
 
     state = agent(CREDS).invoke({})
     a = state["analysis"]
@@ -286,8 +299,15 @@ def test_the_langgraph_agent_end_to_end_with_its_mpin_lockout(portal, tmp_path):
     steps = "\n".join(sent)
     assert "Logged in (read-only)" in steps and "1/4 Dashboard (totals)</b>: read" in steps and "2/4 Capital gains" in steps
     assert "blocked 1 write request(s) the page tried: PlaceOrder" in steps and "Logged out of Integrated" in steps
-    order = ["Opening the Integrated login page", "Mobile number accepted", "OTP accepted", "Logged in (read-only)",
-             "1/4 Dashboard", "Logged out of Integrated", "PORTFOLIO SUMMARY"]
+    order = [
+        "Opening the Integrated login page",
+        "Mobile number accepted",
+        "OTP accepted",
+        "Logged in (read-only)",
+        "1/4 Dashboard",
+        "Logged out of Integrated",
+        "PORTFOLIO SUMMARY",
+    ]
     positions = [next(i for i, s in enumerate(sent) if step in s) for step in order]
     assert positions == sorted(positions)  # every step reaches Telegram, in the order it happened
     assert [i for i, s in enumerate(sent) if "Logged in" in s][0] < [i for i, s in enumerate(sent) if "Logged out" in s][0]

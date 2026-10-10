@@ -17,10 +17,12 @@ can never cut a tag in half.
 
 `sections()` returns the HTML version, for Telegram. `format_report()` (in graph.py) strips the tags for the plain-text
 copy saved to disk."""
+
 import re
 from collections import Counter, defaultdict
 from datetime import date, timedelta
-from html import escape as esc, unescape
+from html import escape as esc
+from html import unescape
 from typing import Dict, List, Optional
 
 from src.portfolio.holdings import inr, nice
@@ -29,16 +31,25 @@ from src.portfolio.statements import Statements, name_key, parse_date
 
 LONG_TERM_SOON_DAYS = 60
 _TAG = re.compile(r"</?[a-zA-Z][^>]*>")
-COST_NOTE = ("ℹ️ Returns use the cost the portal records. After a demerger or merger (e.g. Reliance → Jio Financial, "
-             "Tata Motors' split) that cost may be divided between the companies differently from your records.")
-TAX_NOTE = ("ℹ️ Listed shares: gains on shares held up to 1 year are short-term (taxed 20%), after 1 year long-term "
-            "(12.5% above ₹1.25 lakh a year). Rates from 23 Jul 2024; confirm with your CA.")
+COST_NOTE = (
+    "ℹ️ Returns use the cost the portal records. After a demerger or merger (e.g. Reliance → Jio Financial, "
+    "Tata Motors' split) that cost may be divided between the companies differently from your records."
+)
+TAX_NOTE = (
+    "ℹ️ Listed shares: gains on shares held up to 1 year are short-term (taxed 20%), after 1 year long-term "
+    "(12.5% above ₹1.25 lakh a year). Rates from 23 Jul 2024; confirm with your CA."
+)
 FLAGS_NOTE = "ℹ️ Flags are informational only. This agent never recommends or places a trade — the decision is yours."
 ADVICE = (  # (words in the error, what the user should do next)
-    ("MPIN step failed on", "Run <code>python -m src.portfolio setup</code> on the PC with the correct MPIN — runs "
-                            "stay blocked until then."),
-    ("login stopped at mpin", "The portal did not accept the MPIN. Check it, then run setup again on the PC. Runs "
-                              "are blocked until then so a wrong MPIN is never tried twice."),
+    (
+        "MPIN step failed on",
+        "Run <code>python -m src.portfolio setup</code> on the PC with the correct MPIN — runs stay blocked until then.",
+    ),
+    (
+        "login stopped at mpin",
+        "The portal did not accept the MPIN. Check it, then run setup again on the PC. Runs "
+        "are blocked until then so a wrong MPIN is never tried twice.",
+    ),
     ("Invalid OTP", "Send /portfolio again and type the new OTP carefully (the old one is used up)."),
     ("no OTP", "Send /portfolio again and reply with the 4-digit OTP within 3 minutes."),
     ("entry", "The portal did not accept the typed entry (its page may have changed). Tell Claude; nothing was sent."),
@@ -76,8 +87,14 @@ def sections(state: dict, today: Optional[date] = None) -> List[str]:
     today = today or date.today()
     logout = logout_line(state.get("logged_out"))
     if state.get("error"):
-        lines = [heading("❌ PORTFOLIO RUN STOPPED"), "", f"<b>Why:</b> {esc(state['error'])}",
-                 f"👉 <b>What to do next:</b> {advice(state['error'])}", "", *run_footer(state, logout, next_line=False)]
+        lines = [
+            heading("❌ PORTFOLIO RUN STOPPED"),
+            "",
+            f"<b>Why:</b> {esc(state['error'])}",
+            f"👉 <b>What to do next:</b> {advice(state['error'])}",
+            "",
+            *run_footer(state, logout, next_line=False),
+        ]
         return ["\n".join(lines)]
     a, st = state.get("analysis"), state.get("statements") or Statements()
     divs = dividend_view(st, today)
@@ -88,16 +105,17 @@ def sections(state: dict, today: Optional[date] = None) -> List[str]:
         if income:
             out.append(income)
         if state.get("explanation"):
-            out.append(heading("🤖 AI NOTE") + "  <i>(explains only — never advises a trade)</i>\n\n"
-                       + esc(state["explanation"]))
+            out.append(heading("🤖 AI NOTE") + "  <i>(explains only — never advises a trade)</i>\n\n" + esc(state["explanation"]))
     out.append("\n".join(run_footer(state, logout)))
     return out
 
 
 def logout_line(logged_out: Optional[bool]) -> str:
-    return {True: "✅ Logged out safely.",
-            False: "⚠️ <b>LOGOUT NOT CONFIRMED</b> — please log out on the Integrated portal yourself.",
-            None: "🔒 No portal session was left open."}[logged_out]
+    return {
+        True: "✅ Logged out safely.",
+        False: "⚠️ <b>LOGOUT NOT CONFIRMED</b> — please log out on the Integrated portal yourself.",
+        None: "🔒 No portal session was left open.",
+    }[logged_out]
 
 
 def summary(state: dict, a: Optional[dict], st: Statements, divs: dict) -> str:
@@ -131,8 +149,7 @@ def summary(state: dict, a: Optional[dict], st: Statements, divs: dict) -> str:
             best, worst = max(ranked, key=lambda p: p["pnl_pct"]), min(ranked, key=lambda p: p["pnl_pct"])
             lines.append(f"🏆 Best: <b>{esc(best['symbol'])}</b> {best['pnl_pct']:+.0%}")
             lines.append(f"📉 Weakest: <b>{esc(worst['symbol'])}</b> {worst['pnl_pct']:+.0%}")
-        lines.append(f"⚠️ Flags: <b>{len(a['flags'])}</b> (see Analysis message below)" if a["flags"]
-                     else "✅ No risk flags")
+        lines.append(f"⚠️ Flags: <b>{len(a['flags'])}</b> (see Analysis message below)" if a["flags"] else "✅ No risk flags")
     if state.get("warnings"):
         lines.append("")
         lines += [esc(w) for w in state["warnings"]]
@@ -151,8 +168,11 @@ def holdings_section(a: dict, dividends_by_stock: Dict[str, float]) -> str:
         tags = " · ".join(x for x in (p.get("cap"), nice(p["sector"]) if p.get("sector") else "") if x)
         if tags:
             lines.append(f"   {esc(tags)}")
-        price = [f"{p['qty']:,.0f} sh" if p.get("qty") else "",
-                 f"avg ₹{p['avg']:,.2f}" if p.get("avg") else "", f"now ₹{p['ltp']:,.2f}" if p.get("ltp") else ""]
+        price = [
+            f"{p['qty']:,.0f} sh" if p.get("qty") else "",
+            f"avg ₹{p['avg']:,.2f}" if p.get("avg") else "",
+            f"now ₹{p['ltp']:,.2f}" if p.get("ltp") else "",
+        ]
         if any(price):
             lines.append("   " + " · ".join(x for x in price if x))
         if p.get("invested") and p.get("cost_recorded", True):
@@ -184,25 +204,28 @@ def analysis_section(a: dict) -> str:
         lines.append("   " + ", ".join(f"{esc(p['symbol'])} {p['pnl_pct']:+.0%}" for p in ranked[::-1][:5]))
         losers = [p for p in ranked if p["pnl_pct"] < 0]
         unknown = len(a["positions"]) - len(ranked)
-        lines.append(f"   In profit: {len(ranked) - len(losers)} · In loss: {len(losers)}"
-                     + (f" · Cost not recorded: {unknown}" if unknown else ""))
+        lines.append(
+            f"   In profit: {len(ranked) - len(losers)} · In loss: {len(losers)}"
+            + (f" · Cost not recorded: {unknown}" if unknown else "")
+        )
         lines.append("")
     lines.append("🧭 <b>Concentration</b>")
     lines.append(f"   Largest holding: {a['largest_weight']:.1%} · Top 5 holdings: {a['top5_weight']:.1%}")
     lines.append(f"   Spread: like {a['effective_holdings']} equal holdings")
     if a.get("caps"):
-        lines += ["", "📐 <b>Market cap mix</b>", "   " + " · ".join(f"{esc(c['cap'])} {c['weight']:.1%}"
-                                                                    for c in a["caps"])]
+        lines += ["", "📐 <b>Market cap mix</b>", "   " + " · ".join(f"{esc(c['cap'])} {c['weight']:.1%}" for c in a["caps"])]
     if a.get("sectors"):
-        lines += ["", f"🏭 <b>Sectors</b> ({len(a['sectors'])})",
-                  "   " + ", ".join(f"{esc(nice(s['sector']))} {s['weight']:.1%}" for s in a["sectors"])]
+        lines += [
+            "",
+            f"🏭 <b>Sectors</b> ({len(a['sectors'])})",
+            "   " + ", ".join(f"{esc(nice(s['sector']))} {s['weight']:.1%}" for s in a["sectors"]),
+        ]
     lines.append("")
     if a["flags"]:
         lines.append(f"⚠️ <b>FLAGS</b> ({len(a['flags'])})")
         lines += [f"   • {esc(f)}" for f in a["flags"]]
     else:
-        lines.append("✅ <b>No flags</b> — no stock above 20%, no sector above 30%, top five below 60%, "
-                     "none 25%+ below cost")
+        lines.append("✅ <b>No flags</b> — no stock above 20%, no sector above 30%, top five below 60%, none 25%+ below cost")
     lines += ["", FLAGS_NOTE, COST_NOTE]
     return "\n".join(lines)
 
@@ -215,41 +238,55 @@ def dividend_view(st: Statements, today: date) -> dict:
     for d in recent:
         by_stock[name_key(d.company)] += d.net
     recent.sort(key=lambda d: parse_date(d.record_date) or today, reverse=True)
-    return {"recent": recent, "count": len(recent), "net": sum(d.net for d in recent),
-            "tds": sum(d.tds for d in recent), "by_stock": dict(by_stock)}
+    return {
+        "recent": recent,
+        "count": len(recent),
+        "net": sum(d.net for d in recent),
+        "tds": sum(d.tds for d in recent),
+        "by_stock": dict(by_stock),
+    }
 
 
 def income_section(st: Statements, divs: dict) -> str:
     lines: List[str] = [heading("💼 INCOME &amp; TAX")]
     if divs["count"]:
-        lines += ["", f"🎁 <b>DIVIDENDS</b>, last 12 months: {inr(divs['net'])} net · {divs['count']} payouts"
-                     + (f" (TDS {inr(divs['tds'])})" if divs["tds"] else "")]
-        lines += [f"   • {esc(d.record_date)} {esc(d.company)}: {d.qty:,.0f} × ₹{d.per_share:,.2f} = {inr(d.net)}"
-                  for d in divs["recent"]]
+        lines += [
+            "",
+            f"🎁 <b>DIVIDENDS</b>, last 12 months: {inr(divs['net'])} net · {divs['count']} payouts"
+            + (f" (TDS {inr(divs['tds'])})" if divs["tds"] else ""),
+        ]
+        lines += [
+            f"   • {esc(d.record_date)} {esc(d.company)}: {d.qty:,.0f} × ₹{d.per_share:,.2f} = {inr(d.net)}"
+            for d in divs["recent"]
+        ]
     if st.sales:
         moved = {name_key(t.company) for t in st.trades if t.corporate_action}
         total = sum(s.gain for s in st.sales)
-        lines += ["", f"🧾 <b>SOLD THIS FINANCIAL YEAR</b> ({esc(st.financial_year)}): {len(st.sales)} sale(s), "
-                     f"{signed(total)}"]
-        lines += [f"   • {esc(s.company)}: {s.qty:,.0f} sh · bought {inr(s.bought_value)} → sold {inr(s.sold_value)} "
-                  f"· {signed(s.gain)}"
-                  + (" <i>(merger/scheme conversion, not a market sale)</i>" if name_key(s.company) in moved else "")
-                  for s in st.sales]
+        lines += ["", f"🧾 <b>SOLD THIS FINANCIAL YEAR</b> ({esc(st.financial_year)}): {len(st.sales)} sale(s), {signed(total)}"]
+        lines += [
+            f"   • {esc(s.company)}: {s.qty:,.0f} sh · bought {inr(s.bought_value)} → sold {inr(s.sold_value)} "
+            f"· {signed(s.gain)}"
+            + (" <i>(merger/scheme conversion, not a market sale)</i>" if name_key(s.company) in moved else "")
+            for s in st.sales
+        ]
     if st.lots:
         lines += ["", "⏳ <b>SHORT-TERM LOTS</b> (bought within a year)"]
         for lot in sorted(st.lots, key=lambda x: (x.days_to_long_term is None, x.days_to_long_term or 0)):
-            when = (f"long-term in {lot.days_to_long_term} days" if lot.days_to_long_term is not None else "")
+            when = f"long-term in {lot.days_to_long_term} days" if lot.days_to_long_term is not None else ""
             soon = " ⏰" if lot.days_to_long_term is not None and lot.days_to_long_term <= LONG_TERM_SOON_DAYS else ""
-            lines.append(f"   • {esc(lot.company)}: {lot.qty:,.0f} sh bought {esc(lot.bought_on)} @ ₹{lot.rate:,.2f}"
-                         + (f" → {when}{soon}" if when else ""))
+            lines.append(
+                f"   • {esc(lot.company)}: {lot.qty:,.0f} sh bought {esc(lot.bought_on)} @ ₹{lot.rate:,.2f}"
+                + (f" → {when}{soon}" if when else "")
+            )
         lines += ["", TAX_NOTE]
     if st.trades:
         lines += ["", "🔁 <b>RECENT TRANSACTIONS</b>"]
         for t in sorted(st.trades, key=lambda t: parse_date(t.on) or date.min, reverse=True):
             if t.corporate_action:
                 way = "received" if t.side == "Buy" else "transferred out"
-                lines.append(f"   • {esc(t.on)} 🔄 {esc(t.company)}: {t.qty:,.0f} sh {way} "
-                             f"<i>({esc(t.note)}; corporate action)</i>")
+                lines.append(
+                    f"   • {esc(t.on)} 🔄 {esc(t.company)}: {t.qty:,.0f} sh {way} <i>({esc(t.note)}; corporate action)</i>"
+                )
             else:
                 lines.append(f"   • {esc(t.on)} {t.side} {esc(t.company)}: {t.qty:,.0f} @ ₹{t.rate:,.2f}")
     return "\n".join(lines) if len(lines) > 1 else ""
@@ -269,21 +306,23 @@ def run_footer(state: dict, logout: str, next_line: bool = True) -> List[str]:
                 continue
             tabs = p.get("tabs") or {}
             read = [esc(label) for label, tab in tabs.items() if tab.get("status") == "read"]
-            missed = [f"{esc(label)} ({esc(str(tab.get('status')))})" for label, tab in tabs.items()
-                      if tab.get("status") != "read"]
+            missed = [
+                f"{esc(label)} ({esc(str(tab.get('status')))})" for label, tab in tabs.items() if tab.get("status") != "read"
+            ]
             line = f"   • {title}: read" + (f" + tabs: {', '.join(read)}" if read else "")
             out.append(line + (f"; not read: {', '.join(missed)}" if missed else ""))
     blocked = state.get("blocked_list") or []
     out.append("")
     if blocked:
-        out.append(f"🛡️ <b>Guard</b> stopped {len(blocked)} request(s) the portal pages fired on their own "
-                   "(nothing you need):")
+        out.append(f"🛡️ <b>Guard</b> stopped {len(blocked)} request(s) the portal pages fired on their own (nothing you need):")
         out += [f"   • {esc(b)}" + (f" (×{n})" if n > 1 else "") for b, n in Counter(blocked).items()]
     else:
         out.append("🛡️ <b>Guard:</b> nothing needed blocking.")
     out.append(logout)
-    extra = [f"took {state['seconds']:.0f}s" if state.get("seconds") else "",
-             f"files: <code>{esc(state['run_dir'])}</code>" if state.get("run_dir") else ""]
+    extra = [
+        f"took {state['seconds']:.0f}s" if state.get("seconds") else "",
+        f"files: <code>{esc(state['run_dir'])}</code>" if state.get("run_dir") else "",
+    ]
     if any(extra):
         out.append("⏱️ " + " · ".join(x for x in extra if x))
     if next_line:

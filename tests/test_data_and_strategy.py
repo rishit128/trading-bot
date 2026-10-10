@@ -47,8 +47,7 @@ def sig(action, conf=0.8):
 
 def combine(technical, sentiment):
     """The live two-agent setup: technical leads, sentiment can only confirm or veto."""
-    return combine_signals({"technical": technical, "sentiment": sentiment},
-                           {"technical": Role.LEAD, "sentiment": Role.ADVISOR})
+    return combine_signals({"technical": technical, "sentiment": sentiment}, {"technical": Role.LEAD, "sentiment": Role.ADVISOR})
 
 
 def test_technical_hold_stays_hold():
@@ -83,6 +82,7 @@ def test_signal_rejects_bad_values():
 
 def test_snapshots_are_fetched_once_per_symbol_per_session_and_failures_are_not_cached():
     from datetime import date
+
     from src.data.indicators import Snapshot
     from src.data.market_data import cached_per_session
 

@@ -1,5 +1,6 @@
 """One portal visit with its safety stops: one run at a time, no login after a failed MPIN step, and every run's
 output in its own folder under portfolio_data/ (git-ignored: the account's data never leaves this PC)."""
+
 import json
 import logging
 import os
@@ -72,19 +73,29 @@ class RunStore:
         return self.runs / datetime.now().strftime("%Y-%m-%d_%H%M%S")
 
 
-def fetch_portfolio(creds: Credentials, get_otp: Callable[[], str], store: RunStore, headless: bool = True,
-                    base: str = PORTAL, step_timeout_s: float = 45,
-                    progress: Optional[Callable[[str], object]] = None) -> dict:
+def fetch_portfolio(
+    creds: Credentials,
+    get_otp: Callable[[], str],
+    store: RunStore,
+    headless: bool = True,
+    base: str = PORTAL,
+    step_timeout_s: float = 45,
+    progress: Optional[Callable[[str], object]] = None,
+) -> dict:
     """Log in, save the read pages, log out. Never raises: failures come back as {'error': ...}."""
     blocked_since = store.mpin_blocked()
     if blocked_since:
-        return {"error": f"not logging in: the MPIN step failed on {blocked_since} and another wrong MPIN could lock "
-                         "the account; run `python -m src.portfolio setup` with the correct MPIN", "logged_out": None}
+        return {
+            "error": f"not logging in: the MPIN step failed on {blocked_since} and another wrong MPIN could lock "
+            "the account; run `python -m src.portfolio setup` with the correct MPIN",
+            "logged_out": None,
+        }
     run_dir = store.new_run_dir()
     result: dict = {"run_dir": str(run_dir)}
     started = time.monotonic()
-    run = PortalRun(creds, get_otp, store.profile, run_dir, base=base, headless=headless, step_timeout_s=step_timeout_s,
-                    progress=progress)
+    run = PortalRun(
+        creds, get_otp, store.profile, run_dir, base=base, headless=headless, step_timeout_s=step_timeout_s, progress=progress
+    )
     try:
         with store.lock():
             try:
@@ -104,6 +115,10 @@ def fetch_portfolio(creds: Credentials, get_otp: Callable[[], str], store: RunSt
     if run.blocked:
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "blocked.json").write_text(json.dumps(blocked_report(run.blocked), indent=2))
-    result.update(blocked=len(run.blocked), logged_out=run.logged_out, seconds=round(time.monotonic() - started, 1),
-                  blocked_list=[describe(b) for b in run.blocked])
+    result.update(
+        blocked=len(run.blocked),
+        logged_out=run.logged_out,
+        seconds=round(time.monotonic() - started, 1),
+        blocked_list=[describe(b) for b in run.blocked],
+    )
     return result

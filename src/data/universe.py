@@ -1,5 +1,6 @@
 """Whole-market scanner. Stage 1 (this module) is cheap deterministic code over every listed NSE stock;
 only the few survivors go on to the (rate-limited, free) LLM agents."""
+
 import logging
 import math
 import time
@@ -22,6 +23,7 @@ MOMENTUM_BARS = 253  # bars needed for 12-1 month momentum (252 trading days bac
 @dataclass(frozen=True)
 class Candidate:
     """A stock that passed the scanner, with the numbers it was ranked on."""
+
     symbol: str
     price: float
     momentum_63d: float
@@ -42,6 +44,7 @@ class Candidate:
 @dataclass(frozen=True)
 class ScreenConfig:
     """Scanner thresholds."""
+
     max_candidates: int = 15
     min_price: float = 10.0
     min_traded_value: float = 20_000_000.0
@@ -52,8 +55,9 @@ class ScreenConfig:
     affordable_pct: Optional[float] = None
 
 
-def screen_arrays(symbol: str, close: np.ndarray, volume: np.ndarray, last_bar: pd.Timestamp, newest: pd.Timestamp,
-                  cfg: ScreenConfig) -> Optional[Candidate]:
+def screen_arrays(
+    symbol: str, close: np.ndarray, volume: np.ndarray, last_bar: pd.Timestamp, newest: pd.Timestamp, cfg: ScreenConfig
+) -> Optional[Candidate]:
     """The scanner's verdict on ONE stock from plain arrays (completed daily closes and volumes, oldest first, no NaN
     closes): a Candidate, or None. `last_bar` is the date of the newest bar; `newest` the freshest bar in the whole scan,
     to spot stocks whose data stopped.
@@ -83,8 +87,9 @@ def screen_arrays(symbol: str, close: np.ndarray, volume: np.ndarray, last_bar: 
     return Candidate(symbol, price, price / float(close[-64]) - 1, rsi, traded_value, volatility, mom_12_1)
 
 
-def screen_symbol(symbol: str, close: pd.Series, volume: pd.Series, newest: pd.Timestamp,
-                  cfg: ScreenConfig) -> Optional[Candidate]:
+def screen_symbol(
+    symbol: str, close: pd.Series, volume: pd.Series, newest: pd.Timestamp, cfg: ScreenConfig
+) -> Optional[Candidate]:
     """`screen_arrays` for one stock's Series (completed daily bars, oldest first, no NaN closes)."""
     if len(close) == 0:
         return None
@@ -113,8 +118,9 @@ def rank(candidates: Sequence[Candidate], n: int) -> List[Candidate]:
     return sorted(candidates, key=lambda c: c.score, reverse=True)[:n]
 
 
-def select_candidates(ranked: Sequence[Candidate], n: int, equity: Optional[float] = None,
-                      affordable_pct: Optional[float] = None) -> List[Candidate]:
+def select_candidates(
+    ranked: Sequence[Candidate], n: int, equity: Optional[float] = None, affordable_pct: Optional[float] = None
+) -> List[Candidate]:
     """The top n of an already-ranked list that the account can actually buy at least one share of.
 
     Shared by the live screener and the live-configuration backtest. With no equity or rule every candidate qualifies."""
@@ -141,8 +147,7 @@ DELIVERY_LOOKBACK_YEARS = 0.25  # ~3 months of files: enough for the 20-session 
 MAX_DELIVERY_AGE_DAYS = 7  # newest file older than this (calendar days) = the filter is off, not run on stale data
 
 
-def delivery_filter(as_of: date, load_delivery: Optional[Callable] = None, window: int = 20,
-                    min_days: int = 10) -> Optional[set]:
+def delivery_filter(as_of: date, load_delivery: Optional[Callable] = None, window: int = 20, min_days: int = 10) -> Optional[set]:
     """Symbols whose 20-day average NSE delivery % is above that day's cross-sectional median, or None when delivery
     data is unavailable or stale (the filter is then off for the day rather than blocking the scan). The data is the
     hand-downloaded bhavcopy files (src.data.delivery); without recent ones the filter stays off.
@@ -160,8 +165,9 @@ def delivery_filter(as_of: date, load_delivery: Optional[Callable] = None, windo
         return None
     newest = pd.Timestamp(deliv.index.max()).date()
     if (as_of - newest).days > MAX_DELIVERY_AGE_DAYS:
-        log.warning("delivery filter off today: the newest bhavcopy file is from %s, more than %d days old",
-                    newest, MAX_DELIVERY_AGE_DAYS)
+        log.warning(
+            "delivery filter off today: the newest bhavcopy file is from %s, more than %d days old", newest, MAX_DELIVERY_AGE_DAYS
+        )
         return None
     return above_median_delivery(delivery_average(deliv, window, min_days), as_of)
 
@@ -169,10 +175,17 @@ def delivery_filter(as_of: date, load_delivery: Optional[Callable] = None, windo
 class UniverseScreener:
     """Scans the full market once per day (and caches it); symbols_for() adds anything currently held."""
 
-    def __init__(self, list_symbols: Callable[[], List[str]], fetch_bars: Callable[[List[str]], pd.DataFrame],
-                 cfg: ScreenConfig, today: Callable[[], date] = lambda: datetime.now(timezone.utc).date(),
-                 chunk: int = 500, sleep: Callable[[float], None] = time.sleep, use_delivery_filter: bool = False,
-                 delivery_loader: Optional[Callable] = None):
+    def __init__(
+        self,
+        list_symbols: Callable[[], List[str]],
+        fetch_bars: Callable[[List[str]], pd.DataFrame],
+        cfg: ScreenConfig,
+        today: Callable[[], date] = lambda: datetime.now(timezone.utc).date(),
+        chunk: int = 500,
+        sleep: Callable[[float], None] = time.sleep,
+        use_delivery_filter: bool = False,
+        delivery_loader: Optional[Callable] = None,
+    ):
         self.list_symbols, self.fetch_bars, self.cfg, self.today, self.chunk = list_symbols, fetch_bars, cfg, today, chunk
         self.sleep, self.use_delivery_filter, self.delivery_loader = sleep, use_delivery_filter, delivery_loader
         self._day: Optional[date] = None
@@ -186,7 +199,7 @@ class UniverseScreener:
         log.info("screening %d symbols", len(symbols))
         passed: List[Candidate] = []
         for i in range(0, len(symbols), self.chunk):
-            passed.extend(screen_bars(self._fetch_with_retry(symbols[i:i + self.chunk]), self.cfg))
+            passed.extend(screen_bars(self._fetch_with_retry(symbols[i : i + self.chunk]), self.cfg))
         if self.use_delivery_filter:
             ok = delivery_filter(self.today(), self.delivery_loader)
             if ok is not None:
@@ -195,8 +208,11 @@ class UniverseScreener:
                 log.info("delivery filter: kept %d/%d (above the day's median 20-day delivery %%)", len(passed), before)
         self._ranked = rank(passed, len(passed))
         self._day = self.today()
-        log.info("screen: %d passed filters, best by momentum (before the affordability rule): %s", len(passed),
-                 ", ".join(c.symbol for c in self._ranked[:self.cfg.max_candidates]))
+        log.info(
+            "screen: %d passed filters, best by momentum (before the affordability rule): %s",
+            len(passed),
+            ", ".join(c.symbol for c in self._ranked[: self.cfg.max_candidates]),
+        )
         return self._ranked
 
     def candidates(self, equity: Optional[float] = None) -> List[Candidate]:
@@ -220,8 +236,12 @@ class UniverseScreener:
         picks = self.candidates(portfolio.equity)
         if self.cfg.affordable_pct is not None:
             budget = portfolio.equity * self.cfg.affordable_pct
-            skipped = [c.symbol for c in self.ranked()[:self.cfg.max_candidates] if c.price > budget]
+            skipped = [c.symbol for c in self.ranked()[: self.cfg.max_candidates] if c.price > budget]
             if skipped:
-                log.info("affordability: one share must fit in %.0f (%.0f%% of equity); skipped %s",
-                         budget, self.cfg.affordable_pct * 100, ", ".join(skipped))
+                log.info(
+                    "affordability: one share must fit in %.0f (%.0f%% of equity); skipped %s",
+                    budget,
+                    self.cfg.affordable_pct * 100,
+                    ", ".join(skipped),
+                )
         return held + [c.symbol for c in picks if c.symbol not in portfolio.positions]

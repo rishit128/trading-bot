@@ -10,6 +10,7 @@ Stop/target replay: every 5-minute bar after the buy has its full high/low exami
 too (its highs and lows so far are real prints, so a breach is not delayed) but is only marked as checked once it has
 finished, so the rest of its range is seen next time. The bar the buy happened in is never examined: it also holds
 prints from before the fill."""
+
 import logging
 import math
 import threading
@@ -22,10 +23,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 import pandas as pd
 from sqlalchemy import func, select
 
+from src.database import PaperAccountRecord, PaperPositionRecord, PaperTradeRecord
 from src.engine.costs import SLIPPAGE, india_delivery_fees
 from src.engine.enums import Action, OrderStatus
 from src.engine.ports import BAR, Fill, MarketClock, PriceFeed
-from src.database import PaperAccountRecord, PaperPositionRecord, PaperTradeRecord
 from src.engine.risk_engine import Portfolio
 
 log = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ def _newest_finished(bars: pd.DataFrame, now: datetime) -> Optional[datetime]:
 @dataclass
 class PaperBroker:
     """Simulated broker for markets with no sandbox: state kept in the database."""
+
     sessions: Callable
     feed: PriceFeed
     clock: MarketClock
@@ -125,8 +127,9 @@ class PaperBroker:
                     acct.day = today
                 acct.last_mark = equity
                 s.commit()
-                return Portfolio(cash=acct.cash, equity=equity, positions=values, position_qty=qtys,
-                                 start_of_day_equity=acct.day_start_equity)
+                return Portfolio(
+                    cash=acct.cash, equity=equity, positions=values, position_qty=qtys, start_of_day_equity=acct.day_start_equity
+                )
 
     def buy_with_bracket(self, symbol: str, qty: int, price: float, stop_pct: float, take_pct: float) -> Fill:
         """Simulated market buy with slippage and Indian costs; records the stop and target levels."""
@@ -143,9 +146,17 @@ class PaperBroker:
                 if cost > acct.cash:
                     raise ValueError(f"insufficient cash: need {cost:.2f}, have {acct.cash:.2f}")
                 acct.cash -= cost
-                s.add(PaperPositionRecord(symbol=symbol, qty=qty, avg_price=fill_price,
-                                          stop=round(price * (1 - stop_pct), 2), target=round(price * (1 + take_pct), 2),
-                                          opened_at=now, last_checked=now))
+                s.add(
+                    PaperPositionRecord(
+                        symbol=symbol,
+                        qty=qty,
+                        avg_price=fill_price,
+                        stop=round(price * (1 - stop_pct), 2),
+                        target=round(price * (1 + take_pct), 2),
+                        opened_at=now,
+                        last_checked=now,
+                    )
+                )
                 s.commit()
             return Fill(f"paper-{uuid.uuid4().hex[:12]}", OrderStatus.FILLED, qty, fill_price)
 
@@ -184,8 +195,13 @@ class PaperBroker:
             return
         today = date.fromisoformat(self.clock.today_ist(self.now_fn()))
         with self.sessions() as s:
-            held = [(p.symbol, date.fromisoformat(p.actions_through) if p.actions_through
-                     else _utc(p.opened_at).astimezone(IST).date()) for p in s.scalars(select(PaperPositionRecord))]
+            held = [
+                (
+                    p.symbol,
+                    date.fromisoformat(p.actions_through) if p.actions_through else _utc(p.opened_at).astimezone(IST).date(),
+                )
+                for p in s.scalars(select(PaperPositionRecord))
+            ]
         for symbol, through in held:
             events = self._actions_for(symbol)
             if events is None:
@@ -201,8 +217,12 @@ class PaperBroker:
                 if ratio != 1:
                     new_qty = int(pos.qty * ratio)
                     if new_qty < 1:
-                        log.warning("%s: a %.4g-for-1 consolidation leaves less than one share of %d; not modelled",
-                                    symbol, ratio, pos.qty)
+                        log.warning(
+                            "%s: a %.4g-for-1 consolidation leaves less than one share of %d; not modelled",
+                            symbol,
+                            ratio,
+                            pos.qty,
+                        )
                     else:
                         log.info("%s: split/bonus %.4g-for-1: %d -> %d shares", symbol, ratio, pos.qty, new_qty)
                         pos.avg_price = pos.qty * pos.avg_price / new_qty
@@ -227,9 +247,19 @@ class PaperBroker:
             entry_fees = self.fees(Action.BUY, qty * pos.avg_price)
             self._accrue_interest(acct)  # before the proceeds land, so they earn nothing for time they were not held
             acct.cash += proceeds - fees
-            s.add(PaperTradeRecord(symbol=symbol, qty=qty, entry_price=pos.avg_price, exit_price=price,
-                                   opened_at=pos.opened_at, closed_at=now, reason=reason, fees=fees + entry_fees,
-                                   net_pnl=(price - pos.avg_price) * qty - fees - entry_fees))
+            s.add(
+                PaperTradeRecord(
+                    symbol=symbol,
+                    qty=qty,
+                    entry_price=pos.avg_price,
+                    exit_price=price,
+                    opened_at=pos.opened_at,
+                    closed_at=now,
+                    reason=reason,
+                    fees=fees + entry_fees,
+                    net_pnl=(price - pos.avg_price) * qty - fees - entry_fees,
+                )
+            )
             if qty >= pos.qty:
                 s.delete(pos)
             else:
@@ -240,8 +270,9 @@ class PaperBroker:
         """Replay the 5-minute bars since each position was last checked to see whether its stop or target was hit."""
         now = _utc(self.now_fn())
         with self.sessions() as s:
-            positions = [(p.symbol, p.qty, p.stop, p.target, _utc(p.last_checked))
-                         for p in s.scalars(select(PaperPositionRecord))]
+            positions = [
+                (p.symbol, p.qty, p.stop, p.target, _utc(p.last_checked)) for p in s.scalars(select(PaperPositionRecord))
+            ]
         for symbol, qty, stop, target, last_checked in positions:
             try:
                 bars = self.feed.bars_since(symbol, last_checked)
@@ -288,9 +319,19 @@ class PaperBroker:
                     except Exception as e:
                         log.warning("no price for %s, showing cost: %s", p.symbol, e)
                         price = p.avg_price
-                    out.append({"symbol": p.symbol, "qty": p.qty, "avg_price": p.avg_price, "price": price,
-                                "value": p.qty * price, "pnl": p.qty * (price - p.avg_price),
-                                "pnl_pct": price / p.avg_price - 1, "stop": p.stop, "opened_at": _utc(p.opened_at)})
+                    out.append(
+                        {
+                            "symbol": p.symbol,
+                            "qty": p.qty,
+                            "avg_price": p.avg_price,
+                            "price": price,
+                            "value": p.qty * price,
+                            "pnl": p.qty * (price - p.avg_price),
+                            "pnl_pct": price / p.avg_price - 1,
+                            "stop": p.stop,
+                            "opened_at": _utc(p.opened_at),
+                        }
+                    )
                 return sorted(out, key=lambda h: h["pnl"], reverse=True)
 
     def trade_history(self, limit: Optional[int] = None) -> List[dict]:
@@ -298,9 +339,20 @@ class PaperBroker:
         with self.sessions() as s:
             query = select(PaperTradeRecord).order_by(PaperTradeRecord.closed_at.desc(), PaperTradeRecord.id.desc())
             trades = s.scalars(query.limit(limit) if limit else query).all()
-            return [{"symbol": t.symbol, "qty": t.qty, "entry_price": t.entry_price, "exit_price": t.exit_price,
-                     "opened_at": _utc(t.opened_at), "closed_at": _utc(t.closed_at), "reason": t.reason,
-                     "fees": t.fees, "net_pnl": t.net_pnl} for t in trades]
+            return [
+                {
+                    "symbol": t.symbol,
+                    "qty": t.qty,
+                    "entry_price": t.entry_price,
+                    "exit_price": t.exit_price,
+                    "opened_at": _utc(t.opened_at),
+                    "closed_at": _utc(t.closed_at),
+                    "reason": t.reason,
+                    "fees": t.fees,
+                    "net_pnl": t.net_pnl,
+                }
+                for t in trades
+            ]
 
     def summary(self) -> dict:
         """Account summary for --report: equity, return, trades, win rate, fees, exits."""
@@ -312,10 +364,15 @@ class PaperBroker:
                 fees = s.scalar(select(func.coalesce(func.sum(PaperTradeRecord.fees), 0.0)))
             wins = [t for t in trades if t.net_pnl > 0]
             return {
-                "initial_cash": acct.initial_cash, "equity": pf.equity, "cash": pf.cash,
-                "return_pct": pf.equity / acct.initial_cash - 1, "open_positions": len(pf.positions),
-                "closed_trades": len(trades), "win_rate": (len(wins) / len(trades)) if trades else None,
-                "realized_net_pnl": sum(t.net_pnl for t in trades), "fees_paid": fees,
+                "initial_cash": acct.initial_cash,
+                "equity": pf.equity,
+                "cash": pf.cash,
+                "return_pct": pf.equity / acct.initial_cash - 1,
+                "open_positions": len(pf.positions),
+                "closed_trades": len(trades),
+                "win_rate": (len(wins) / len(trades)) if trades else None,
+                "realized_net_pnl": sum(t.net_pnl for t in trades),
+                "fees_paid": fees,
                 "exits": {r: sum(1 for t in trades if t.reason == r) for r in ("STOP", "TARGET", "SIGNAL")},
                 "interest_earned": acct.interest_earned or 0.0,
                 "dividends_received": acct.dividends_received or 0.0,

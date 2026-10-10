@@ -1,4 +1,5 @@
 """The tables: the audit log (decisions, orders, equity), control flags and the paper-trading account and reserve."""
+
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -12,11 +13,13 @@ def _now() -> datetime:
 
 class Base(DeclarativeBase):
     """Declarative base for all tables."""
+
     pass
 
 
 class DecisionRecord(Base):
     """One analysed stock in one cycle: every agent's signal, the final call, the risk verdict and the inputs."""
+
     __tablename__ = "decisions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -71,6 +74,7 @@ class DecisionRecord(Base):
 
 class OrderRecord(Base):
     """An order attempt or skip, with the broker's reported fill."""
+
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -88,6 +92,7 @@ class OrderRecord(Base):
 
 class EquityRecord(Base):
     """Account equity at the start of a cycle (the source of the peak for the drawdown limit)."""
+
     __tablename__ = "equity_history"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -97,6 +102,7 @@ class EquityRecord(Base):
 
 class ControlFlag(Base):
     """A named runtime switch stored in the database."""
+
     __tablename__ = "control_flags"
 
     key: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -105,6 +111,7 @@ class ControlFlag(Base):
 
 class PaperAccountRecord(Base):
     """The simulated account's cash and daily-loss bookkeeping."""
+
     __tablename__ = "paper_account"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -122,6 +129,7 @@ class PaperAccountRecord(Base):
 
 class PaperPositionRecord(Base):
     """An open simulated position with its stop and target levels."""
+
     __tablename__ = "paper_positions"
 
     symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
@@ -137,6 +145,7 @@ class PaperPositionRecord(Base):
 
 class PaperTradeRecord(Base):
     """A closed simulated trade with fees and net P&L."""
+
     __tablename__ = "paper_trades"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -158,6 +167,7 @@ class HoldoutMark(Base):
     approved decisions through the deterministic simulator so that any tuning or learning against the
     paper account's own outcomes can never contaminate this ruler. `recorded_at` timestamps the run the
     mark was made, so the table is a point-in-time equity history of the reserve."""
+
     __tablename__ = "holdout_marks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -173,13 +183,16 @@ class OutcomeRecord(Base):
     """What a stock actually did after the bot analysed it: the forward result of entering at the next session's open and
     holding `horizon` sessions. One row per (stock, analysed session, horizon), whether or not the bot traded it; this is
     what turns hundreds of decisions a week into lessons, instead of the ~20 closed trades a year a trend strategy makes."""
+
     __tablename__ = "decision_outcomes"
 
     symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
     bar_date: Mapped[str] = mapped_column(String(10), primary_key=True)  # the analysed session (YYYY-MM-DD)
     horizon: Mapped[int] = mapped_column(Integer, primary_key=True)  # sessions held after entry
     entry_date: Mapped[str] = mapped_column(String(10))  # the session whose open is the assumed entry
-    exit_date: Mapped[str] = mapped_column(String(10), default="")  # the session whose close ends the hold ("" only on legacy rows)
+    exit_date: Mapped[str] = mapped_column(
+        String(10), default=""
+    )  # the session whose close ends the hold ("" only on legacy rows)
     entry_price: Mapped[float] = mapped_column(Float)
     exit_price: Mapped[float] = mapped_column(Float)  # the close `horizon` sessions after the analysed one
     gross_return: Mapped[float] = mapped_column(Float)  # exit / entry - 1, before costs
@@ -192,6 +205,7 @@ class OutcomeRecord(Base):
 class IntradaySignalRecord(Base):
     """Every opening-range breakout the intraday engine saw, and what it did with it (entered, skipped and why, dry run).
     Without this a skipped signal left no trace, and the engine could not be audited or its misses counted."""
+
     __tablename__ = "intraday_signals"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -215,6 +229,7 @@ class IntradaySignalRecord(Base):
 class IntradayUniverseRecord(Base):
     """The stocks the intraday engine scanned on a day and where the list came from, so a result can always be tied to the
     universe it was earned on (a live list and a backtest list that differ make the two incomparable)."""
+
     __tablename__ = "intraday_universe"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -230,6 +245,7 @@ class IntradayBarRecord(Base):
     """One stored 5-minute bar. Yahoo serves only the last ~60 sessions of 5-minute data, so the intraday engine saves every
     finished session here: the archive grows a session a day and is the only way to test an intraday rule on more than
     two months of history. One row per (symbol, bar start); `day` is the IST session date, for cheap per-day queries."""
+
     __tablename__ = "intraday_bars"
 
     symbol: Mapped[str] = mapped_column(String(16), primary_key=True)

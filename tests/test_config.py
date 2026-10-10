@@ -7,17 +7,20 @@ def test_defaults_are_valid():
     RiskLimits()
 
 
-@pytest.mark.parametrize("kwargs", [
-    dict(max_position_pct=5),  # someone typed 5 meaning 5%
-    dict(max_position_pct=0),
-    dict(max_portfolio_exposure_pct=1.5),
-    dict(max_daily_loss_pct=-0.01),
-    dict(max_drawdown_pct=2),
-    dict(stop_loss_pct=0),
-    dict(take_profit_pct=0),
-    dict(min_confidence=1.5),
-    dict(max_position_pct=0.9, max_portfolio_exposure_pct=0.5),
-])
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        dict(max_position_pct=5),  # someone typed 5 meaning 5%
+        dict(max_position_pct=0),
+        dict(max_portfolio_exposure_pct=1.5),
+        dict(max_daily_loss_pct=-0.01),
+        dict(max_drawdown_pct=2),
+        dict(stop_loss_pct=0),
+        dict(take_profit_pct=0),
+        dict(min_confidence=1.5),
+        dict(max_position_pct=0.9, max_portfolio_exposure_pct=0.5),
+    ],
+)
 def test_invalid_limits_are_rejected(kwargs):
     with pytest.raises(ValueError):
         RiskLimits(**kwargs)
@@ -68,14 +71,24 @@ def test_universe_settings_from_env(monkeypatch):
     monkeypatch.setenv("MIN_TRADED_VALUE", "50000000")
     monkeypatch.setenv("MAX_DAILY_VOLATILITY", "0.03")
     s = load_settings()
-    assert (s.universe, s.max_candidates, s.min_price, s.min_traded_value, s.max_daily_volatility) == \
-        ("watchlist", 5, 20.0, 50_000_000.0, 0.03)
+    assert (s.universe, s.max_candidates, s.min_price, s.min_traded_value, s.max_daily_volatility) == (
+        "watchlist",
+        5,
+        20.0,
+        50_000_000.0,
+        0.03,
+    )
 
 
-@pytest.mark.parametrize("name,value", [
-    ("UNIVERSE", "everything"), ("MAX_CANDIDATES", "0"),
-    ("MIN_PRICE", "-1"), ("MAX_DAILY_VOLATILITY", "4"),
-])
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("UNIVERSE", "everything"),
+        ("MAX_CANDIDATES", "0"),
+        ("MIN_PRICE", "-1"),
+        ("MAX_DAILY_VOLATILITY", "4"),
+    ],
+)
 def test_invalid_universe_settings_are_rejected(monkeypatch, name, value):
     monkeypatch.setenv(name, value)
     with pytest.raises(ValueError):
@@ -150,10 +163,15 @@ def test_intraday_settings_are_read_from_the_environment(monkeypatch):
     assert s.intraday_universe == ("RELIANCE", "TCS", "INFY")
 
 
-@pytest.mark.parametrize("name,value", [
-    ("INTRADAY_RISK_PCT", "0"), ("INTRADAY_RISK_PCT", "5"),            # 5 meaning 5%
-    ("INTRADAY_MAX_POSITION_PCT", "20"), ("INTRADAY_MAX_POSITIONS", "0"),
-])
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("INTRADAY_RISK_PCT", "0"),
+        ("INTRADAY_RISK_PCT", "5"),  # 5 meaning 5%
+        ("INTRADAY_MAX_POSITION_PCT", "20"),
+        ("INTRADAY_MAX_POSITIONS", "0"),
+    ],
+)
 def test_bad_intraday_settings_refuse_to_start(monkeypatch, name, value):
     monkeypatch.setenv(name, value)
     with pytest.raises(ValueError):

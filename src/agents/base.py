@@ -4,12 +4,13 @@ An agent has a unique `name` and a `role`:
   * LEAD    - proposes the trade. All lead agents must agree on a direction or the bot stands down.
   * ADVISOR - can only confirm (raising confidence) or veto (opposing a lead). Neutral/absent advisors are ignored.
 `analyze` returns a AgentSignal, or None when the agent has nothing to say (e.g. no news)."""
+
 from dataclasses import dataclass
 from typing import Callable, Optional, Protocol
 
 from src.data.indicators import Snapshot
-from src.engine.enums import Action, Role
 from src.engine.agent_signal import AgentSignal
+from src.engine.enums import Action, Role
 
 LEAD = Role.LEAD  # short names for the two roles, as the agents declare them
 ADVISOR = Role.ADVISOR
@@ -24,6 +25,7 @@ def fail_safe_hold(reason: str) -> AgentSignal:
 @dataclass(frozen=True)
 class AgentContext:
     """What an agent is given: the symbol and its indicator snapshot."""
+
     symbol: str
     snapshot: Snapshot
     # Lazy market context (index regime / VIX / relative strength); None when it is unavailable or not wired up.
@@ -34,6 +36,7 @@ class AgentContext:
 
 class Agent(Protocol):
     """Contract for any agent: a unique name, a role (lead or advisor) and analyze(ctx)."""
+
     name: str
     role: Role
 

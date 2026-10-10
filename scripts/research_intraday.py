@@ -5,6 +5,7 @@ src/research/intraday_hypotheses.py BEFORE any result was seen. If nothing quali
 Read-only. Fill the archive first (scripts/intraday_archive.py); rerun as it grows: a longer archive can detect smaller edges.
 
     python scripts/research_intraday.py [--seeds 5]"""
+
 import argparse
 import sys
 from pathlib import Path
@@ -24,9 +25,11 @@ def main():
     if not bars:
         sys.exit("the archive is empty: run scripts/intraday_archive.py refresh (or import-cache)")
     days = stock_days(bars)
-    print(f"{len(days)} stock-sessions, {len(bars)} stocks, {min(d.date for d in days)}..{max(d.date for d in days)}; "
-          f"criteria: >= {hyp.MIN_TRADES} trades, net t >= {hyp.T_BAR}, both halves > 0, 2x slippage > 0, "
-          f"beats the null (t >= {hyp.T_BAR})\n")
+    print(
+        f"{len(days)} stock-sessions, {len(bars)} stocks, {min(d.date for d in days)}..{max(d.date for d in days)}; "
+        f"criteria: >= {hyp.MIN_TRADES} trades, net t >= {hyp.T_BAR}, both halves > 0, 2x slippage > 0, "
+        f"beats the null (t >= {hyp.T_BAR})\n"
+    )
     for h in [hyp.CONTROL] + hyp.HYPOTHESES:
         print(f"{h.name}: {h.idea}")
     print()

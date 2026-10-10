@@ -1,5 +1,6 @@
 """The workflow graphs depend on `CycleServices`, not on `TradingPipeline`. These tests run the real graphs against a small
 fake, prove the pipeline satisfies the interface, and stop private access from creeping back in."""
+
 import inspect
 import re
 from pathlib import Path
@@ -7,14 +8,14 @@ from types import SimpleNamespace
 
 from src.agents.base import ADVISOR, LEAD
 from src.data.indicators import BarNotReadyError, Snapshot
+from src.engine.agent_signal import AgentSignal
 from src.engine.enums import Action
 from src.engine.risk_engine import Portfolio, RiskDecision
-from src.engine.agent_signal import AgentSignal
 from src.engine.strategy import Decision
 from src.pipeline import TradingPipeline
 from src.results import Verdict
-from tests.test_llm_and_pipeline import make_pipeline
 from src.workflow import CycleServices, build_analysis_graph, build_cycle_graph, build_decision_graph
+from tests.test_llm_and_pipeline import make_pipeline
 
 
 class FakeServices:
@@ -59,7 +60,9 @@ class FakeServices:
     def decide(self, symbol, portfolio, snapshot, signals, universe_size=None):
         self.calls.append(("decide", symbol, universe_size))
         ok = symbol in self.approve
-        return Verdict(Decision(Action.BUY, 0.9, "r"), RiskDecision(ok, 5 if ok else 0, "ok" if ok else "no"), 100.0, len(self.calls))
+        return Verdict(
+            Decision(Action.BUY, 0.9, "r"), RiskDecision(ok, 5 if ok else 0, "ok" if ok else "no"), 100.0, len(self.calls)
+        )
 
     def place(self, symbol, verdict):
         self.calls.append(("place", symbol, verdict.risk.quantity))
@@ -91,7 +94,11 @@ def kinds(services, name):
 def test_the_cycle_runs_on_a_fake_with_no_pipeline_at_all():
     services = FakeServices(["AAA", "BBB", "CCC"], approve={"AAA", "CCC"})
     results = run_cycle(services)
-    assert [(r.symbol, r.action, r.order_status) for r in results] == [("AAA", "BUY", "filled"), ("BBB", "BUY", None), ("CCC", "BUY", "filled")]
+    assert [(r.symbol, r.action, r.order_status) for r in results] == [
+        ("AAA", "BUY", "filled"),
+        ("BBB", "BUY", None),
+        ("CCC", "BUY", "filled"),
+    ]
     assert services.calls[0] == ("open_cycle",) and services.calls[1] == ("select_symbols",)
     assert services.calls[-1] == ("close_cycle",) and [c for c in services.calls if c[0] == "close_cycle"] == [("close_cycle",)]
     assert [c[1] for c in services.calls if c[0] == "decide"] == ["AAA", "BBB", "CCC"]  # decided one at a time, in universe order
@@ -113,7 +120,9 @@ def test_a_stock_that_fails_becomes_an_error_result_and_an_alert_without_stoppin
     services = FakeServices(["AAA", "BAD", "CCC"], approve={"AAA", "CCC"}, broken={"BAD"})
     results = run_cycle(services)
     assert [(r.symbol, r.action) for r in results] == [("AAA", "BUY"), ("BAD", "ERROR"), ("CCC", "BUY")]
-    assert results[1].error == "ValueError: BAD: no data" and services.alerts == ["ERROR processing BAD: ValueError: BAD: no data"]
+    assert results[1].error == "ValueError: BAD: no data" and services.alerts == [
+        "ERROR processing BAD: ValueError: BAD: no data"
+    ]
     assert "BAD" not in [c[1] for c in services.calls if c[0] == "decide"]  # nothing was decided for it
 
 
@@ -149,8 +158,21 @@ def test_an_empty_universe_still_opens_and_closes_the_cycle():
 
 def test_the_trading_pipeline_implements_every_member_of_the_interface(tmp_path):
     members = {name for name, _ in inspect.getmembers(CycleServices) if not name.startswith("_")}
-    assert {"agents", "settings", "snapshot", "remembered_signals", "agent_context", "open_cycle", "select_symbols", "decide", "place",
-            "refresh_portfolio", "note_lead_health", "close_cycle", "notify"} <= members
+    assert {
+        "agents",
+        "settings",
+        "snapshot",
+        "remembered_signals",
+        "agent_context",
+        "open_cycle",
+        "select_symbols",
+        "decide",
+        "place",
+        "refresh_portfolio",
+        "note_lead_health",
+        "close_cycle",
+        "notify",
+    } <= members
     instance = make_pipeline(tmp_path)[0]
     for name in members:
         assert hasattr(instance, name), f"TradingPipeline is missing the public member {name}"

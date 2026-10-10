@@ -1,4 +1,5 @@
 """Per-stock market data and news fetching (Yahoo Finance)."""
+
 import logging
 import threading
 from datetime import date, time
@@ -8,8 +9,8 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import yfinance as yf
 
-from src.data.retry import retry_call
 from src.data.indicators import MAX_STALE_DAYS, BarNotReadyError, Snapshot, StaleDataError, build_snapshot
+from src.data.retry import retry_call
 
 log = logging.getLogger(__name__)
 
@@ -32,15 +33,27 @@ def session_bar_from_intraday(bars: Optional[pd.DataFrame], day: date) -> Option
     session, times = bars[mask], local[mask]
     if len(session) < MIN_SESSION_BARS or times.max().time() < LAST_BAR_START:
         return None
-    return pd.DataFrame({"Open": [float(session["Open"].iloc[0])], "High": [float(session["High"].max())],
-                         "Low": [float(session["Low"].min())], "Close": [float(session["Close"].iloc[-1])],
-                         "Volume": [float(session["Volume"].sum())]}, index=pd.DatetimeIndex([pd.Timestamp(day)]))
+    return pd.DataFrame(
+        {
+            "Open": [float(session["Open"].iloc[0])],
+            "High": [float(session["High"].max())],
+            "Low": [float(session["Low"].min())],
+            "Close": [float(session["Close"].iloc[-1])],
+            "Volume": [float(session["Volume"].sum())],
+        },
+        index=pd.DatetimeIndex([pd.Timestamp(day)]),
+    )
 
 
-def fetch_snapshot(symbol: str, suffix: str = "", as_of: Optional[Callable[[], date]] = None,
-                   download: Callable = yf.download, timeout: float = 30.0,
-                   today: Callable[[], date] = date.today,
-                   intraday: Optional[Callable[[str], Optional[pd.DataFrame]]] = None) -> Snapshot:
+def fetch_snapshot(
+    symbol: str,
+    suffix: str = "",
+    as_of: Optional[Callable[[], date]] = None,
+    download: Callable = yf.download,
+    timeout: float = 30.0,
+    today: Callable[[], date] = date.today,
+    intraday: Optional[Callable[[str], Optional[pd.DataFrame]]] = None,
+) -> Snapshot:
     """suffix is the Yahoo exchange suffix, e.g. '.NS' for NSE; the snapshot keeps the plain symbol.
 
     as_of returns the last COMPLETED session date; later (still-forming) bars are dropped, so the indicators - and the
@@ -59,7 +72,9 @@ def fetch_snapshot(symbol: str, suffix: str = "", as_of: Optional[Callable[[], d
     snap = build_snapshot(symbol, bars)
     expected = as_of() if as_of is not None else today()
     if snap.bar_date is not None and (expected - date.fromisoformat(snap.bar_date)).days > MAX_STALE_DAYS:
-        raise StaleDataError(f"{symbol}: last bar {snap.bar_date} is more than {MAX_STALE_DAYS} days before {expected} (suspended?)")
+        raise StaleDataError(
+            f"{symbol}: last bar {snap.bar_date} is more than {MAX_STALE_DAYS} days before {expected} (suspended?)"
+        )
     if snap.volume <= 0:
         raise StaleDataError(f"{symbol}: last bar {snap.bar_date} shows zero volume (no trading)")
     if as_of is not None and snap.bar_date is not None and date.fromisoformat(snap.bar_date) < expected:
@@ -75,7 +90,6 @@ def fetch_snapshot(symbol: str, suffix: str = "", as_of: Optional[Callable[[], d
             completed.index = pd.DatetimeIndex(completed.index).tz_localize(bars.index.tz)
         snap = build_snapshot(symbol, pd.concat([bars, completed]))
     return snap
-
 
 
 def cached_per_session(fetch: Callable[[str], Snapshot], session: Callable[[], date]) -> Callable[[str], Snapshot]:
@@ -103,12 +117,14 @@ def cached_per_session(fetch: Callable[[str], Snapshot], session: Callable[[], d
     return get
 
 
-def fetch_daily_bars(symbol: str, suffix: str = "", download: Callable = yf.download, period: str = "2y",
-                     timeout: float = 30.0) -> Optional[pd.DataFrame]:
+def fetch_daily_bars(
+    symbol: str, suffix: str = "", download: Callable = yf.download, period: str = "2y", timeout: float = 30.0
+) -> Optional[pd.DataFrame]:
     """A stock's daily Open/High/Low/Close (adjusted, oldest first), or None when Yahoo has nothing for it.
 
     Used to label what happened AFTER a decision, so unlike the analysis snapshot it deliberately includes the newest
     completed bars. A transient failure is retried; a definite empty answer is not."""
+
     def fetch() -> pd.DataFrame:
         return download(symbol + suffix, period=period, interval="1d", progress=False, auto_adjust=True, timeout=timeout)
 

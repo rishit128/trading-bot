@@ -5,17 +5,18 @@ Invariants pinned here so a regression that opens a position without its bracket
     always fills at or below the stop and a TARGET exit at or above the target - across a sweep of random series;
   * paper broker: every buy writes a position row whose stop level sits below the fill and whose target sits above,
     so no position can exist without its stop."""
+
 from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from src.research.backtest import Result, simulate
 from src.config import RiskLimits
 from src.database import make_session_factory
-from src.engine.paper_broker import PaperBroker
 from src.engine.costs import india_delivery_fees
+from src.engine.paper_broker import PaperBroker
+from src.research.backtest import Result, simulate
 
 LIMITS = RiskLimits(stop_loss_pct=0.08)  # these tests pin exit mechanics at a fixed 8% level, not the default
 
@@ -24,9 +25,10 @@ def _walk(seed, n=400):
     rng = np.random.default_rng(seed)
     close = 100.0 * (rng.normal(0.0005, 0.02, n) + 1).cumprod()  # 2% daily vol: the trend rule fires often
     idx = pd.date_range("2022-01-03", periods=n, freq="B")
-    return pd.DataFrame({"Open": [100.0] + list(close[:-1]), "High": close * 1.01, "Low": close * 0.99,
-                         "Close": close, "Volume": 10_000},
-                        index=idx)
+    return pd.DataFrame(
+        {"Open": [100.0] + list(close[:-1]), "High": close * 1.01, "Low": close * 0.99, "Close": close, "Volume": 10_000},
+        index=idx,
+    )
 
 
 def _scheduled_signals(index, every=6, sell_from=208):
@@ -48,8 +50,14 @@ def test_every_trade_in_a_noisy_sweep_remembers_its_bracket():
     all_trades = []
     for seed in (1, 7, 99):
         bars = {"A": _walk(seed)}
-        res: Result = simulate(bars, {"A": _scheduled_signals(bars["A"].index)}, LIMITS, start_equity=100_000,
-                               fees=india_delivery_fees, slippage=0.0005)
+        res: Result = simulate(
+            bars,
+            {"A": _scheduled_signals(bars["A"].index)},
+            LIMITS,
+            start_equity=100_000,
+            fees=india_delivery_fees,
+            slippage=0.0005,
+        )
         for t in res.trades:
             assert t.stop is not None and t.target is not None, f"seed {seed}: {t} was opened without a bracket!"
             assert t.stop < t.target
@@ -63,9 +71,12 @@ def test_every_trade_in_a_noisy_sweep_remembers_its_bracket():
 
 def test_a_gap_through_the_stop_fills_at_the_bar_open():
     dt = pd.to_datetime(["2024-01-02", "2024-01-03"])
-    bars = {"A": pd.DataFrame(
-        {"Open": [100.0, 88.0], "High": [100.0, 90.0], "Low": [100.0, 87.0], "Close": [100.5, 89.0], "Volume": [1] * 2},
-        index=dt)}
+    bars = {
+        "A": pd.DataFrame(
+            {"Open": [100.0, 88.0], "High": [100.0, 90.0], "Low": [100.0, 87.0], "Close": [100.5, 89.0], "Volume": [1] * 2},
+            index=dt,
+        )
+    }
     signals = {"A": {pd.Timestamp("2024-01-02"): ("BUY", 0.9)}}
     res: Result = simulate(bars, signals, LIMITS, start_equity=100_000, fees=india_delivery_fees, slippage=0.0005)
     assert len(res.trades) == 1 and res.trades[0].reason == "STOP"
@@ -75,9 +86,12 @@ def test_a_gap_through_the_stop_fills_at_the_bar_open():
 
 def test_an_intraday_cross_of_the_stop_fills_at_the_level():
     dt = pd.to_datetime(["2024-01-02", "2024-01-03"])
-    bars = {"A": pd.DataFrame(
-        {"Open": [100.0, 95.0], "High": [100.0, 96.0], "Low": [100.0, 91.0], "Close": [100.5, 92.0], "Volume": [1] * 2},
-        index=dt)}
+    bars = {
+        "A": pd.DataFrame(
+            {"Open": [100.0, 95.0], "High": [100.0, 96.0], "Low": [100.0, 91.0], "Close": [100.5, 92.0], "Volume": [1] * 2},
+            index=dt,
+        )
+    }
     signals = {"A": {pd.Timestamp("2024-01-02"): ("BUY", 0.9)}}
     res: Result = simulate(bars, signals, LIMITS, start_equity=100_000, fees=india_delivery_fees, slippage=0.0005)
     assert res.trades[0].reason == "STOP"
@@ -86,9 +100,12 @@ def test_an_intraday_cross_of_the_stop_fills_at_the_level():
 
 def test_a_gap_through_the_target_fills_at_the_bar_open():
     dt = pd.to_datetime(["2024-01-02", "2024-01-03"])
-    bars = {"A": pd.DataFrame(
-        {"Open": [100.0, 210.0], "High": [100.0, 211.0], "Low": [100.0, 209.0], "Close": [100.5, 210.0], "Volume": [1] * 2},
-        index=dt)}
+    bars = {
+        "A": pd.DataFrame(
+            {"Open": [100.0, 210.0], "High": [100.0, 211.0], "Low": [100.0, 209.0], "Close": [100.5, 210.0], "Volume": [1] * 2},
+            index=dt,
+        )
+    }
     signals = {"A": {pd.Timestamp("2024-01-02"): ("BUY", 0.9)}}
     res: Result = simulate(bars, signals, LIMITS, start_equity=100_000, fees=india_delivery_fees, slippage=0.0005)
     assert res.trades[0].reason == "TARGET"
@@ -112,8 +129,7 @@ def test_the_paper_buy_always_writes_a_position_with_its_stop_level(tmp_path):
             return "2024-01-03"
 
     sessions = make_session_factory(f"sqlite:///{tmp_path / 's.db'}")
-    broker = PaperBroker(sessions, Feed(), Clock(),
-                         now_fn=lambda: datetime(2024, 1, 3, 12, 0, tzinfo=timezone.utc))
+    broker = PaperBroker(sessions, Feed(), Clock(), now_fn=lambda: datetime(2024, 1, 3, 12, 0, tzinfo=timezone.utc))
     broker.buy_with_bracket("A", 100, 100.5, LIMITS.stop_loss_pct, LIMITS.take_profit_pct)
     holdings = broker.holdings()
     assert len(holdings) == 1 and holdings[0]["qty"] == 100

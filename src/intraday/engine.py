@@ -9,11 +9,13 @@ next session's first cycle: this account is meant to be flat every night. With a
 
 The rule is pluggable (`find_setup`): the opening-range breakout by default, or gap-and-go (`strategy.find_gap_setup`),
 each in its own paper account and database, run side by side by `run_together`."""
+
 import json
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, time as dtime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
+from datetime import time as dtime
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
@@ -34,6 +36,7 @@ ARCHIVE_FROM = dtime(15, 35)  # the session's last bar (15:25-15:30) is publishe
 @dataclass
 class IntradayEngine:
     """One engine per intraday paper account. `broker` is a PaperBroker on its own database with intraday fees."""
+
     broker: PaperBroker
     universe: List[str]
     clock: MarketClock
@@ -70,8 +73,15 @@ class IntradayEngine:
             if t["closed_at"].astimezone(IST).date().isoformat() == today:
                 self._done_today.add(t["symbol"])
         if self.universe_source:
-            self._store(IntradayUniverseRecord(day=today, source=self.universe_source, size=len(self.universe),
-                                               symbols_json=json.dumps(self.universe), system_version=self.version))
+            self._store(
+                IntradayUniverseRecord(
+                    day=today,
+                    source=self.universe_source,
+                    size=len(self.universe),
+                    symbols_json=json.dumps(self.universe),
+                    system_version=self.version,
+                )
+            )
 
     def _store(self, row) -> None:
         """Save an audit row. A failure here is logged and never stops trading."""
@@ -83,11 +93,24 @@ class IntradayEngine:
             log.exception("could not record %s", type(row).__name__)
 
     def _record(self, setup: st.Setup, outcome: SignalOutcome, qty: int = 0, reason: Optional[str] = None) -> None:
-        self._store(IntradaySignalRecord(
-            day=self._day or "", symbol=setup.symbol, bar_time=setup.bar_time.isoformat(), signal_price=setup.signal_price,
-            stop=setup.stop, target=setup.target, range_high=setup.range_high, range_low=setup.range_low,
-            volume_ratio=setup.volume_ratio, strength=setup.strength, outcome=outcome, qty=qty, reason=reason,
-            system_version=self.version))
+        self._store(
+            IntradaySignalRecord(
+                day=self._day or "",
+                symbol=setup.symbol,
+                bar_time=setup.bar_time.isoformat(),
+                signal_price=setup.signal_price,
+                stop=setup.stop,
+                target=setup.target,
+                range_high=setup.range_high,
+                range_low=setup.range_low,
+                volume_ratio=setup.volume_ratio,
+                strength=setup.strength,
+                outcome=outcome,
+                qty=qty,
+                reason=reason,
+                system_version=self.version,
+            )
+        )
 
     def step(self) -> str:
         """One 5-minute cycle. Returns a short status string (useful in tests and logs)."""
@@ -107,7 +130,9 @@ class IntradayEngine:
             return self._square_off(pf)
         if local.time() < st.ENTRY_FROM:
             return "waiting for the opening range"
-        if local >= datetime.combine(local.date(), self.entry_until, IST) + BAR:  # the last allowed bar has finished and been seen
+        if (
+            local >= datetime.combine(local.date(), self.entry_until, IST) + BAR
+        ):  # the last allowed bar has finished and been seen
             return "entry window closed: managing open positions only"
         day_start_equity = pf.start_of_day_equity or pf.equity
         if pf.equity < day_start_equity * (1 - self.max_daily_loss_pct):
@@ -155,17 +180,23 @@ class IntradayEngine:
             log.info("intraday SKIP %s at %.2f: %s", setup.symbol, setup.signal_price, why)
             self._record(setup, SignalOutcome.SKIPPED, 0, why)
             return SignalOutcome.SKIPPED, None
-        exit_plan = (f"target {setup.target:,.2f}" if setup.target < setup.signal_price * (1 + st.NO_TARGET)
-                     else "held to the 15:15 square-off")
-        text = (f"BUY {setup.symbol} x{qty} breakout above {setup.range_high:,.2f}; stop {setup.stop:,.2f}, "
-                f"{exit_plan}, volume {setup.volume_ratio:.1f}x average")
+        exit_plan = (
+            f"target {setup.target:,.2f}"
+            if setup.target < setup.signal_price * (1 + st.NO_TARGET)
+            else "held to the 15:15 square-off"
+        )
+        text = (
+            f"BUY {setup.symbol} x{qty} breakout above {setup.range_high:,.2f}; stop {setup.stop:,.2f}, "
+            f"{exit_plan}, volume {setup.volume_ratio:.1f}x average"
+        )
         if not self.live:
             self._say("DRY RUN signal: " + text)
             self._record(setup, SignalOutcome.DRY_RUN, qty)
             return SignalOutcome.DRY_RUN, None
         try:
-            fill = self.broker.buy_with_bracket(setup.symbol, qty, setup.signal_price,
-                                                1 - setup.stop / setup.signal_price, setup.target / setup.signal_price - 1)
+            fill = self.broker.buy_with_bracket(
+                setup.symbol, qty, setup.signal_price, 1 - setup.stop / setup.signal_price, setup.target / setup.signal_price - 1
+            )
         except Exception as e:
             log.warning("intraday buy %s failed: %s", setup.symbol, e)
             self._record(setup, SignalOutcome.FAILED, qty, str(e))

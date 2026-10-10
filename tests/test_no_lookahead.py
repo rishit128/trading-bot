@@ -5,13 +5,14 @@ Two layers are pinned:
      causally (rolling/ewm references) on the full series and read at position t;
   2. the portfolio backtest (`simulate`) fills BUY at the next day's open, never at the decision-day price,
      so a gap between the two is not borrowed from the future."""
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from src.research.backtest import simulate
 from src.config import RiskLimits
 from src.data.indicators import build_snapshot
+from src.research.backtest import simulate
 
 
 def _ohlcv(closes, start="2020-01-02"):

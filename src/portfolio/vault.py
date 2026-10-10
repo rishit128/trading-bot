@@ -8,6 +8,7 @@ git, prompts or Telegram. Two backends, chosen by `PORTFOLIO_SECRET_BACKEND` (de
   `secretsmanager:GetSecretValue`, `PutSecretValue`, `CreateSecret`, `DeleteSecret` on that one secret.
 
 (The OTP still comes through the trading bot's own Telegram bot, configured in .env, on both backends.)"""
+
 import json
 import os
 import re
@@ -42,8 +43,7 @@ class Credentials:
 
 def problems(values: Dict[str, str]) -> List[str]:
     """What is wrong with each field, as '<field>: expected <format>'; empty when all are valid. Values are never echoed."""
-    return [f"{name}: expected {hint}" for name, (pattern, hint) in RULES.items()
-            if not pattern.fullmatch(values.get(name, ""))]
+    return [f"{name}: expected {hint}" for name, (pattern, hint) in RULES.items() if not pattern.fullmatch(values.get(name, ""))]
 
 
 def backend_name() -> str:
@@ -112,8 +112,9 @@ class _AwsSecretsBackend:
         try:
             client.put_secret_value(SecretId=self.name, SecretString=payload)
         except client.exceptions.ResourceNotFoundException:
-            client.create_secret(Name=self.name, SecretString=payload,
-                                 Description="Integrated India login for the read-only portfolio agent")
+            client.create_secret(
+                Name=self.name, SecretString=payload, Description="Integrated India login for the read-only portfolio agent"
+            )
 
     def load(self) -> Dict[str, str]:
         client = self._client()

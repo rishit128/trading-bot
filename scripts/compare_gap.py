@@ -4,6 +4,7 @@ how much of each account was used, from the two paper accounts (see src/research
     python scripts/compare_gap.py
     python scripts/compare_gap.py --gapgo-database-url sqlite:///gapgo.db --gaponly-database-url sqlite:///gaponly.db
 On the server: sudo docker compose -f docker-compose.aws.yml exec intraday-bot python scripts/compare_gap.py"""
+
 import argparse
 import sys
 from pathlib import Path
@@ -36,8 +37,13 @@ def main():
     args = ap.parse_args()
     go_trades, go_cash, go_signals = account(settings, args.gapgo_database_url)
     only_trades, only_cash, only_signals = account(settings, args.gaponly_database_url)
-    result = compare(go_trades, only_trades, go_cash, only_cash,
-                     capped={"gap-and-go": capped_signals(go_signals), "gap-only": capped_signals(only_signals)})
+    result = compare(
+        go_trades,
+        only_trades,
+        go_cash,
+        only_cash,
+        capped={"gap-and-go": capped_signals(go_signals), "gap-only": capped_signals(only_signals)},
+    )
     print(format_comparison(result, settings.currency))
 
 

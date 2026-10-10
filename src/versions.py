@@ -8,7 +8,9 @@ can answer "why did behaviour change on that date" by comparing stamps instead o
 FEATURE_VERSION = "indicators-v4"  # v3 + 12-1 month momentum (the scanner's ranking signal) in the snapshot
 PROMPT_VERSION = "technical-v10"  # one analysis with company fundamentals + market situation; follow the filter unless a concrete company reason
 SCHEMA_VERSION = "signal-v1"  # the llm.SIGNAL_SCHEMA output contract, frozen for replay compatibility
-STRATEGY_VERSION = "swing-v1"  # mechanical BUY filter + trend exit + 15% protective stop, sized and gated by the risk engine, paper broker
+STRATEGY_VERSION = (
+    "swing-v1"  # mechanical BUY filter + trend exit + 15% protective stop, sized and gated by the risk engine, paper broker
+)
 
 # The intraday engine (a separate paper account). Recorded with every signal so results can be split by system version.
 #   orb-v1: sizing borrowed from the swing settings (5% of equity), stop/target replay dropped each bar's tail, no record

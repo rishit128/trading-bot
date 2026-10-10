@@ -4,6 +4,7 @@ The portal sends every call as a POST, mostly to a few generic endpoints ("Commo
 App-Action-Name / App-Process-Name headers, so the guard checks the URL *and* those header values. Anything that looks
 like a transaction is aborted before it leaves the browser. Over-blocking a read only loses that piece of data (and it
 shows up in the run's report); under-blocking could move money, so the word list errs wide."""
+
 import re
 from dataclasses import dataclass
 from typing import Dict, Optional
@@ -12,13 +13,24 @@ from urllib.parse import urlsplit
 WRITE_WORDS = re.compile(
     r"order|buy|sell|payout|withdraw|pledge|transfer|payment|paygateway|redeem|purchase|mandate|addfund|sip|bid|apply"
     r"|switch|cancel|modify|delete|remove|update|insert|save|submit|register|credential|changempin|resetmpin|feedback",
-    re.I)
+    re.I,
+)
 # The login and logout calls themselves (they authenticate; none of them can trade or move money).
-AUTH_PATHS = frozenset(p.lower() for p in (
-    "/CIAMS/api/v1/TwoFA/init", "/CIAMS/api/v1/TwoFA/coidverify", "/CIAMS/api/v1/TwoFA/Verify",
-    "/CIAMS/api/v1/TwoFA/coidlogin", "/CIAMS/api/v1/SSAuth/InitCustomer", "/CIAMS/api/v1/SSAuth/login",
-    "/CIAMS/api/v1/SSAuth/logout", "/CIAMS/api/v1/Device/feature", "/CIAMS/api/v1/UserManagement/isvalidsession",
-    "/StateManager/api/v1/State"))
+AUTH_PATHS = frozenset(
+    p.lower()
+    for p in (
+        "/CIAMS/api/v1/TwoFA/init",
+        "/CIAMS/api/v1/TwoFA/coidverify",
+        "/CIAMS/api/v1/TwoFA/Verify",
+        "/CIAMS/api/v1/TwoFA/coidlogin",
+        "/CIAMS/api/v1/SSAuth/InitCustomer",
+        "/CIAMS/api/v1/SSAuth/login",
+        "/CIAMS/api/v1/SSAuth/logout",
+        "/CIAMS/api/v1/Device/feature",
+        "/CIAMS/api/v1/UserManagement/isvalidsession",
+        "/StateManager/api/v1/State",
+    )
+)
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 FIRST_PARTY = ("integrated.investments", "integratedindia.in")
 

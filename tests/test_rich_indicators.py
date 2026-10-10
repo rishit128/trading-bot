@@ -2,12 +2,12 @@
 the snapshot, the Close+Volume-only fallback path, and that the CoT prompt renders
 them (with an n/a fallback when data is missing).
 """
+
 import pandas as pd
 import pytest
 
 from src.agents.technical.prompts import cot_prompt
-from src.data.indicators import (Snapshot, _bollinger, _volume_trend,
-                                 build_snapshot, compute_adx, compute_atr)
+from src.data.indicators import Snapshot, _bollinger, _volume_trend, build_snapshot, compute_adx, compute_atr
 
 
 def bars(closes, volume=10_000, drift=0.3):
@@ -16,14 +16,18 @@ def bars(closes, volume=10_000, drift=0.3):
     high = [c * 1.02 for c in closes]
     low = [c * 0.98 for c in closes]
     vols = [volume * (1 + drift * (i % 3)) for i in range(len(closes))]
-    return pd.DataFrame({"Close": closes, "High": high, "Low": low, "Volume": vols},
-                        index=pd.date_range("2025-09-01", periods=len(closes), freq="B"))
+    return pd.DataFrame(
+        {"Close": closes, "High": high, "Low": low, "Volume": vols},
+        index=pd.date_range("2025-09-01", periods=len(closes), freq="B"),
+    )
 
 
 def ohclv_only(closes):
     """Pre-Phase-5 bar format: Close + Volume only, as the old bulk fetch provided."""
-    return pd.DataFrame({"Close": [float(c) for c in closes], "Volume": [10_000] * len(closes)},
-                        index=pd.date_range("2025-09-01", periods=len(closes), freq="B"))
+    return pd.DataFrame(
+        {"Close": [float(c) for c in closes], "Volume": [10_000] * len(closes)},
+        index=pd.date_range("2025-09-01", periods=len(closes), freq="B"),
+    )
 
 
 def test_build_snapshot_populates_the_phase5_indicators():
@@ -93,6 +97,7 @@ def _reference_rsi(close, period=14):
 
 def test_array_rsi_matches_the_original_implementation_exactly():
     import numpy as np
+
     from src.data.indicators import compute_rsi, rsi_from_array
 
     rng = np.random.default_rng(7)

@@ -18,6 +18,7 @@ A hypothesis is a CANDIDATE only if ALL of these hold (five comparisons, so |t| 
 If no hypothesis is a candidate, none of these rules is better than the live one: the engine keeps running and
 collecting sessions, and new ideas are declared and tested the same way. A candidate is a lead for forward paper trading, never proof:
 one archive is one market regime, and its length limits what any test can detect (reported as the minimum detectable edge)."""
+
 from dataclasses import dataclass, field
 from datetime import time as dtime
 from typing import Callable, List, Optional, Tuple
@@ -31,7 +32,7 @@ from src.research.intraday_audit import Plan, StockDay, evaluate_plans, first_br
 T_BAR = 2.6
 MIN_TRADES = 300
 NULL_SEEDS = 5
-GAP_GO, GAP_FADE, MOMENTUM, LAST_HOUR = 0.01, 0.015, 0.01, 0.01   # fixed round-number thresholds, chosen in advance
+GAP_GO, GAP_FADE, MOMENTUM, LAST_HOUR = 0.01, 0.015, 0.01, 0.01  # fixed round-number thresholds, chosen in advance
 MOMENTUM_STOP = 0.015
 
 # Time windows, as minutes since midnight [start, end): the live entry window, and the first hour after the range.
@@ -45,6 +46,7 @@ NullPicker = Callable[[StockDay, np.random.Generator], Optional[Plan]]
 @dataclass(frozen=True)
 class Hypothesis:
     """A rule to test: how it picks its trade on a session, and the null that picks a comparable trade without its signal."""
+
     name: str
     idea: str
     pick: Picker
@@ -54,7 +56,7 @@ class Hypothesis:
 # -- helpers ----------------------------------------------------------------------------------------------------------------
 def _range(d: StockDay) -> Tuple[float, float]:
     """The opening range: (high, low) of the first bars."""
-    return float(d.h[:st.RANGE_BARS].max()), float(d.l[:st.RANGE_BARS].min())
+    return float(d.h[: st.RANGE_BARS].max()), float(d.l[: st.RANGE_BARS].min())
 
 
 def _range_ok(d: StockDay) -> bool:
@@ -143,7 +145,7 @@ def gap_fade(d: StockDay) -> Optional[Plan]:
     if side == 0:
         return None
     high, low = _range(d)
-    started = d.c < d.o[0] if side < 0 else d.c > d.o[0]          # price has moved back toward the previous close
+    started = d.c < d.o[0] if side < 0 else d.c > d.o[0]  # price has moved back toward the previous close
     i = _first(started & _window(d, FIRST_HOUR))
     return None if i is None else Plan(i, side, high if side < 0 else low)
 
@@ -159,8 +161,15 @@ def gap_fade_null(d: StockDay, rng: np.random.Generator) -> Optional[Plan]:
 
 
 # -- H4: the first hour's direction continues to the close ------------------------------------------------------------------
-def _fixed_time_plan(d: StockDay, hour: int, minute: int, threshold: float, need_vwap: bool, stop_pct: Optional[float],
-                     flip: Optional[np.random.Generator] = None) -> Optional[Plan]:
+def _fixed_time_plan(
+    d: StockDay,
+    hour: int,
+    minute: int,
+    threshold: float,
+    need_vwap: bool,
+    stop_pct: Optional[float],
+    flip: Optional[np.random.Generator] = None,
+) -> Optional[Plan]:
     """Enter at the close of the bar starting hour:minute, in the direction the stock has moved since the open, if it moved at
     least `threshold` (and, if asked, is on the same side of VWAP). `flip` replaces the direction with a coin toss (the null)."""
     i = _bar_at(d, hour, minute)
@@ -196,19 +205,34 @@ def last_half_hour_null(d: StockDay, rng: np.random.Generator) -> Optional[Plan]
     return _fixed_time_plan(d, 14, 40, LAST_HOUR, False, None, flip=rng)
 
 
-CONTROL = Hypothesis("C  ORB long (the live rule)", "long a breakout above the opening range, stop at its low, target 2R",
-                     orb_long, orb_long_null)
+CONTROL = Hypothesis(
+    "C  ORB long (the live rule)", "long a breakout above the opening range, stop at its low, target 2R", orb_long, orb_long_null
+)
 HYPOTHESES = [
-    Hypothesis("H1 ORB short", "short a breakdown below the opening range, stop at its high, target 2R",
-               orb_short, orb_short_null),
-    Hypothesis("H2 gap-and-go", "gap up >= 1% and the range breaks up: long, stop at the range low, hold to 15:15",
-               gap_and_go, gap_and_go_null),
-    Hypothesis("H3 gap fade", "gap >= 1.5% that starts to close: trade back toward the previous close, stop at the range extreme",
-               gap_fade, gap_fade_null),
-    Hypothesis("H4 first-hour momentum", "up/down >= 1% and beyond VWAP at 10:15: hold that direction to 15:15, 1.5% stop",
-               first_hour_momentum, first_hour_momentum_null),
-    Hypothesis("H5 last-half-hour momentum", "up/down >= 1% at 14:45: hold that direction to 15:15",
-               last_half_hour, last_half_hour_null),
+    Hypothesis(
+        "H1 ORB short", "short a breakdown below the opening range, stop at its high, target 2R", orb_short, orb_short_null
+    ),
+    Hypothesis(
+        "H2 gap-and-go",
+        "gap up >= 1% and the range breaks up: long, stop at the range low, hold to 15:15",
+        gap_and_go,
+        gap_and_go_null,
+    ),
+    Hypothesis(
+        "H3 gap fade",
+        "gap >= 1.5% that starts to close: trade back toward the previous close, stop at the range extreme",
+        gap_fade,
+        gap_fade_null,
+    ),
+    Hypothesis(
+        "H4 first-hour momentum",
+        "up/down >= 1% and beyond VWAP at 10:15: hold that direction to 15:15, 1.5% stop",
+        first_hour_momentum,
+        first_hour_momentum_null,
+    ),
+    Hypothesis(
+        "H5 last-half-hour momentum", "up/down >= 1% at 14:45: hold that direction to 15:15", last_half_hour, last_half_hour_null
+    ),
 ]
 
 
@@ -234,7 +258,7 @@ class Outcome:
     net_double_slippage: float = 0.0
     null_net: float = 0.0
     paired_t: float = 0.0
-    detectable: float = 0.0          # the smallest mean net per trade this many days could show at t = T_BAR
+    detectable: float = 0.0  # the smallest mean net per trade this many days could show at t = T_BAR
     failed: List[str] = field(default_factory=list)
 
     @property
@@ -252,12 +276,14 @@ def judge(name: str, idea: str, signal: pd.DataFrame, null: pd.DataFrame, slippa
     out.trades, out.dates = len(signal), len(per_date)
     out.mean_gross, out.mean_net, out.t_net = float(signal["gross"].mean()), float(signal["net"].mean()), cluster_t(per_date)
     ordered = sorted(per_date.index)
-    early = signal[signal["date"].isin(ordered[:len(ordered) // 2])]
-    late = signal[signal["date"].isin(ordered[len(ordered) // 2:])]
+    early = signal[signal["date"].isin(ordered[: len(ordered) // 2])]
+    late = signal[signal["date"].isin(ordered[len(ordered) // 2 :])]
     out.first_half = float(early["net"].mean()) if len(early) else 0.0
     out.second_half = float(late["net"].mean()) if len(late) else 0.0
-    doubled = [trade_returns(float(p), float(x), int(side), 2 * slippage)[1]
-               for p, x, side in zip(signal["price"], signal["exit"], signal["side"])]
+    doubled = [
+        trade_returns(float(p), float(x), int(side), 2 * slippage)[1]
+        for p, x, side in zip(signal["price"], signal["exit"], signal["side"])
+    ]
     out.net_double_slippage = float(np.mean(doubled))
     out.detectable = T_BAR * float(per_date.std() / np.sqrt(len(per_date))) if len(per_date) > 1 else 0.0
     if len(null):
@@ -265,13 +291,13 @@ def judge(name: str, idea: str, signal: pd.DataFrame, null: pd.DataFrame, slippa
         out.null_net = float(null["net"].mean())
         shared = per_date.index.intersection(null_per_date.index)
         out.paired_t = cluster_t(per_date[shared] - null_per_date[shared])
-    checks = [(out.trades >= MIN_TRADES, f"only {out.trades} trades (need {MIN_TRADES})"),
-              (out.mean_net > 0 and out.t_net >= T_BAR,
-               f"net {out.mean_net:+.3%}, t {out.t_net:.1f} (need > 0 and t >= {T_BAR})"),
-              (out.first_half > 0 and out.second_half > 0,
-               f"halves {out.first_half:+.3%} / {out.second_half:+.3%} (both must be > 0)"),
-              (out.net_double_slippage > 0, f"net {out.net_double_slippage:+.3%} with doubled slippage"),
-              (out.paired_t >= T_BAR, f"beats the null by t {out.paired_t:.1f} (need >= {T_BAR})")]
+    checks = [
+        (out.trades >= MIN_TRADES, f"only {out.trades} trades (need {MIN_TRADES})"),
+        (out.mean_net > 0 and out.t_net >= T_BAR, f"net {out.mean_net:+.3%}, t {out.t_net:.1f} (need > 0 and t >= {T_BAR})"),
+        (out.first_half > 0 and out.second_half > 0, f"halves {out.first_half:+.3%} / {out.second_half:+.3%} (both must be > 0)"),
+        (out.net_double_slippage > 0, f"net {out.net_double_slippage:+.3%} with doubled slippage"),
+        (out.paired_t >= T_BAR, f"beats the null by t {out.paired_t:.1f} (need >= {T_BAR})"),
+    ]
     out.failed = [why for ok, why in checks if not ok]
     return out
 
@@ -286,27 +312,46 @@ def run(days: List[StockDay], hypotheses: List[Hypothesis], slippage: float = 0.
     outcomes = []
     for h in hypotheses:
         nulls = [_null_trades(h, days, seed, slippage) for seed in range(seeds)]
-        outcomes.append(judge(h.name, h.idea, evaluate_plans(days, h.pick, slippage=slippage),
-                              pd.concat(nulls) if nulls else pd.DataFrame(), slippage))
+        outcomes.append(
+            judge(
+                h.name,
+                h.idea,
+                evaluate_plans(days, h.pick, slippage=slippage),
+                pd.concat(nulls) if nulls else pd.DataFrame(),
+                slippage,
+            )
+        )
     return outcomes
 
 
 def report(outcomes: List[Outcome]) -> str:
-    header = (f"{'hypothesis':<30}{'trades':>7}{'gross':>9}{'net':>9}{'t':>6}{'1st half':>10}{'2nd half':>10}"
-              f"{'2x slip':>9}{'null':>9}{'vs null t':>10}")
+    header = (
+        f"{'hypothesis':<30}{'trades':>7}{'gross':>9}{'net':>9}{'t':>6}{'1st half':>10}{'2nd half':>10}"
+        f"{'2x slip':>9}{'null':>9}{'vs null t':>10}"
+    )
     lines = [header, "-" * len(header)]
     for o in outcomes:
-        lines.append(f"{o.name:<30}{o.trades:>7}{o.mean_gross:>+9.3%}{o.mean_net:>+9.3%}{o.t_net:>6.1f}{o.first_half:>+10.3%}"
-                     f"{o.second_half:>+10.3%}{o.net_double_slippage:>+9.3%}{o.null_net:>+9.3%}{o.paired_t:>10.1f}"
-                     f"{'  <-- CANDIDATE' if o.candidate else ''}")
+        lines.append(
+            f"{o.name:<30}{o.trades:>7}{o.mean_gross:>+9.3%}{o.mean_net:>+9.3%}{o.t_net:>6.1f}{o.first_half:>+10.3%}"
+            f"{o.second_half:>+10.3%}{o.net_double_slippage:>+9.3%}{o.null_net:>+9.3%}{o.paired_t:>10.1f}"
+            f"{'  <-- CANDIDATE' if o.candidate else ''}"
+        )
     for o in outcomes:
         if o.failed:
             lines.append(f"  {o.name}: fails - " + "; ".join(o.failed))
     dates = max((o.dates for o in outcomes), default=0)
     if dates:
-        lines.append(f"\nWith {dates} trading dates the smallest edge that could be detected (t = {T_BAR}) is about "
-                     f"{max(o.detectable for o in outcomes):.3%} net per trade: a smaller true edge would not show.")
+        lines.append(
+            f"\nWith {dates} trading dates the smallest edge that could be detected (t = {T_BAR}) is about "
+            f"{max(o.detectable for o in outcomes):.3%} net per trade: a smaller true edge would not show."
+        )
     passed = [o for o in outcomes if o.candidate]
-    lines.append("\nCANDIDATES: " + (", ".join(o.name for o in passed) if passed else
-                                     "none -> no rule tested beats the live one; keep collecting sessions and test new ideas"))
+    lines.append(
+        "\nCANDIDATES: "
+        + (
+            ", ".join(o.name for o in passed)
+            if passed
+            else "none -> no rule tested beats the live one; keep collecting sessions and test new ideas"
+        )
+    )
     return "\n".join(lines)

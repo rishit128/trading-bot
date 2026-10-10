@@ -5,14 +5,15 @@ CustomerIDSelection.html (picks itself when the mobile has one customer ID) -> M
 waits for the page it expects; anything else (an error box, a browser alert, a reset-MPIN page, a timeout) stops the
 run at once. There is exactly one attempt per run: a retry could lock the account.
 """
+
 import json
 import logging
 import os
 import re
 import time
 from dataclasses import asdict
-from pathlib import Path
 from html import escape as esc
+from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
 
@@ -34,8 +35,12 @@ READ_PAGES = {
     "analyzer": "Demat/portfolioanalyzer.html",
     "account": "Dashboard/MyAccount.html",
 }
-PAGE_NAMES = {"dashboard": "Dashboard (totals)", "portfolio": "Capital gains",
-              "analyzer": "Portfolio analyser (holdings)", "account": "My account"}
+PAGE_NAMES = {
+    "dashboard": "Dashboard (totals)",
+    "portfolio": "Capital gains",
+    "analyzer": "Portfolio analyser (holdings)",
+    "account": "My account",
+}
 # Read-only tabs inside the read pages, clicked by their exact visible label (and nothing else). Deliberately left out:
 # Client Master (personal details), Download forms and eVoting (actions). Every click still passes the network guard.
 READ_TABS = {
@@ -70,9 +75,17 @@ class PortalRun:
     After the block, `logged_out` says whether the portal confirmed the logout (None: no session was ever started)
     and `blocked` lists every request the guard stopped."""
 
-    def __init__(self, creds: Credentials, get_otp: Callable[[], str], profile_dir: Path, evidence_dir: Path,
-                 base: str = PORTAL, headless: bool = True, step_timeout_s: float = 45,
-                 progress: Optional[Callable[[str], object]] = None):
+    def __init__(
+        self,
+        creds: Credentials,
+        get_otp: Callable[[], str],
+        profile_dir: Path,
+        evidence_dir: Path,
+        base: str = PORTAL,
+        headless: bool = True,
+        step_timeout_s: float = 45,
+        progress: Optional[Callable[[str], object]] = None,
+    ):
         self.creds, self.get_otp, self.base = creds, get_otp, base
         self.progress = Progress(progress)
         self.profile_dir, self.evidence_dir = profile_dir, evidence_dir
@@ -97,8 +110,13 @@ class PortalRun:
             # by default, so a local Windows/Mac run is unaffected.
             args = ["--no-sandbox", "--disable-setuid-sandbox"] if _no_sandbox() else []
             self._ctx = self._pw.chromium.launch_persistent_context(
-                str(self.profile_dir), headless=self.headless, service_workers="block", accept_downloads=False,
-                viewport={"width": 1366, "height": 900}, args=args)
+                str(self.profile_dir),
+                headless=self.headless,
+                service_workers="block",
+                accept_downloads=False,
+                viewport={"width": 1366, "height": 900},
+                args=args,
+            )
             self._ctx.route("**/*", self._route)
             self.page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
             self.page.set_default_timeout(self.step_timeout_s * 1000)
@@ -114,8 +132,11 @@ class PortalRun:
             self._screenshot("failure.png")
         if self._logged_in:
             self.logged_out = self._logout()
-            self.progress("🔒 <b>Logged out of Integrated.</b>" if self.logged_out else
-                          "⚠️ <b>Logout NOT confirmed</b> — please log out on the Integrated portal yourself.")
+            self.progress(
+                "🔒 <b>Logged out of Integrated.</b>"
+                if self.logged_out
+                else "⚠️ <b>Logout NOT confirmed</b> — please log out on the Integrated portal yourself."
+            )
         elif self._session_started:
             # The OTP was sent but the login never completed (no MPIN, so no dashboard session): there is nothing the
             # portal's logout applies to. Closing the browser and clearing its cookies below ends the half-login.
@@ -178,8 +199,9 @@ class PortalRun:
             self._expect(("dashboard",), "mpin")
         self._logged_in = True
         log.info("logged in")
-        self.progress(f"✅ <b>Step 5/5</b> — Logged in (read-only). Reading {len(READ_PAGES)} pages; "
-                     "nothing will be clicked or changed.")
+        self.progress(
+            f"✅ <b>Step 5/5</b> — Logged in (read-only). Reading {len(READ_PAGES)} pages; nothing will be clicked or changed."
+        )
 
     def _type(self, selector: str, text: str) -> None:
         """Type like a person, key by key: the portal enables its buttons from key events, which a bulk fill skips."""
@@ -193,8 +215,9 @@ class PortalRun:
         from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
         try:
-            self.page.wait_for_function("() => { const b = document.querySelector('#Submitbtn'); return b && !b.disabled }",
-                                        timeout=10_000)
+            self.page.wait_for_function(
+                "() => { const b = document.querySelector('#Submitbtn'); return b && !b.disabled }", timeout=10_000
+            )
         except PlaywrightTimeout:
             # "<stage> entry": nothing was sent, so this is not a rejection (and must not trigger the MPIN block)
             raise LoginFailed(f"{stage} entry", "the portal kept its Submit button disabled after typing") from None
@@ -209,8 +232,10 @@ class PortalRun:
     def _choose_customer(self) -> None:
         count = self.page.locator(CUSTOMER_CHOICES).count()
         if not self.creds.customer_id:
-            raise LoginFailed("customer", f"{count} customer IDs are linked to this mobile number; run setup again and "
-                                          "enter the customer ID to use")
+            raise LoginFailed(
+                "customer",
+                f"{count} customer IDs are linked to this mobile number; run setup again and enter the customer ID to use",
+            )
         choice = self.page.locator(f"{CUSTOMER_CHOICES}[value='{self.creds.customer_id}']")  # digits only (vault)
         if choice.count() != 1:
             raise LoginFailed("customer", "the saved customer ID is not one of those linked to this mobile number")
@@ -275,8 +300,10 @@ class PortalRun:
         """Save what the page showed when a run failed, with the typed mobile/OTP/MPIN fields blanked first."""
         try:
             self.evidence_dir.mkdir(parents=True, exist_ok=True)
-            self.page.evaluate("() => document.querySelectorAll('input').forEach(i => { if (i.type !== 'button' && "
-                               "i.type !== 'submit' && i.type !== 'radio') i.value = '' })")
+            self.page.evaluate(
+                "() => document.querySelectorAll('input').forEach(i => { if (i.type !== 'button' && "
+                "i.type !== 'submit' && i.type !== 'radio') i.value = '' })"
+            )
             self.page.screenshot(path=str(self.evidence_dir / name), full_page=True)
         except Exception:
             log.debug("could not save the evidence screenshot %s", name, exc_info=True)
@@ -297,9 +324,16 @@ class Progress:
             log.warning("progress update failed: %s", type(e).__name__)
 
 
-def read_pages(page, base: str, out_dir: Path, pages: Dict[str, str] = READ_PAGES, settle_ms: int = 20_000,
-               progress: Optional[Callable[[str], object]] = None, blocked: Optional[List[Blocked]] = None,
-               tabs: Mapping[str, Sequence[str]] = READ_TABS) -> dict:
+def read_pages(
+    page,
+    base: str,
+    out_dir: Path,
+    pages: Dict[str, str] = READ_PAGES,
+    settle_ms: int = 20_000,
+    progress: Optional[Callable[[str], object]] = None,
+    blocked: Optional[List[Blocked]] = None,
+    tabs: Mapping[str, Sequence[str]] = READ_TABS,
+) -> dict:
     """Open each read page by address and save what it shows: text, visible tables, a screenshot, and the portal's
     JSON data responses; then the same for each of its allow-listed read-only tabs (`tabs`). Returns a summary (also
     written to summary.json). After each page, `progress` gets one line, including any requests the guard blocked
@@ -340,8 +374,10 @@ def read_pages(page, base: str, out_dir: Path, pages: Dict[str, str] = READ_PAGE
                 entry.update(_snapshot(page, out_dir, name))
             entry["data_calls"] = _save_responses(list(finished), host, out_dir / "api", name)
             if entry["reached"]:
-                entry["tabs"] = {label: _read_tab(page, label, out_dir, name, host, finished, activity, settle_ms)
-                                 for label in tabs.get(name, ())}
+                entry["tabs"] = {
+                    label: _read_tab(page, label, out_dir, name, host, finished, activity, settle_ms)
+                    for label in tabs.get(name, ())
+                }
             summary[name] = entry
             tell(_page_line(i, len(pages), name, entry, blocked[blocked_before:]))
     finally:
@@ -371,8 +407,7 @@ def _quiet(page, activity: list, settle_ms: int, quiet_ms: int = 800) -> None:
         page.wait_for_timeout(100)
 
 
-def _read_tab(page, label: str, out_dir: Path, name: str, host: str, finished: list, activity: list,
-              settle_ms: int) -> dict:
+def _read_tab(page, label: str, out_dir: Path, name: str, host: str, finished: list, activity: list, settle_ms: int) -> dict:
     """Click one read-only tab by its exact visible label and save what it shows. A label that reads like an action is
     refused outright (a second check behind the allow-list); a tab that is missing is reported, not guessed at."""
     from playwright.sync_api import Error as PlaywrightError
@@ -390,8 +425,11 @@ def _read_tab(page, label: str, out_dir: Path, name: str, host: str, finished: l
     except PlaywrightError as e:
         return {"status": f"click failed: {type(e).__name__}"}
     _quiet(page, activity, settle_ms)
-    return {"status": "read", **_snapshot(page, out_dir, stem),
-            "data_calls": len(_save_responses(list(finished), host, out_dir / "api", stem))}
+    return {
+        "status": "read",
+        **_snapshot(page, out_dir, stem),
+        "data_calls": len(_save_responses(list(finished), host, out_dir / "api", stem)),
+    }
 
 
 def _page_line(i: int, n: int, name: str, entry: dict, blocked: List[Blocked]) -> str:
@@ -418,8 +456,12 @@ def _save_responses(requests: list, host: str, out_dir: Path, prefix: str) -> Li
     saved: List[dict] = []
     for req in requests:
         parts = urlsplit(req.url)
-        if req.resource_type not in ("xhr", "fetch") or (parts.hostname or "").lower() != host \
-                or parts.path.lower().rstrip("/") in AUTH_PATHS or is_static_file(parts.path):
+        if (
+            req.resource_type not in ("xhr", "fetch")
+            or (parts.hostname or "").lower() != host
+            or parts.path.lower().rstrip("/") in AUTH_PATHS
+            or is_static_file(parts.path)
+        ):
             continue
         r = req.response()
         if r is None:
@@ -437,8 +479,14 @@ def _save_responses(requests: list, host: str, out_dir: Path, prefix: str) -> Li
         label = re.sub(r"[^A-Za-z0-9]+", "_", action or parts.path.rsplit("/", 1)[-1]).strip("_")[:60]
         out_dir.mkdir(parents=True, exist_ok=True)
         file = out_dir / f"{prefix}_{len(saved):02d}_{label}.json"
-        file.write_text(json.dumps({"method": req.method, "path": parts.path, "action": action, "status": r.status,
-                                    "body": body}, indent=1, ensure_ascii=False), encoding="utf-8")
+        file.write_text(
+            json.dumps(
+                {"method": req.method, "path": parts.path, "action": action, "status": r.status, "body": body},
+                indent=1,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
         saved.append({"file": file.name, "path": parts.path, "action": action, "status": r.status})
     return saved
 

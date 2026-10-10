@@ -4,6 +4,7 @@ after every day the books must balance (`reconcile_paper`) and no risk limit may
 
 Time note: the broker runs on simulated days, the pipeline's 24-hour re-buy cooldown reads the real clock, so within this
 test every purchase stays in cooldown. That is what makes the day-5 re-entry attempts observable."""
+
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -16,8 +17,8 @@ from src.database import EquityRecord, OrderRecord, PaperTradeRecord, make_sessi
 from src.engine.paper_broker import PaperBroker
 from src.engine.risk_engine import Portfolio
 from src.llm import AgentSignal
-from src.pipeline import TradingPipeline
 from src.ops.reconciliation import reconcile_paper
+from src.pipeline import TradingPipeline
 from src.runner import run_loop
 from tests.test_llm_and_pipeline import StubAgent
 
@@ -75,9 +76,14 @@ def build(tmp_path, limits=None):
         return AgentSignal(action="BUY" if up else "HOLD", confidence=0.9, reasoning="scripted trend follower")
 
     alerts = []
-    pipeline = TradingPipeline(Settings(watchlist=tuple(TAPE), dry_run=False, risk=limits or RiskLimits()),
-                               [StubAgent(decide, "technical", LEAD)], broker, sessions, snapshot,
-                               notify=alerts.append)
+    pipeline = TradingPipeline(
+        Settings(watchlist=tuple(TAPE), dry_run=False, risk=limits or RiskLimits()),
+        [StubAgent(decide, "technical", LEAD)],
+        broker,
+        sessions,
+        snapshot,
+        notify=alerts.append,
+    )
     return sim, broker, pipeline, sessions, alerts
 
 
@@ -100,16 +106,16 @@ def test_six_days_open_close_and_reconcile(tmp_path):
         trades = {t.symbol: t for t in s.scalars(select(PaperTradeRecord))}
         equity_rows = len(list(s.scalars(select(EquityRecord))))
         orders = [(o.symbol, o.side, o.status) for o in s.scalars(select(OrderRecord).order_by(OrderRecord.id))]
-    assert set(trades) == {"AAA", "BBB"}                              # CCC is still held
+    assert set(trades) == {"AAA", "BBB"}  # CCC is still held
     assert trades["BBB"].reason == "STOP" and abs(trades["BBB"].exit_price - 170.0) < 1e-6  # the stop level, not the low
-    assert trades["AAA"].reason == "SIGNAL"                            # closed by the deterministic trend exit on day 3
+    assert trades["AAA"].reason == "SIGNAL"  # closed by the deterministic trend exit on day 3
     assert set(broker.portfolio().positions) == {"CCC"}
-    assert equity_rows == DAYS                                          # one equity mark per cycle
+    assert equity_rows == DAYS  # one equity mark per cycle
     assert orders[:3] == [("AAA", "BUY", "filled"), ("BBB", "BUY", "filled"), ("CCC", "BUY", "filled")]
     assert ("AAA", "SELL", "filled") in orders
-    assert ("AAA", "BUY", "SKIPPED_COOLDOWN") in orders               # the day-5 re-entry was refused, not silently dropped
+    assert ("AAA", "BUY", "SKIPPED_COOLDOWN") in orders  # the day-5 re-entry was refused, not silently dropped
     report = reconcile_paper(sessions)
-    assert report["ok"], report["findings"]                            # cash, positions, trades and orders all tie out
+    assert report["ok"], report["findings"]  # cash, positions, trades and orders all tie out
 
 
 def test_risk_limits_hold_on_every_simulated_day_and_the_books_balance_throughout(tmp_path):

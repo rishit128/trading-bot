@@ -1,4 +1,5 @@
 """Opening a database: the engine, the tables, the migration of an older file, and the session factory."""
+
 from typing import Any, Dict
 
 from sqlalchemy import create_engine, text

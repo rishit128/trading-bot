@@ -1,4 +1,5 @@
 """Running cycles: once, or in a crash-safe loop while the market is open."""
+
 import logging
 import time
 from typing import Callable, Optional
@@ -18,9 +19,14 @@ def run_cycle(pipeline, out: Callable[[str], None] = print) -> None:
         out(format_result(r))
 
 
-def run_loop(pipeline, minutes: float, sleep: Callable[[float], None] = time.sleep,
-             max_cycles: Optional[int] = None, after_cycle: Optional[Callable[[], None]] = None,
-             out: Callable[[str], None] = print) -> None:
+def run_loop(
+    pipeline,
+    minutes: float,
+    sleep: Callable[[float], None] = time.sleep,
+    max_cycles: Optional[int] = None,
+    after_cycle: Optional[Callable[[], None]] = None,
+    out: Callable[[str], None] = print,
+) -> None:
     """Unattended loop: a failed cycle (network, broker outage) is reported and retried, never fatal."""
     cycles = 0
     while True:

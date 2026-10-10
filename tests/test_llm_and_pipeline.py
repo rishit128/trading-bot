@@ -6,8 +6,8 @@ import openai
 import pytest
 from sqlalchemy import select
 
-from src.agents.technical import TechnicalAgent
 from src.agents.base import ADVISOR, LEAD, AgentContext
+from src.agents.technical import TechnicalAgent
 from src.config import RiskLimits, Settings
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord, OrderRecord, make_session_factory
@@ -43,10 +43,21 @@ def api_error():
 
 GOOD = json.dumps({"action": "BUY", "confidence": 0.8, "reasoning": "uptrend"})
 # A chain-of-thought response valid against COT_SCHEMA: what the default TechnicalAgent now asks for.
-COT_OK = json.dumps({"action": "BUY", "confidence": 0.8, "edge_confidence": 0.5, "step1_trend": "uptrend",
-                     "step2_overbought": "not overbought", "step3_volume": "volume confirms",
-                     "company_check": "sales and profit growing", "market_check": "market supportive",
-                     "step4_confluence": 6, "step5_risks": ["earnings"], "final_reasoning": "uptrend"})
+COT_OK = json.dumps(
+    {
+        "action": "BUY",
+        "confidence": 0.8,
+        "edge_confidence": 0.5,
+        "step1_trend": "uptrend",
+        "step2_overbought": "not overbought",
+        "step3_volume": "volume confirms",
+        "company_check": "sales and profit growing",
+        "market_check": "market supportive",
+        "step4_confluence": 6,
+        "step5_risks": ["earnings"],
+        "final_reasoning": "uptrend",
+    }
+)
 
 
 def test_llm_uses_first_model_and_sends_schema():
@@ -71,7 +82,9 @@ def test_llm_falls_back_when_http_200_has_no_choices():
     # Observed live: OpenRouter returned HTTP 200 with choices=None.
     fake = FakeOpenAI({"a": GOOD, "b": GOOD})
     original = fake._create
-    fake._create = lambda model, **kw: SimpleNamespace(choices=None, error={"code": 502}) if model == "a" else original(model, **kw)
+    fake._create = lambda model, **kw: (
+        SimpleNamespace(choices=None, error={"code": 502}) if model == "a" else original(model, **kw)
+    )
     fake.chat.completions.create = fake._create
     assert LLMClient(["a", "b"], client=fake).signal("p").action == "BUY"
 
@@ -127,18 +140,30 @@ class FakeBroker:
         return Fill("oid-2", "accepted")
 
 
-def make_pipeline(tmp_path, technical_action="BUY", dry_run=True, broker=None, snapshot_fn=None, watchlist=("AAPL",),
-                  analysis_workers=3, risk=None, trend_exit=True):
+def make_pipeline(
+    tmp_path,
+    technical_action="BUY",
+    dry_run=True,
+    broker=None,
+    snapshot_fn=None,
+    watchlist=("AAPL",),
+    analysis_workers=3,
+    risk=None,
+    trend_exit=True,
+):
     from src.llm import AgentSignal
 
-    settings = Settings(watchlist=watchlist, dry_run=dry_run, risk=risk or RiskLimits(), analysis_workers=analysis_workers,
-                        trend_exit=trend_exit)
+    settings = Settings(
+        watchlist=watchlist, dry_run=dry_run, risk=risk or RiskLimits(), analysis_workers=analysis_workers, trend_exit=trend_exit
+    )
     broker = broker or FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0))
     sessions = make_session_factory(f"sqlite:///{tmp_path / 't.db'}")
     pipe = TradingPipeline(
         settings,
-        [StubAgent(lambda s: AgentSignal(action=technical_action, confidence=0.9, reasoning="t"), "technical", LEAD),
-         StubAgent(lambda s: None, "sentiment", ADVISOR)],
+        [
+            StubAgent(lambda s: AgentSignal(action=technical_action, confidence=0.9, reasoning="t"), "technical", LEAD),
+            StubAgent(lambda s: None, "sentiment", ADVISOR),
+        ],
         broker,
         sessions,
         snapshot_fn or (lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000)),
@@ -398,10 +423,12 @@ def counting_pipeline(tmp_path, signal):
         return signal
 
     pipe, broker, sessions = make_pipeline(
-        tmp_path, snapshot_fn=lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000, bar_date="2026-09-30"))
+        tmp_path, snapshot_fn=lambda sym: Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000, bar_date="2026-09-30")
+    )
     pipe.agents["technical"] = StubAgent(technical, "technical", LEAD)
-    pipe.agents["sentiment"] = StubAgent(lambda s: AgentSignal(action="HOLD", confidence=0.5, reasoning="a"), "sentiment",
-                                         ADVISOR)
+    pipe.agents["sentiment"] = StubAgent(
+        lambda s: AgentSignal(action="HOLD", confidence=0.5, reasoning="a"), "sentiment", ADVISOR
+    )
     return pipe, sessions, calls
 
 

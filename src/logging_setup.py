@@ -1,4 +1,5 @@
 """Logging that works for both people (text) and log pipelines (JSON), with a configurable level."""
+
 import json
 import logging
 import sys
@@ -7,7 +8,15 @@ from datetime import datetime, timezone
 LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 FORMATS = ("text", "json")
 _STANDARD = set(vars(logging.LogRecord("", 0, "", 0, "", (), None))) | {"message", "asctime"}
-NOISY = ("httpx", "httpx2", "httpcore", "openai", "urllib3", "peewee", "websockets")  # per-request chatter, and httpx URLs hold the Telegram token
+NOISY = (
+    "httpx",
+    "httpx2",
+    "httpcore",
+    "openai",
+    "urllib3",
+    "peewee",
+    "websockets",
+)  # per-request chatter, and httpx URLs hold the Telegram token
 
 
 def _extras(record: logging.LogRecord) -> dict:
@@ -19,8 +28,13 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         """Render a log record as a single JSON line."""
-        payload = {"ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(timespec="milliseconds"),
-                   "level": record.levelname, "logger": record.name, "msg": record.getMessage(), **_extras(record)}
+        payload = {
+            "ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(timespec="milliseconds"),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+            **_extras(record),
+        }
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
         return json.dumps(payload, default=str, ensure_ascii=False)

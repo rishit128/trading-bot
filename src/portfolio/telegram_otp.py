@@ -6,6 +6,7 @@ A Telegram bot has one update queue, so exactly one reader may poll it:
   out to be polling too).
 Either way only a message from the authorised chat, sent after the request, consisting of exactly 4 digits counts; it is
 deleted from the chat as soon as it is read, and the OTP is never logged."""
+
 import logging
 import re
 import threading
@@ -18,8 +19,10 @@ log = logging.getLogger(__name__)
 API = "https://api.telegram.org"
 OTP = re.compile(r"\s*(\d{4})\s*")
 CANCEL = {"cancel", "stop", "/cancel"}
-PROMPT = ("🔑 <b>OTP needed</b>\nReply here with the 4-digit OTP sent to your mobile, within {minutes} minutes.\n"
-          "Send 'cancel' to stop. I delete your reply as soon as I read it.")
+PROMPT = (
+    "🔑 <b>OTP needed</b>\nReply here with the 4-digit OTP sent to your mobile, within {minutes} minutes.\n"
+    "Send 'cancel' to stop. I delete your reply as soon as I read it."
+)
 logging.getLogger("httpx").setLevel(logging.WARNING)  # it logs request URLs, and the bot token is part of every URL
 
 
@@ -82,8 +85,9 @@ class OtpInbox:
 class TelegramOtp:
     """Polls the bot directly; for runs while the trading bot (and its listener) is not running."""
 
-    def __init__(self, token: str, chat_id: str, client: Optional[httpx.Client] = None,
-                 clock: Callable[[], float] = time.monotonic):
+    def __init__(
+        self, token: str, chat_id: str, client: Optional[httpx.Client] = None, clock: Callable[[], float] = time.monotonic
+    ):
         self._token, self.chat_id = token, str(chat_id)
         self.http = client or httpx.Client(timeout=40)
         self.clock = clock
@@ -130,8 +134,11 @@ class TelegramOtp:
                     raise OtpCancelled("login cancelled from Telegram")
                 match = OTP.fullmatch(text)
                 if not match:
-                    self._quietly("sendMessage", chat_id=self.chat_id,
-                                  text="That is not a 4-digit OTP. Reply with just the 4 digits, or 'cancel'.")
+                    self._quietly(
+                        "sendMessage",
+                        chat_id=self.chat_id,
+                        text="That is not a 4-digit OTP. Reply with just the 4 digits, or 'cancel'.",
+                    )
                     continue
                 self._acknowledge()
                 self._quietly("deleteMessage", chat_id=self.chat_id, message_id=msg["message_id"])

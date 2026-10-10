@@ -3,13 +3,14 @@
 Every decision that was approved must have an order record, every filled order must have landed in a position or a
 closed trade, and the cash the account reports must be rebuildable from the recorded fills. The script
 scripts/reconcile_paper.py prints the report and exits nonzero on any finding; tests pin the catch-the-drift case."""
+
 from typing import Dict, List, Optional
 
 from sqlalchemy import select
 
 from src.database import DecisionRecord, OrderRecord, PaperAccountRecord, PaperPositionRecord, PaperTradeRecord
-from src.engine.enums import Action, OrderStatus
 from src.engine.costs import india_delivery_fees
+from src.engine.enums import Action, OrderStatus
 
 TOLERANCE = 0.01  # rupees; fees and STT round into sub-paisa noise
 
@@ -39,7 +40,8 @@ def reconcile_paper(sessions, fees=None, cash: Optional[float] = None) -> dict:
 
     # ---- 1. cash: rebuild what the account should hold from the fills, position by position -------------------
     spent = sum(t.qty * t.entry_price + t.fees for t in trades) + sum(
-        p.qty * p.avg_price + fees(Action.BUY, p.qty * p.avg_price) for p in positions)
+        p.qty * p.avg_price + fees(Action.BUY, p.qty * p.avg_price) for p in positions
+    )
     received = sum(t.qty * t.exit_price for t in trades)
     # cash-sweep interest and dividends, if any
     expected = acct.initial_cash - spent + received + (acct.interest_earned or 0.0) + (acct.dividends_received or 0.0)
@@ -65,10 +67,10 @@ def reconcile_paper(sessions, fees=None, cash: Optional[float] = None) -> dict:
         sell_fills[t.symbol] = sell_fills.get(t.symbol, 0) + t.qty
     for p in positions:
         buy_fills[p.symbol] = buy_fills.get(p.symbol, 0) + p.qty
-    for sym, n in (list(sell_orders.items())):
+    for sym, n in list(sell_orders.items()):
         if sell_fills.get(sym, 0) != n:
             findings.append(f"{sym}: filled SELL orders total {n} but trades only show {sell_fills.get(sym, 0)}")
-    for sym, n in (list(buy_orders.items())):
+    for sym, n in list(buy_orders.items()):
         if buy_fills.get(sym, 0) != n:
             findings.append(f"{sym}: filled BUY orders total {n} but positions+trades only show {buy_fills.get(sym, 0)}")
 
@@ -85,9 +87,15 @@ def reconcile_paper(sessions, fees=None, cash: Optional[float] = None) -> dict:
         if p.avg_price <= 0 or not (p.stop < p.avg_price < p.target):
             findings.append(f"{p.symbol}: bracket out of order (stop {p.stop}, entry {p.avg_price}, target {p.target})")
 
-    return {"ok": not findings, "findings": findings, "expected_cash": expected, "cash": recorded,
-            "positions": len(positions), "closed_trades": len(trades),
-            "fees_paid": sum(t.fees for t in trades)}
+    return {
+        "ok": not findings,
+        "findings": findings,
+        "expected_cash": expected,
+        "cash": recorded,
+        "positions": len(positions),
+        "closed_trades": len(trades),
+        "fees_paid": sum(t.fees for t in trades),
+    }
 
 
 def reconcile_report(sessions) -> str:

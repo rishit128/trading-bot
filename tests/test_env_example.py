@@ -1,8 +1,8 @@
 """`.env.example` is the user's only settings documentation: it must list every setting the code reads, list nothing the
 code ignores, and show the defaults that actually apply."""
+
 import re
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE = (ROOT / ".env.example").read_text(encoding="utf-8")
@@ -10,7 +10,9 @@ SOURCES = [ROOT / "main.py"] + sorted((ROOT / "src").rglob("*.py"))
 SECRETS = {"OPENROUTER_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}
 COMPUTED_DEFAULTS = {"WATCHLIST"}
 
-READ = re.compile(r"""(?:getenv|environ\.get|_float|_int|_bool)\(\s*["']([A-Z][A-Z0-9_]+)["']|environ\[["']([A-Z][A-Z0-9_]+)["']\]""")
+READ = re.compile(
+    r"""(?:getenv|environ\.get|_float|_int|_bool)\(\s*["']([A-Z][A-Z0-9_]+)["']|environ\[["']([A-Z][A-Z0-9_]+)["']\]"""
+)
 LINE = re.compile(r"^(#\s*)?([A-Z][A-Z0-9_]+)=([^\s#]*)", re.M)
 
 
@@ -58,8 +60,9 @@ def test_documented_defaults_are_the_defaults_in_the_source():
             assert name in shown and shown[name] == default, f"{name}: source default {default!r}, example {shown.get(name)!r}"
             checked += 1
         for name, default in re.findall(r"""_float\(\s*["']([A-Z0-9_]+)["']\s*,\s*([0-9._]+)\s*\)""", text):
-            assert name in shown and float(shown[name]) == float(default.replace("_", "")), \
+            assert name in shown and float(shown[name]) == float(default.replace("_", "")), (
                 f"{name}: source default {default}, example {shown.get(name)}"
+            )
             checked += 1
     assert checked >= 30  # the scan really found the defaults (guards against the regex silently matching nothing)
 

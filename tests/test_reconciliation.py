@@ -1,6 +1,7 @@
 """Broker reconciliation: the paper account's cash must be rebuildable from its recorded fills, every filled order
 must land in a position or a trade, and an approved trade decision must have an order record. A ledger that drifts
 (cash edited, a fill lost) fails the check instead of silently compounding."""
+
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -36,8 +37,7 @@ class Clock:
 def _broker(tmp_path):
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'r.db'}")
     feed, clock = Feed(), Clock()
-    broker = PaperBroker(sessions, feed, clock,
-                         now_fn=lambda: datetime(2024, 1, 3, 12, 0, tzinfo=timezone.utc))
+    broker = PaperBroker(sessions, feed, clock, now_fn=lambda: datetime(2024, 1, 3, 12, 0, tzinfo=timezone.utc))
     return sessions, broker, feed
 
 
@@ -81,13 +81,31 @@ def test_approved_decisions_and_filled_orders_tie(tmp_path):
     sessions, broker, _ = _broker(tmp_path)
     broker.buy_with_bracket("A", 100, 100.5, 0.08, 1.0)  # needs an approved BUY decision + a filled BUY order
     with sessions() as s:
-        d1 = DecisionRecord(symbol="A", price=100.5, final_action="BUY", final_confidence=0.9, reasoning="r",
-                            risk_approved=True, risk_quantity=100, risk_reason="ok",
-                           created_at=datetime(2024, 1, 3, tzinfo=timezone.utc))
+        d1 = DecisionRecord(
+            symbol="A",
+            price=100.5,
+            final_action="BUY",
+            final_confidence=0.9,
+            reasoning="r",
+            risk_approved=True,
+            risk_quantity=100,
+            risk_reason="ok",
+            created_at=datetime(2024, 1, 3, tzinfo=timezone.utc),
+        )
         s.add(d1)
         s.flush()
-        s.add(OrderRecord(decision_id=d1.id, symbol="A", side="BUY", quantity=100, status="filled",
-                          filled_qty=100, fill_price=100.05, created_at=datetime(2024, 1, 3, tzinfo=timezone.utc)))
+        s.add(
+            OrderRecord(
+                decision_id=d1.id,
+                symbol="A",
+                side="BUY",
+                quantity=100,
+                status="filled",
+                filled_qty=100,
+                fill_price=100.05,
+                created_at=datetime(2024, 1, 3, tzinfo=timezone.utc),
+            )
+        )
         s.commit()
     r = reconcile_paper(sessions)
     assert r["ok"], r["findings"]
@@ -101,13 +119,31 @@ def test_a_filled_order_without_any_fill_is_flagged(tmp_path):
         from src.database import PaperAccountRecord, PaperPositionRecord
 
         s.get(PaperPositionRecord, "A").qty = 0  # the order filled but the fill was then lost from the position
-        d = DecisionRecord(symbol="A", price=100.5, final_action="BUY", final_confidence=0.9, reasoning="r",
-                           risk_approved=True, risk_quantity=100, risk_reason="ok",
-                           created_at=datetime(2024, 1, 3, tzinfo=timezone.utc))
+        d = DecisionRecord(
+            symbol="A",
+            price=100.5,
+            final_action="BUY",
+            final_confidence=0.9,
+            reasoning="r",
+            risk_approved=True,
+            risk_quantity=100,
+            risk_reason="ok",
+            created_at=datetime(2024, 1, 3, tzinfo=timezone.utc),
+        )
         s.add(d)
         s.flush()
-        s.add(OrderRecord(decision_id=d.id, symbol="A", side="BUY", quantity=100, status="filled",
-                          filled_qty=100, fill_price=100.05, created_at=datetime(2024, 1, 3, tzinfo=timezone.utc)))
+        s.add(
+            OrderRecord(
+                decision_id=d.id,
+                symbol="A",
+                side="BUY",
+                quantity=100,
+                status="filled",
+                filled_qty=100,
+                fill_price=100.05,
+                created_at=datetime(2024, 1, 3, tzinfo=timezone.utc),
+            )
+        )
         s.commit()
         acct = s.get(PaperAccountRecord, 1)
         acct.cash += 100 * 100.05  # and the money came back, hiding it from the simple cash check

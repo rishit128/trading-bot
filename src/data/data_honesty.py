@@ -7,6 +7,7 @@ the indicators silently.
 A real one-day crash also gaps down, but it comes with an expanding intraday range; a split restates the symbol's
 price scale, so the new bar's own high-low range is ordinary. A bar is flagged only when both hold: the overnight
 close-to-close move exceeds `threshold` AND the bar's own range is NOT unusually wide."""
+
 import logging
 from typing import List
 
@@ -53,6 +54,8 @@ def check_bars_honesty(df: pd.DataFrame) -> list:
         issues.append(ZERO_VOLUME)
     flags = split_like_gaps(df)
     for idx, overnight in flags.loc[flags["is_split_like"], "overnight_ret"].items():  # flagged rows only, not every bar
-        issues.append(f"{idx.date()} split-like overnight {overnight:+.1%}; "
-                      "corporate action or unadjusted mix - indicators for this range are unreliable")
+        issues.append(
+            f"{idx.date()} split-like overnight {overnight:+.1%}; "
+            "corporate action or unadjusted mix - indicators for this range are unreliable"
+        )
     return issues

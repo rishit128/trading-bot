@@ -4,6 +4,7 @@ Yahoo serves only the last ~60 sessions of 5-minute data, which is too short to 
 a few dozen independent days). The intraday engine therefore saves each finished session into `intraday_bars`, so the
 history grows by one session a day and a rule can eventually be tested on months. `BarArchive.save` is idempotent, so a
 restart, a backfill from Yahoo's window or an import of an older cache never duplicates a bar."""
+
 import logging
 from datetime import date
 from typing import Callable, Dict, Iterable, List, Optional, Set
@@ -26,14 +27,15 @@ def _yahoo_download(tickers: List[str], **kw) -> pd.DataFrame:
     return yf.download(tickers, group_by="ticker", auto_adjust=True, progress=False, threads=True, timeout=60, **kw)
 
 
-def fetch_5m_bars(symbols: List[str], period: str = "1d", download: Optional[Callable[..., Optional[pd.DataFrame]]] = None,
-                  batch: int = 100) -> Dict[str, pd.DataFrame]:
+def fetch_5m_bars(
+    symbols: List[str], period: str = "1d", download: Optional[Callable[..., Optional[pd.DataFrame]]] = None, batch: int = 100
+) -> Dict[str, pd.DataFrame]:
     """5-minute bars (IST index) per symbol for a Yahoo `period` ("1d" = the latest session, "59d" = the whole window).
     Symbols Yahoo has no data for are omitted."""
     download = download or _yahoo_download
     out: Dict[str, pd.DataFrame] = {}
     for start in range(0, len(symbols), batch):
-        chunk = symbols[start:start + batch]
+        chunk = symbols[start : start + batch]
         wide = download([s + SUFFIX for s in chunk], period=period, interval="5m")
         if wide is None or wide.empty:
             continue
@@ -70,8 +72,9 @@ class BarArchive:
 
     def _stored(self, days: Iterable[str]) -> Set[tuple]:
         with self.sessions() as s:
-            query = (select(IntradayBarRecord.symbol, IntradayBarRecord.day)
-                     .where(IntradayBarRecord.day.in_(list(days))).distinct())
+            query = (
+                select(IntradayBarRecord.symbol, IntradayBarRecord.day).where(IntradayBarRecord.day.in_(list(days))).distinct()
+            )
             return {(symbol, day) for symbol, day in s.execute(query)}
 
     def save(self, bars: Dict[str, pd.DataFrame]) -> int:
@@ -90,8 +93,19 @@ class BarArchive:
                 continue
             stamps = pd.DatetimeIndex(frame.index).tz_convert("UTC").to_pydatetime()
             prices = zip(stamps, frame["Open"], frame["High"], frame["Low"], frame["Close"], frame["Volume"])
-            rows += [{"symbol": symbol, "ts": ts, "day": day, "open": float(o), "high": float(h), "low": float(low),
-                      "close": float(c), "volume": float(v)} for ts, o, h, low, c, v in prices]
+            rows += [
+                {
+                    "symbol": symbol,
+                    "ts": ts,
+                    "day": day,
+                    "open": float(o),
+                    "high": float(h),
+                    "low": float(low),
+                    "close": float(c),
+                    "volume": float(v),
+                }
+                for ts, o, h, low, c, v in prices
+            ]
         if rows:
             with self.sessions() as s:
                 s.execute(insert(IntradayBarRecord), rows)

@@ -1,10 +1,11 @@
 """The typed vocabularies: identical to the old strings on the wire, strict in code, and recorded on every decision."""
+
 import json
 
 import pytest
 from sqlalchemy import select
 
-from src.agents.technical import AdvancedSignal, COT_SCHEMA
+from src.agents.technical import COT_SCHEMA, AdvancedSignal
 from src.database import DecisionRecord, OrderRecord
 from src.engine.enums import ACTION_VALUES, NOT_A_PLACED_BUY, SILENT_STATUSES, Action, DecisionSource, OrderStatus
 from src.llm import SIGNAL_SCHEMA, AgentSignal
@@ -16,13 +17,22 @@ def test_members_are_the_old_strings_so_nothing_stored_or_sent_changes():
     assert [a.value for a in Action] == ["BUY", "SELL", "HOLD"] == ACTION_VALUES
     assert Action.BUY == "BUY" and "SELL" == Action.SELL and f"{Action.HOLD}" == "HOLD"
     assert json.dumps({"action": Action.BUY}) == '{"action": "BUY"}'
-    assert {s.value for s in OrderStatus} == {"filled", "confirmed", "DRY_RUN", "PAUSED", "MARKET_CLOSED", "SKIPPED_COOLDOWN",
-                                              "SKIPPED_OPEN_ORDER", "FAILED"}
+    assert {s.value for s in OrderStatus} == {
+        "filled",
+        "confirmed",
+        "DRY_RUN",
+        "PAUSED",
+        "MARKET_CLOSED",
+        "SKIPPED_COOLDOWN",
+        "SKIPPED_OPEN_ORDER",
+        "FAILED",
+    }
     assert {d.value for d in DecisionSource} == {"agents", "trend_exit"}
 
 
 def test_every_json_schema_sent_to_the_model_offers_exactly_the_three_actions():
     from src.agents.technical import schemas as agents
+
     schemas = [SIGNAL_SCHEMA, COT_SCHEMA, agents.REFLECT_SCHEMA]
     for schema in schemas:
         assert schema["schema"]["properties"]["action"]["enum"] == ["BUY", "SELL", "HOLD"], schema["name"]
@@ -36,8 +46,19 @@ def test_typos_are_rejected_instead_of_becoming_a_different_branch():
     with pytest.raises(ValueError):
         AgentSignal(action="MAYBE", confidence=0.5, reasoning="r")
     assert AgentSignal(action="BUY", confidence=0.5, reasoning="r").action is Action.BUY  # a model's string becomes the enum
-    body = dict(action="HOLD", confidence=0.5, edge_confidence=0.5, step1_trend="up trend", step2_overbought="fine",
-                step3_volume="ok volume", company_check="results fine", market_check="market calm", step4_confluence=5, step5_risks=["gap risk"], final_reasoning="stand aside")
+    body = dict(
+        action="HOLD",
+        confidence=0.5,
+        edge_confidence=0.5,
+        step1_trend="up trend",
+        step2_overbought="fine",
+        step3_volume="ok volume",
+        company_check="results fine",
+        market_check="market calm",
+        step4_confluence=5,
+        step5_risks=["gap risk"],
+        final_reasoning="stand aside",
+    )
     assert AdvancedSignal(**body).action is Action.HOLD
 
 
@@ -67,10 +88,20 @@ def test_every_decision_records_who_made_it(tmp_path):
 
 
 def _record(reasoning, source):
-    return DecisionRecord(id=1, symbol="X", price=90.0, final_action="SELL", final_confidence=1.0, reasoning=reasoning,
-                          risk_approved=True, risk_quantity=1, risk_reason="ok", decision_source=source,
-                          snapshot_json=json.dumps({"symbol": "X", "price": 90.0, "ma50": 92.0, "ma200": 95.0, "rsi": 55.0, "volume": 1}),
-                          signals_json=json.dumps({}))
+    return DecisionRecord(
+        id=1,
+        symbol="X",
+        price=90.0,
+        final_action="SELL",
+        final_confidence=1.0,
+        reasoning=reasoning,
+        risk_approved=True,
+        risk_quantity=1,
+        risk_reason="ok",
+        decision_source=source,
+        snapshot_json=json.dumps({"symbol": "X", "price": 90.0, "ma50": 92.0, "ma200": 95.0, "rsi": 55.0, "volume": 1}),
+        signals_json=json.dumps({}),
+    )
 
 
 def test_replay_trusts_the_recorded_source_not_the_wording():
@@ -85,6 +116,7 @@ def test_replay_trusts_the_recorded_source_not_the_wording():
 def test_a_database_from_before_decision_source_gains_the_column_and_replay_still_reads_its_rows(tmp_path):
     """The migration adds the nullable column to an existing paper database without touching its rows."""
     import sqlite3
+
     from src.database import make_session_factory
 
     path = tmp_path / "legacy.db"

@@ -4,6 +4,7 @@ This is the information the price-based rule never sees, which is what gives the
 (same as prices; checked 2026-10-09 to cover every stock the bot held or ranked). Live only: Yahoo serves today's figures,
 not what was known on a past date, so it cannot be backtested honestly and research never uses it. Any failure means
 "no company data": the prompt then says so and the AI judges without it."""
+
 import logging
 import math
 import threading
@@ -69,23 +70,36 @@ def yahoo_fundamentals(symbol: str, ticker: Optional[Callable] = None) -> Option
         revenue = _row(statement, "Total Revenue", "Operating Revenue")
         profit = _row(statement, "Net Income", "Net Income Common Stockholders")
         columns = sorted(statement.columns, reverse=True)[:MAX_QUARTERS]
-        quarters = tuple(Quarter(str(c.date()), _number(revenue[c]) if revenue is not None else None,
-                                 _number(profit[c]) if profit is not None else None) for c in columns)
+        quarters = tuple(
+            Quarter(
+                str(c.date()),
+                _number(revenue[c]) if revenue is not None else None,
+                _number(profit[c]) if profit is not None else None,
+            )
+            for c in columns
+        )
     debt = _number(info.get("debtToEquity"))
     found = Fundamentals(
-        sector=info.get("sector"), industry=info.get("industry"), market_cap=_number(info.get("marketCap")),
-        pe=_number(info.get("trailingPE")), debt_to_equity=debt / 100 if debt is not None else None,
-        profit_margin=_number(info.get("profitMargins")), revenue_growth=_number(info.get("revenueGrowth")),
-        earnings_growth=_number(info.get("earningsGrowth")), promoter_holding=_number(info.get("heldPercentInsiders")),
-        quarters=quarters)
+        sector=info.get("sector"),
+        industry=info.get("industry"),
+        market_cap=_number(info.get("marketCap")),
+        pe=_number(info.get("trailingPE")),
+        debt_to_equity=debt / 100 if debt is not None else None,
+        profit_margin=_number(info.get("profitMargins")),
+        revenue_growth=_number(info.get("revenueGrowth")),
+        earnings_growth=_number(info.get("earningsGrowth")),
+        promoter_holding=_number(info.get("heldPercentInsiders")),
+        quarters=quarters,
+    )
     return found if found != Fundamentals() else None
 
 
 class FundamentalsProvider:
     """`provider(symbol)` -> Fundamentals or None, cached so one cycle (and the next several) read Yahoo once per stock."""
 
-    def __init__(self, fetch: Callable[[str], Optional[Fundamentals]] = yahoo_fundamentals,
-                 clock: Callable[[], float] = time.monotonic):
+    def __init__(
+        self, fetch: Callable[[str], Optional[Fundamentals]] = yahoo_fundamentals, clock: Callable[[], float] = time.monotonic
+    ):
         self.fetch, self.clock = fetch, clock
         self._cache: Dict[str, Tuple[float, Optional[Fundamentals]]] = {}
         self._lock = threading.Lock()

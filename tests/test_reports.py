@@ -1,4 +1,5 @@
 """The read-only commands the user actually runs (`--report`, `--positions`, `--screen`, `--graph`, `--intraday`)."""
+
 from types import SimpleNamespace
 
 import pytest
@@ -21,8 +22,15 @@ def account(tmp_path, monkeypatch):
     url = f"sqlite:///{tmp_path / 'acct.db'}"
     monkeypatch.setattr(india, "IntradayFeed", lambda: feed)
     monkeypatch.setattr(india, "IndiaClock", lambda: FakeClock())
-    broker = PaperBroker(make_session_factory(url), feed, FakeClock(), initial_cash=100_000.0, fees=lambda s, v: 1.0,
-                         slippage=0.0, now_fn=lambda: T0)
+    broker = PaperBroker(
+        make_session_factory(url),
+        feed,
+        FakeClock(),
+        initial_cash=100_000.0,
+        fees=lambda s, v: 1.0,
+        slippage=0.0,
+        now_fn=lambda: T0,
+    )
     broker.buy_with_bracket("WIN", 100, 100.0, 0.15, 1.0)
     feed.prices["WIN"] = 110.0
     broker.sell("WIN", 100)  # a closed winner: +10 a share, less Rs 2 of fees
@@ -72,8 +80,17 @@ def test_graph_command_draws_all_three_workflows(capsys):
     out = capsys.readouterr().out
     for title in ("%% CYCLE", "%% ANALYSIS", "%% DECISION"):
         assert title in out
-    for node in ("open_cycle", "select_universe", "analyze_symbol", "execute_cycle", "fetch_data", "agent_technical", "collect",
-                 "decide", "execute"):
+    for node in (
+        "open_cycle",
+        "select_universe",
+        "analyze_symbol",
+        "execute_cycle",
+        "fetch_data",
+        "agent_technical",
+        "collect",
+        "decide",
+        "execute",
+    ):
         assert node in out, f"workflow node {node} missing from the diagram"
 
 
@@ -84,34 +101,42 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
     urls = []
     monkeypatch.setattr(intraday_cli, "make_paper_broker", lambda settings, url, fees=None: urls.append(url) or broker)
-    monkeypatch.setattr(intraday_cli, "select_universe",
-                        lambda explicit: (["AAA", "BBB", "CCC"], "Nifty 100 (hand-saved NSE file)"))
+    monkeypatch.setattr(
+        intraday_cli, "select_universe", lambda explicit: (["AAA", "BBB", "CCC"], "Nifty 100 (hand-saved NSE file)")
+    )
     monkeypatch.setenv("INTRADAY_RISK_PCT", "0.01")
     monkeypatch.setenv("INTRADAY_MAX_POSITION_PCT", "0.25")
     monkeypatch.setenv("INTRADAY_MAX_POSITIONS", "4")
     monkeypatch.setattr(intraday_cli, "Notifier", lambda token, chat: SimpleNamespace(send=alerts.append))
-    monkeypatch.setattr(intraday_cli, "run_together", lambda engines: started.update(engine=engines[0], gapgo=engines[1], gaponly=engines[2], count=len(engines)))
+    monkeypatch.setattr(
+        intraday_cli,
+        "run_together",
+        lambda engines: started.update(engine=engines[0], gapgo=engines[1], gaponly=engines[2], count=len(engines)),
+    )
     intraday_cli.run_intraday(live=True)
     engine = started["engine"]
     assert engine.live is True and engine.universe == ["AAA", "BBB", "CCC"] and engine.notify is not None
     # its own INTRADAY_* sizing, not the swing settings; and the universe's source is passed on so it is recorded daily
     assert (engine.risk_pct, engine.max_position_pct, engine.max_positions) == (0.01, 0.25, 4)
     assert engine.universe_source == "Nifty 100 (hand-saved NSE file)"
-    assert engine.archive is not None and engine.archive.sessions is broker.sessions   # finished sessions are kept for research
+    assert engine.archive is not None and engine.archive.sessions is broker.sessions  # finished sessions are kept for research
     out = capsys.readouterr().out
     assert "3 stocks [Nifty 100 (hand-saved NSE file)]" in out and "PAPER ORDERS" in out and "no edge" in out
     assert "risk 1.00% of equity per trade" in out and "cap 25%" in out
-    assert alerts == [f"[{name}] started: PAPER ORDERS (separate intraday accounts)" for name in ("INTRADAY", "GAP-GO", "GAP-ONLY")]
+    assert alerts == [
+        f"[{name}] started: PAPER ORDERS (separate intraday accounts)" for name in ("INTRADAY", "GAP-GO", "GAP-ONLY")
+    ]
     assert started["count"] == 3 and started["engine"].record_capped is False  # the breakout engine is unchanged
     # gap-and-go: the same universe and sizing, its own rule, label, version and entry window, and no second archive
     from src.intraday.strategy import GAP_ENTRY_UNTIL, GAP_ONLY_ENTRY_UNTIL, find_gap_only_setup, find_gap_setup
     from src.versions import GAPGO_VERSION, GAPONLY_VERSION
+
     gap = started["gapgo"]
     assert gap.universe == engine.universe and (gap.risk_pct, gap.max_position_pct, gap.max_positions) == (0.01, 0.25, 4)
     assert gap.find_setup is find_gap_setup and gap.entry_until == GAP_ENTRY_UNTIL and gap.label == "GAP-GO"
     assert gap.version == GAPGO_VERSION and gap.archive is None and gap.live is True and "gap-and-go" in out
     assert gap.record_capped is True
-    only = started["gaponly"]   # the control: the same everything except the rule, its window, label, version and account
+    only = started["gaponly"]  # the control: the same everything except the rule, its window, label, version and account
     assert only.universe == engine.universe and (only.risk_pct, only.max_position_pct, only.max_positions) == (0.01, 0.25, 4)
     assert only.find_setup is find_gap_only_setup and only.entry_until == GAP_ONLY_ENTRY_UNTIL and only.label == "GAP-ONLY"
     assert only.version == GAPONLY_VERSION and only.archive is None and only.record_capped is True and "gap-only" in out

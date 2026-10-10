@@ -10,6 +10,7 @@ in a half-built state.
 
 The migration order is always: create tables (create_all) -> add missing columns (nullable only) ->
 add indexes (IF NOT EXISTS). Run it through `scripts/migrate_db.py`, never raw DDL."""
+
 from __future__ import annotations
 
 from typing import Dict, List, Tuple
@@ -39,7 +40,7 @@ def add_missing_columns(engine) -> None:
                     if not column.nullable:
                         raise RuntimeError(f"{table.name}.{column.name} is new and NOT NULL; migrate the database manually")
                     ddl = column.type.compile(engine.dialect)
-                    conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {column.name} {ddl}'))
+                    conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {column.name} {ddl}"))
 
 
 def ensure_indexes(engine) -> None:
@@ -71,8 +72,7 @@ def schema_status(database_url: str) -> Dict[str, Dict[str, List[str]]]:
 
 
 def _missing(database_url: str) -> List[Tuple[str, List[str]]]:
-    return [(table, info["missing"]) for table, info in schema_status(database_url).items()
-            if info["missing"]]
+    return [(table, info["missing"]) for table, info in schema_status(database_url).items() if info["missing"]]
 
 
 def is_current(database_url: str) -> bool:

@@ -1,4 +1,5 @@
 """Wiring shared by the command-line entry point and the reports: the market wiring and the paper-broker factory."""
+
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -6,14 +7,15 @@ from typing import Callable, Optional
 
 from src.config import Settings
 from src.data.intraday_bars import BarArchive
-from src.engine.ports import Broker
 from src.data.market_data import cached_per_session, fetch_snapshot
 from src.data.universe import ScreenConfig, UniverseScreener
+from src.engine.ports import Broker
 
 
 @dataclass
 class MarketWiring:
     """Everything that differs per market: broker, data functions and universe scanner."""
+
     broker: Broker
     snapshot_fn: Callable
     screener: Optional[UniverseScreener]
@@ -23,8 +25,13 @@ class MarketWiring:
 
 def screen_config(settings: Settings) -> ScreenConfig:
     """Scanner thresholds taken from settings."""
-    return ScreenConfig(settings.max_candidates, settings.min_price, settings.min_traded_value, settings.max_daily_volatility,
-                        affordable_pct=settings.risk.min_position_pct)
+    return ScreenConfig(
+        settings.max_candidates,
+        settings.min_price,
+        settings.min_traded_value,
+        settings.max_daily_volatility,
+        affordable_pct=settings.risk.min_position_pct,
+    )
 
 
 def build_india_screener(settings: Settings) -> UniverseScreener:
@@ -32,8 +39,13 @@ def build_india_screener(settings: Settings) -> UniverseScreener:
     stocks Yahoo shows trading at least half the liquidity floor, so the daily bar download stays small."""
     from src.data.india import load_nse_symbols, yf_bar_fetcher
 
-    return UniverseScreener(lambda: load_nse_symbols(min_traded_value=settings.min_traded_value), yf_bar_fetcher(),
-                            screen_config(settings), chunk=200, use_delivery_filter=settings.delivery_filter)
+    return UniverseScreener(
+        lambda: load_nse_symbols(min_traded_value=settings.min_traded_value),
+        yf_bar_fetcher(),
+        screen_config(settings),
+        chunk=200,
+        use_delivery_filter=settings.delivery_filter,
+    )
 
 
 def intraday_db_url() -> str:
@@ -66,15 +78,20 @@ def make_paper_broker(settings: Settings, database_url: Optional[str] = None, fe
     the same way the running bot does."""
     from src.data.india import IndiaClock, IntradayFeed, yahoo_corporate_actions
     from src.database import make_session_factory
-    from src.engine.paper_broker import PaperBroker
     from src.engine.costs import india_delivery_fees
+    from src.engine.paper_broker import PaperBroker
 
     url = database_url or settings.database_url
     swing = url == settings.database_url  # the intraday account is flat every night: no sweep, no ex-dates to cross
-    return PaperBroker(make_session_factory(url), IntradayFeed(), IndiaClock(),
-                       initial_cash=settings.paper_initial_cash, fees=fees or india_delivery_fees,
-                       cash_yield=settings.cash_yield_pct if swing else 0.0,
-                       corporate_actions=yahoo_corporate_actions if swing else None)
+    return PaperBroker(
+        make_session_factory(url),
+        IntradayFeed(),
+        IndiaClock(),
+        initial_cash=settings.paper_initial_cash,
+        fees=fees or india_delivery_fees,
+        cash_yield=settings.cash_yield_pct if swing else 0.0,
+        corporate_actions=yahoo_corporate_actions if swing else None,
+    )
 
 
 def build_market_wiring(settings: Settings, sessions) -> MarketWiring:
@@ -83,9 +100,16 @@ def build_market_wiring(settings: Settings, sessions) -> MarketWiring:
     from src.engine.paper_broker import PaperBroker
 
     clock, feed = IndiaClock(), IntradayFeed()
-    broker = PaperBroker(sessions, feed, clock, initial_cash=settings.paper_initial_cash,
-                         cash_yield=settings.cash_yield_pct, corporate_actions=yahoo_corporate_actions)
+    broker = PaperBroker(
+        sessions,
+        feed,
+        clock,
+        initial_cash=settings.paper_initial_cash,
+        cash_yield=settings.cash_yield_pct,
+        corporate_actions=yahoo_corporate_actions,
+    )
     screener = build_india_screener(settings) if settings.universe == "market" else None
+
     # Analyse the last COMPLETED session only (stable prompts all day -> cacheable, and matches the backtest), then
     # size/bracket the order off the live price. A session Yahoo has not posted a daily bar for yet is completed from
     # the same feed's 5-minute bars.
@@ -93,8 +117,12 @@ def build_market_wiring(settings: Settings, sessions) -> MarketWiring:
         return feed.bars_since(symbol, datetime.now(timezone.utc) - timedelta(days=7))
 
     return MarketWiring(
-        broker, cached_per_session(lambda s: fetch_snapshot(s, suffix=SUFFIX, as_of=clock.last_completed_session,
-                                                            intraday=recent_5m),
-                                   clock.last_completed_session),
-        screener, "built-in paper simulator", quote_fn=feed.last_price,
+        broker,
+        cached_per_session(
+            lambda s: fetch_snapshot(s, suffix=SUFFIX, as_of=clock.last_completed_session, intraday=recent_5m),
+            clock.last_completed_session,
+        ),
+        screener,
+        "built-in paper simulator",
+        quote_fn=feed.last_price,
     )

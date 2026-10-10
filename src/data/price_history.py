@@ -1,6 +1,8 @@
 """Multi-year daily price history (adjusted, disk-cached): an index's stocks and the index itself. Shared by the live bot's
 market context and by the research tools, so it lives with the data layer, not in research/."""
+
 import logging
+
 # The pickle files read below are the bot's own caches, written into its own cache directory; never user input.
 import pickle  # nosec B403
 import time
@@ -18,13 +20,20 @@ log = logging.getLogger(__name__)
 def _default_download(tickers: List[str], start: str, end: str) -> pd.DataFrame:
     import yfinance as yf
 
-    return yf.download(tickers, start=start, end=end, interval="1d", group_by="ticker", auto_adjust=True,
-                       progress=False, threads=True)
+    return yf.download(
+        tickers, start=start, end=end, interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=True
+    )
 
 
-def load_index_close(ticker: str, years: int = 10, cache_dir: Path = Path("research_cache"), refresh: bool = False,
-                     download: Optional[Callable] = None, today: Callable[[], date] = date.today,
-                     max_age_hours: Optional[float] = None) -> pd.Series:
+def load_index_close(
+    ticker: str,
+    years: int = 10,
+    cache_dir: Path = Path("research_cache"),
+    refresh: bool = False,
+    download: Optional[Callable] = None,
+    today: Callable[[], date] = date.today,
+    max_age_hours: Optional[float] = None,
+) -> pd.Series:
     """Close series for a single Yahoo ticker such as ^CRSLDX (Nifty 500 index). Cached on disk.
 
     `max_age_hours` makes the cache expire (a live bot must not read a frozen regime); if the re-download then fails the
@@ -42,8 +51,13 @@ def load_index_close(ticker: str, years: int = 10, cache_dir: Path = Path("resea
     except Exception as e:
         if stale is None:
             raise
-        log.warning("could not refresh %s (%s: %s); using the cached series ending %s", ticker, type(e).__name__, e,
-                    stale.index[-1].date())
+        log.warning(
+            "could not refresh %s (%s: %s); using the cached series ending %s",
+            ticker,
+            type(e).__name__,
+            e,
+            stale.index[-1].date(),
+        )
         return stale
 
 
@@ -56,14 +70,16 @@ def _download_index(ticker, years, cache, cache_dir, download, today) -> pd.Seri
     return close
 
 
-
-
-
-
-def load_ohlc_universe(index: int = 500, years: int = 10, cache_dir: Path = Path("research_cache"),
-                       refresh: bool = False, download: Optional[Callable] = None,
-                       symbols: Optional[List[str]] = None, chunk: int = 100,
-                       today: Callable[[], date] = date.today) -> dict:
+def load_ohlc_universe(
+    index: int = 500,
+    years: int = 10,
+    cache_dir: Path = Path("research_cache"),
+    refresh: bool = False,
+    download: Optional[Callable] = None,
+    symbols: Optional[List[str]] = None,
+    chunk: int = 100,
+    today: Callable[[], date] = date.today,
+) -> dict:
     """symbol -> daily OHLCV frame (adjusted, no NaN) for an index's stocks: the event simulator needs Open/High/Low for
     next-open fills and stop checks. Cached on disk."""
     cache = cache_dir / f"ohlc_nifty{index}_{years}y.pkl"
@@ -73,9 +89,15 @@ def load_ohlc_universe(index: int = 500, years: int = 10, cache_dir: Path = Path
     return _download_ohlc(symbols, years, cache, cache_dir, download, chunk, today)
 
 
-def load_ohlc_nse(years: int = 10, cache_dir: Path = Path("research_cache"), refresh: bool = False,
-                  download: Optional[Callable] = None, list_symbols: Optional[Callable[[], List[str]]] = None,
-                  chunk: int = 100, today: Callable[[], date] = date.today) -> dict:
+def load_ohlc_nse(
+    years: int = 10,
+    cache_dir: Path = Path("research_cache"),
+    refresh: bool = False,
+    download: Optional[Callable] = None,
+    list_symbols: Optional[Callable[[], List[str]]] = None,
+    chunk: int = 100,
+    today: Callable[[], date] = date.today,
+) -> dict:
     """symbol -> daily OHLCV for EVERY NSE main-board stock listed today -- the universe the live scanner actually scans
     (~2,300), rather than today's Nifty 500. Removes the index-membership part of the survivorship bias (small caps
     that were never in the index are now included) but not the delisting part: Yahoo has no bars for stocks that have
@@ -86,15 +108,22 @@ def load_ohlc_nse(years: int = 10, cache_dir: Path = Path("research_cache"), ref
     return _download_ohlc((list_symbols or load_nse_symbols)(), years, cache, cache_dir, download, chunk, today)
 
 
-def _download_ohlc(symbols: List[str], years: int, cache: Path, cache_dir: Path, download: Optional[Callable],
-                   chunk: int, today: Callable[[], date]) -> dict:
+def _download_ohlc(
+    symbols: List[str],
+    years: int,
+    cache: Path,
+    cache_dir: Path,
+    download: Optional[Callable],
+    chunk: int,
+    today: Callable[[], date],
+) -> dict:
     """Download daily OHLCV for `symbols` in chunks, keep the ones Yahoo has, and cache the dict at `cache`."""
     download = download or _default_download
     end = today().isoformat()
     start = (today() - timedelta(days=int(years * 365.25))).isoformat()
     out = {}
     for i in range(0, len(symbols), chunk):
-        batch = symbols[i:i + chunk]
+        batch = symbols[i : i + chunk]
         wide = download([s + SUFFIX for s in batch], start, end)
         if wide is None or wide.empty:
             continue
@@ -102,7 +131,8 @@ def _download_ohlc(symbols: List[str], years: int, cache: Path, cache_dir: Path,
         for s in batch:
             if s + SUFFIX in top:
                 sub = pd.DataFrame(wide[s + SUFFIX][["Open", "High", "Low", "Close", "Volume"]]).dropna(
-                    subset=["Open", "High", "Low", "Close"])
+                    subset=["Open", "High", "Low", "Close"]
+                )
                 if len(sub):
                     out[s] = sub.fillna({"Volume": 0.0})
         log.info("downloaded %d/%d symbols", min(i + chunk, len(symbols)), len(symbols))

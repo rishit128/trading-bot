@@ -1,4 +1,5 @@
 """Trading pipeline: owns the agents, broker and audit log, and runs one cycle through the LangGraph workflow."""
+
 import dataclasses
 import json
 import logging
@@ -9,23 +10,22 @@ from sqlalchemy import func, select
 
 from src.agents.base import Agent, AgentContext
 from src.config import Settings
-from src.data.indicators import Snapshot
 from src.data.fundamentals import Fundamentals
+from src.data.indicators import Snapshot
 from src.data.market_context import MarketContext
 from src.database import DecisionRecord, EquityRecord, OrderRecord
+from src.engine.agent_signal import AgentSignal, SignalDetails
 from src.engine.enums import NOT_A_PLACED_BUY, SILENT_STATUSES, Action, OrderStatus
 from src.engine.ports import Broker, ChargesFees
 from src.engine.risk_engine import Portfolio, RiskDecision, RiskEngine, drawdown_pause
 from src.engine.strategy import Decision, combine_signals, trend_exit_decision
-from src.versions import VERSIONS
-from src.engine.agent_signal import AgentSignal, SignalDetails
 from src.results import SymbolResult, Verdict
+from src.versions import VERSIONS
 from src.workflow import build_analysis_graph, build_cycle_graph, build_decision_graph
 
 log = logging.getLogger(__name__)
 
 __all__ = ["TradingPipeline", "SymbolResult", "NOT_A_PLACED_BUY"]  # the last is re-exported for callers of the old name
-
 
 
 def details_columns(details: Optional[SignalDetails]) -> dict:
@@ -37,23 +37,29 @@ def details_columns(details: Optional[SignalDetails]) -> dict:
     reflection, chain = details.reflection, details.reasoning_chain
     return dict(
         # analysis extras
-        confluence_score=details.confluence_score, edge_confidence=details.edge_confidence,
+        confluence_score=details.confluence_score,
+        edge_confidence=details.edge_confidence,
         risks_json=json.dumps(details.risks) if details.risks is not None else None,
         reasoning_chain_json=json.dumps(chain.model_dump()) if chain is not None else None,
         market_context_json=json.dumps(details.market_context_json) if details.market_context_json is not None else None,
         # the review: the untouched base confidence, what the critic did and why
         base_confidence=details.base_confidence,
-        adjusted_signal_confidence=details.adjusted_signal_confidence, adjustment_reason=details.adjustment_reason,
+        adjusted_signal_confidence=details.adjusted_signal_confidence,
+        adjustment_reason=details.adjustment_reason,
         biggest_risk=reflection.biggest_risk if reflection else None,
         what_proves_us_wrong=reflection.what_proves_us_wrong if reflection else None,
         bias_check=json.dumps(reflection.bias_check) if reflection else None,
         conviction_adjustments=json.dumps([c.model_dump() for c in reflection.conviction_adjustments]) if reflection else None,
         # accountability: who answered and whether the call agreed with the mechanical filter
-        raw_model=details.raw_model, rule_alignment=details.rule_alignment, falsification=details.falsification)
+        raw_model=details.raw_model,
+        rule_alignment=details.rule_alignment,
+        falsification=details.falsification,
+    )
 
 
 class TradingPipeline:
     """Runs the analyse, decide, execute cycle and holds the safeguards around it (cooldown, halts, alerts)."""
+
     def __init__(
         self,
         settings: Settings,
@@ -110,12 +116,18 @@ class TradingPipeline:
         if snapshot.bar_date is None:
             return None
         with self.sessions() as s:
-            raw = s.scalar(select(DecisionRecord.signals_json)
-                           .where(DecisionRecord.symbol == symbol, DecisionRecord.bar_date == snapshot.bar_date,
-                                  DecisionRecord.prompt_version == VERSIONS["prompt"],
-                                  DecisionRecord.feature_version == VERSIONS["feature"],
-                                  DecisionRecord.signals_json.isnot(None))
-                           .order_by(DecisionRecord.id.desc()).limit(1))
+            raw = s.scalar(
+                select(DecisionRecord.signals_json)
+                .where(
+                    DecisionRecord.symbol == symbol,
+                    DecisionRecord.bar_date == snapshot.bar_date,
+                    DecisionRecord.prompt_version == VERSIONS["prompt"],
+                    DecisionRecord.feature_version == VERSIONS["feature"],
+                    DecisionRecord.signals_json.isnot(None),
+                )
+                .order_by(DecisionRecord.id.desc())
+                .limit(1)
+            )
         if not raw:
             return None
         try:
@@ -129,9 +141,12 @@ class TradingPipeline:
 
     def agent_context(self, symbol: str, snapshot: Snapshot) -> AgentContext:
         """What an agent is given for one stock. Market and company data are lazy: only an agent that asks pays for them."""
-        return AgentContext(symbol, snapshot,
-                            market=lambda: self.market_context_fn(snapshot) if self.market_context_fn else None,
-                            company=lambda: self.fundamentals_fn(symbol) if self.fundamentals_fn else None)
+        return AgentContext(
+            symbol,
+            snapshot,
+            market=lambda: self.market_context_fn(snapshot) if self.market_context_fn else None,
+            company=lambda: self.fundamentals_fn(symbol) if self.fundamentals_fn else None,
+        )
 
     def open_cycle(self) -> Portfolio:
         """Start a cycle: read the account, record its equity, apply the drawdown pause and check halts."""
@@ -146,13 +161,20 @@ class TradingPipeline:
         """Which stocks this cycle analyses (held positions always, so exits keep working)."""
         return list(self._symbols(portfolio))
 
-    def decide(self, symbol: str, portfolio: Portfolio, snapshot: Snapshot, signals: Mapping[str, Optional[AgentSignal]],
-               universe_size: Optional[int] = None) -> Verdict:
+    def decide(
+        self,
+        symbol: str,
+        portfolio: Portfolio,
+        snapshot: Snapshot,
+        signals: Mapping[str, Optional[AgentSignal]],
+        universe_size: Optional[int] = None,
+    ) -> Verdict:
         """Turn the agents' signals into one recorded decision: the deterministic trend exit if it applies, else the agents
         combined by role; then size it with the risk engine and write the audit row."""
         held = portfolio.position_qty.get(symbol, 0)
-        decision = (trend_exit_decision(snapshot, held, self.settings.trend_exit)
-                    or combine_signals(signals, {n: a.role for n, a in self.agents.items()}))
+        decision = trend_exit_decision(snapshot, held, self.settings.trend_exit) or combine_signals(
+            signals, {n: a.role for n, a in self.agents.items()}
+        )
         price = self._quote(symbol, snapshot.price) if decision.action != Action.HOLD else snapshot.price
         risk = self.risk.evaluate(decision.action, decision.confidence, symbol, price, portfolio)
         decision_id = self._log_decision(symbol, snapshot, signals, decision, risk, price, universe_size=universe_size)
@@ -235,14 +257,23 @@ class TradingPipeline:
             self.control.set_drawdown_since(new_since)
         if peak != p.peak_equity:
             self.control.rebase_peak(now)
-            self.notify(f"Drawdown pause over after {lim.drawdown_pause_days:g} days: the peak is rebased to equity "
-                        f"{self.settings.currency}{p.equity:,.0f} and buying resumes.")
+            self.notify(
+                f"Drawdown pause over after {lim.drawdown_pause_days:g} days: the peak is rebased to equity "
+                f"{self.settings.currency}{p.equity:,.0f} and buying resumes."
+            )
             return self._with_peak(p)
         return p
 
-    def _log_decision(self, symbol: str, snap: Snapshot, signals: Mapping[str, Optional[AgentSignal]],
-                      decision: Decision, risk: RiskDecision, price: float,
-                      universe_size: Optional[int] = None) -> int:
+    def _log_decision(
+        self,
+        symbol: str,
+        snap: Snapshot,
+        signals: Mapping[str, Optional[AgentSignal]],
+        decision: Decision,
+        risk: RiskDecision,
+        price: float,
+        universe_size: Optional[int] = None,
+    ) -> int:
         tech = signals.get("technical")
         with self.sessions() as s:
             record = DecisionRecord(
@@ -302,8 +333,12 @@ class TradingPipeline:
         with self.sessions() as s:
             recent = s.scalar(
                 select(OrderRecord.id)
-                .where(OrderRecord.symbol == symbol, OrderRecord.side == Action.BUY,
-                       OrderRecord.status.not_in(NOT_A_PLACED_BUY), OrderRecord.created_at >= cutoff)
+                .where(
+                    OrderRecord.symbol == symbol,
+                    OrderRecord.side == Action.BUY,
+                    OrderRecord.status.not_in(NOT_A_PLACED_BUY),
+                    OrderRecord.created_at >= cutoff,
+                )
                 .limit(1)
             )
         return recent is not None
@@ -343,7 +378,9 @@ class TradingPipeline:
             detail = f" ({error})" if error else ""
             self.notify(f"{action} {qty} {symbol} @ ~{self.settings.currency}{price:,.2f}: {status}{detail}")
         if filled_qty is not None and filled_qty != qty:
-            self.notify(f"PARTIAL/UNFILLED {action} {symbol}: ordered {qty}, broker filled {filled_qty} ({status}). Check the position.")
+            self.notify(
+                f"PARTIAL/UNFILLED {action} {symbol}: ordered {qty}, broker filled {filled_qty} ({status}). Check the position."
+            )
         return status
 
     def _submit(self, symbol: str, action: str, qty: int, price: float):

@@ -1,8 +1,9 @@
 """Focused tests for the LLM-upgrade gaps called out in the review doc that earlier tests do not cover:
 
-  * first call: the one-shot LLM retry on parse/validation failure (and that transport/dead-model failures are not retried)
-  * reflection: the client-side clamp that stops a stage from raising conviction, and the fixed humility tail
-  * cross: both new indexes exist on fresh and pre-existing databases"""
+* first call: the one-shot LLM retry on parse/validation failure (and that transport/dead-model failures are not retried)
+* reflection: the client-side clamp that stops a stage from raising conviction, and the fixed humility tail
+* cross: both new indexes exist on fresh and pre-existing databases"""
+
 import json
 import sqlite3
 from types import SimpleNamespace
@@ -10,18 +11,24 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from src.agents.technical import (AdvancedSignal, COT_SCHEMA, ReflectionChain, ReflectionStage,
-                                  mechanical_action, mechanical_baseline)
 from src.agents.base import LEAD
+from src.agents.technical import (
+    COT_SCHEMA,
+    AdvancedSignal,
+    ReflectionChain,
+    ReflectionStage,
+    mechanical_action,
+    mechanical_baseline,
+)
 from src.agents.technical.phases import apply_reflection
 from src.agents.technical.prompts import cot_prompt
 from src.config import Settings
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord, make_session_factory
 from src.engine.risk_engine import Portfolio
-from src.llm import LLMClient, LLMUnavailable, RETRY_HINT, AgentSignal
-from src.pipeline import TradingPipeline
+from src.llm import RETRY_HINT, AgentSignal, LLMClient, LLMUnavailable
 from src.ops.replay import replay
+from src.pipeline import TradingPipeline
 from src.versions import VERSIONS
 from tests.test_cot import COT_GOOD
 from tests.test_llm_and_pipeline import FakeBroker, FakeOpenAI, StubAgent
@@ -66,8 +73,10 @@ def test_unparseable_json_is_retried_once_then_used():
 
 def test_validation_failure_is_retried_once_then_used():
     # Valid JSON that fails the AgentSignal schema (action outside the enum): also a retry, not a model skip.
-    sig, calls = _ask_one(json.dumps({"action": "TO THE MOON", "confidence": 0.8, "reasoning": "r"}),
-                          json.dumps({"action": "SELL", "confidence": 0.4, "reasoning": "down"}))
+    sig, calls = _ask_one(
+        json.dumps({"action": "TO THE MOON", "confidence": 0.8, "reasoning": "r"}),
+        json.dumps({"action": "SELL", "confidence": 0.4, "reasoning": "down"}),
+    )
     assert sig.action == "SELL" and len(calls) == 2
 
 
@@ -97,8 +106,9 @@ def test_transient_errors_are_retried_then_the_next_model_and_missing_models_are
         LLMClient(["a", "b"], client=api).signal("p")
     assert api.calls == ["a"] * 3 + ["b"] * 3  # transient: the first try plus two backed-off retries, then the next model
 
-    gone = NoRetryClient(openai.NotFoundError(
-        "gone", response=httpx.Response(404, request=httpx.Request("POST", "http://x")), body=None))
+    gone = NoRetryClient(
+        openai.NotFoundError("gone", response=httpx.Response(404, request=httpx.Request("POST", "http://x")), body=None)
+    )
     llm = LLMClient(["a"], client=gone)
     with pytest.raises(LLMUnavailable):
         llm.signal("p")
@@ -109,13 +119,18 @@ def test_transient_errors_are_retried_then_the_next_model_and_missing_models_are
 # ------------------------------------------------------------------ reflection: monotonic clamp + humility
 def test_reflection_never_lets_a_stage_raise_conviction():
     base = SimpleNamespace(confidence=0.75)
-    rising = ReflectionChain(action="BUY", confidence=0.9,
-                             step2_reflection=ReflectionStage(conviction=0.9, reason="overconfident"),
-                             step3_fundamental=ReflectionStage(conviction=0.85, reason="sure"),
-                             step4_macro=ReflectionStage(conviction=0.8, reason="uptrend"),
-                             step5_integration=ReflectionStage(conviction=0.8, reason="still sure"),
-                             step6_risk=ReflectionStage(conviction=0.8, reason="very sure"),
-                             biggest_risk="x", what_proves_us_wrong="y", bias_check=[])
+    rising = ReflectionChain(
+        action="BUY",
+        confidence=0.9,
+        step2_reflection=ReflectionStage(conviction=0.9, reason="overconfident"),
+        step3_fundamental=ReflectionStage(conviction=0.85, reason="sure"),
+        step4_macro=ReflectionStage(conviction=0.8, reason="uptrend"),
+        step5_integration=ReflectionStage(conviction=0.8, reason="still sure"),
+        step6_risk=ReflectionStage(conviction=0.8, reason="very sure"),
+        biggest_risk="x",
+        what_proves_us_wrong="y",
+        bias_check=[],
+    )
     steps, final = apply_reflection(base, rising)
     # Every later stage that tried to go above 0.75 is pinned to the previous conviction (never up).
     assert [c for _, c, _ in steps] == pytest.approx([0.75, 0.75, 0.75, 0.75, 0.75, 0.75])
@@ -123,13 +138,18 @@ def test_reflection_never_lets_a_stage_raise_conviction():
 
 
 def test_reflection_keeps_model_drops_and_applies_humility_once():
-    falling = ReflectionChain(action="SELL", confidence=0.3,
-                              step2_reflection=ReflectionStage(conviction=0.7, reason="r2"),
-                              step3_fundamental=ReflectionStage(conviction=0.6, reason="r3"),
-                              step4_macro=ReflectionStage(conviction=0.5, reason="r4"),
-                              step5_integration=ReflectionStage(conviction=0.5, reason="r5"),
-                              step6_risk=ReflectionStage(conviction=0.4, reason="r6"),
-                              biggest_risk="x", what_proves_us_wrong="y", bias_check=[])
+    falling = ReflectionChain(
+        action="SELL",
+        confidence=0.3,
+        step2_reflection=ReflectionStage(conviction=0.7, reason="r2"),
+        step3_fundamental=ReflectionStage(conviction=0.6, reason="r3"),
+        step4_macro=ReflectionStage(conviction=0.5, reason="r4"),
+        step5_integration=ReflectionStage(conviction=0.5, reason="r5"),
+        step6_risk=ReflectionStage(conviction=0.4, reason="r6"),
+        biggest_risk="x",
+        what_proves_us_wrong="y",
+        bias_check=[],
+    )
     steps, final = apply_reflection(SimpleNamespace(confidence=0.75), falling)
     assert [c for _, c, _ in steps] == pytest.approx([0.75, 0.7, 0.6, 0.5, 0.5, 0.4])
     assert final == pytest.approx(0.3)  # 0.4 - 0.10, exactly the one humility discount
@@ -182,8 +202,7 @@ def test_cot_prompt_declares_mechanical_baseline_and_rule_check():
 
 def test_advanced_signal_carries_alignment_falsification_and_answering_model():
     body = json.loads(COT_GOOD)
-    body.update({"rule_alignment": "deviate",
-                 "falsification": "a close below MA50 would invalidate the trend"})
+    body.update({"rule_alignment": "deviate", "falsification": "a close below MA50 would invalidate the trend"})
     fake = FakeOpenAI({"a": json.dumps(body)})
     llm = LLMClient(["a"], client=fake)
     advanced = llm.structured_call("p", AdvancedSignal, COT_SCHEMA)
@@ -204,16 +223,25 @@ def test_old_payloads_without_the_new_fields_still_parse_and_are_stamped():
 
 def test_pipeline_persists_raw_model_rule_alignment_and_falsification(tmp_path):
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'a.db'}")
-    sig = AgentSignal(action="BUY", confidence=0.6, reasoning="r", details={
-        "raw_model": "deepseek/deepseek-r1", "rule_alignment": "deviate",
-        "falsification": "a close below 98 breaks MA50 support",
-        "edge_confidence": 0.5, "confluence_score": 7, "risks": ["x"],
-        "reasoning_chain": {"trend": "t", "overbought": "o", "volume": "v"},
-    })
+    sig = AgentSignal(
+        action="BUY",
+        confidence=0.6,
+        reasoning="r",
+        details={
+            "raw_model": "deepseek/deepseek-r1",
+            "rule_alignment": "deviate",
+            "falsification": "a close below 98 breaks MA50 support",
+            "edge_confidence": 0.5,
+            "confluence_score": 7,
+            "risks": ["x"],
+            "reasoning_chain": {"trend": "t", "overbought": "o", "volume": "v"},
+        },
+    )
     pipe = TradingPipeline(
         Settings(watchlist=("AAPL",), dry_run=True),
         [StubAgent(lambda s: sig, "technical", LEAD)],
-        FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)), sessions,
+        FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)),
+        sessions,
         lambda sym: SNAP,
     )
     pipe.run_once()
@@ -246,7 +274,8 @@ def test_pipeline_stamps_versions_and_replay_exposes_them(tmp_path):
     pipe = TradingPipeline(
         Settings(watchlist=("AAPL",), dry_run=True),
         [StubAgent(lambda s: sig, "technical", LEAD)],
-        FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)), sessions,
+        FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)),
+        sessions,
         lambda sym: SNAP,
     )
     pipe.run_once()
@@ -255,8 +284,11 @@ def test_pipeline_stamps_versions_and_replay_exposes_them(tmp_path):
     assert row.prompt_version == VERSIONS["prompt"]
     assert row.feature_version == VERSIONS["feature"]
     assert row.strategy_version == VERSIONS["strategy"]
-    assert replay(row).versions == {"strategy": VERSIONS["strategy"], "prompt": VERSIONS["prompt"],
-                                    "feature": VERSIONS["feature"]}
+    assert replay(row).versions == {
+        "strategy": VERSIONS["strategy"],
+        "prompt": VERSIONS["prompt"],
+        "feature": VERSIONS["feature"],
+    }
 
 
 def test_pipeline_stamps_the_per_decision_universe_size(tmp_path):
@@ -265,7 +297,8 @@ def test_pipeline_stamps_the_per_decision_universe_size(tmp_path):
     pipe = TradingPipeline(
         Settings(watchlist=("AAPL", "MSFT"), dry_run=True),
         [StubAgent(lambda s: sig, "technical", LEAD)],
-        FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)), sessions,
+        FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)),
+        sessions,
         lambda sym: SNAP,
     )
     pipe.run_once()

@@ -1,6 +1,7 @@
 """The deterministic risk gate: example-based checks below, then property-style tests over thousands of seeded random
 accounts (the risk engine is the only thing standing between an AI's opinion and an order, so its guarantees are
 checked broadly, not just on a few examples)."""
+
 import random
 from datetime import date, timedelta
 
@@ -12,14 +13,21 @@ from src.engine.risk_engine import Portfolio, RiskEngine, drawdown_pause
 
 # min_position_pct == max_position_pct here: a flat 5% regardless of confidence, so the existing quantity assertions
 # below (written before confidence-scaled sizing existed) still hold. Scaling itself is tested separately below.
-LIM = RiskLimits(min_position_pct=0.05, max_position_pct=0.05, max_portfolio_exposure_pct=0.80, max_daily_loss_pct=0.02,
-                 max_drawdown_pct=0.20, min_confidence=0.6)
+LIM = RiskLimits(
+    min_position_pct=0.05,
+    max_position_pct=0.05,
+    max_portfolio_exposure_pct=0.80,
+    max_daily_loss_pct=0.02,
+    max_drawdown_pct=0.20,
+    min_confidence=0.6,
+)
 ENGINE = RiskEngine(LIM)
 
 
 def pf(**kw):
-    base = dict(cash=100_000.0, equity=100_000.0, positions={}, position_qty={},
-                start_of_day_equity=100_000.0, peak_equity=100_000.0)
+    base = dict(
+        cash=100_000.0, equity=100_000.0, positions={}, position_qty={}, start_of_day_equity=100_000.0, peak_equity=100_000.0
+    )
     base.update(kw)
     return Portfolio(**base)
 
@@ -75,8 +83,7 @@ def test_drawdown_limit_halts_buys():
 
 
 def test_sell_closes_full_position_and_ignores_daily_loss():
-    d = ENGINE.evaluate("SELL", 0.9, "AAPL", 100.0,
-                        pf(equity=90_000.0, positions={"AAPL": 3000.0}, position_qty={"AAPL": 30}))
+    d = ENGINE.evaluate("SELL", 0.9, "AAPL", 100.0, pf(equity=90_000.0, positions={"AAPL": 3000.0}, position_qty={"AAPL": 30}))
     assert d.approved and d.quantity == 30
 
 
@@ -120,8 +127,16 @@ def test_sells_are_never_blocked_by_max_open_positions():
 
 
 # ---------------------------------------------------------------- confidence-scaled position size
-SCALED = RiskEngine(RiskLimits(min_position_pct=0.10, max_position_pct=0.25, max_portfolio_exposure_pct=0.80,
-                               max_daily_loss_pct=0.02, max_drawdown_pct=0.20, min_confidence=0.60))
+SCALED = RiskEngine(
+    RiskLimits(
+        min_position_pct=0.10,
+        max_position_pct=0.25,
+        max_portfolio_exposure_pct=0.80,
+        max_daily_loss_pct=0.02,
+        max_drawdown_pct=0.20,
+        min_confidence=0.60,
+    )
+)
 
 
 def test_position_pct_is_the_floor_at_the_minimum_confidence():
@@ -157,8 +172,8 @@ D0 = date(2026, 1, 1)
 
 
 def test_drawdown_pause_starts_the_clock_only_while_the_limit_is_breached():
-    assert drawdown_pause(100.0, 95.0, None, D0, 0.20, 30) == (100.0, None)           # only -5%: nothing pending
-    assert drawdown_pause(100.0, 79.0, None, D0, 0.20, 30) == (100.0, D0)              # -21%: halt begins today
+    assert drawdown_pause(100.0, 95.0, None, D0, 0.20, 30) == (100.0, None)  # only -5%: nothing pending
+    assert drawdown_pause(100.0, 79.0, None, D0, 0.20, 30) == (100.0, D0)  # -21%: halt begins today
     assert drawdown_pause(100.0, 79.0, D0, D0 + timedelta(days=29), 0.20, 30) == (100.0, D0)  # still cooling off
 
 
@@ -220,10 +235,16 @@ CASES = 4000
 def random_limits(rng):
     max_pos = rng.choice([0.03, 0.05, 0.1, 0.25])
     min_pos = rng.choice([max_pos, max_pos / 2, max_pos / 4])
-    return RiskLimits(min_position_pct=min_pos, max_position_pct=max_pos,
-                      max_portfolio_exposure_pct=rng.choice([0.5, 0.8, 1.0]), max_daily_loss_pct=rng.choice([0.02, 0.05]),
-                      max_drawdown_pct=rng.choice([0.1, 0.2, 0.3]), min_confidence=rng.choice([0.5, 0.6, 0.7]),
-                      max_open_positions=rng.choice([1, 3, 5, 10]), max_fee_drag_pct=rng.choice([0.0, 0.04]))
+    return RiskLimits(
+        min_position_pct=min_pos,
+        max_position_pct=max_pos,
+        max_portfolio_exposure_pct=rng.choice([0.5, 0.8, 1.0]),
+        max_daily_loss_pct=rng.choice([0.02, 0.05]),
+        max_drawdown_pct=rng.choice([0.1, 0.2, 0.3]),
+        min_confidence=rng.choice([0.5, 0.6, 0.7]),
+        max_open_positions=rng.choice([1, 3, 5, 10]),
+        max_fee_drag_pct=rng.choice([0.0, 0.04]),
+    )
 
 
 def random_portfolio(rng):
@@ -264,15 +285,15 @@ def test_an_approved_buy_never_breaks_a_limit(seed):
         existing = p.positions.get(symbol, 0.0)
         assert d.quantity >= 1
         assert conf >= limits.min_confidence
-        assert value <= p.cash + 1e-6                                                       # never spends money it lacks
-        assert existing + value <= p.equity * engine.position_pct(conf) + price            # size follows confidence
-        assert existing + value <= p.equity * limits.max_position_pct + price              # ... and the position cap
+        assert value <= p.cash + 1e-6  # never spends money it lacks
+        assert existing + value <= p.equity * engine.position_pct(conf) + price  # size follows confidence
+        assert existing + value <= p.equity * limits.max_position_pct + price  # ... and the position cap
         assert sum(p.positions.values()) + value <= p.equity * limits.max_portfolio_exposure_pct + price
-        assert symbol in p.positions or len(p.positions) < limits.max_open_positions       # never a slot beyond the cap
-        assert engine.halt_reason(p) is None                                                # never buys while halted
+        assert symbol in p.positions or len(p.positions) < limits.max_open_positions  # never a slot beyond the cap
+        assert engine.halt_reason(p) is None  # never buys while halted
         if limits.max_fee_drag_pct > 0:
             drag = (india_delivery_fees("BUY", value) + india_delivery_fees("SELL", value)) / value
-            assert drag <= limits.max_fee_drag_pct + 1e-9                                   # never a fee-dominated position
+            assert drag <= limits.max_fee_drag_pct + 1e-9  # never a fee-dominated position
     assert approved > 150  # the generator really produces approvable cases; a vacuous pass would prove nothing
 
 
@@ -331,9 +352,9 @@ def test_the_drawdown_pause_only_ever_rebases_downward_after_the_full_cool_off()
         if pause <= 0:
             assert (new_peak, new_since) == (peak, since)
         elif not in_drawdown:
-            assert new_peak == peak and new_since is None      # recovered: nothing pending, peak untouched
+            assert new_peak == peak and new_since is None  # recovered: nothing pending, peak untouched
         elif new_peak != peak:
-            assert new_peak == equity and new_since is None    # rebased to today's equity only ...
+            assert new_peak == equity and new_since is None  # rebased to today's equity only ...
             assert since is not None and (today - since).days >= pause  # ... after a full cool-off
         else:
-            assert new_since is not None                       # still cooling off, and the clock is running
+            assert new_since is not None  # still cooling off, and the clock is running

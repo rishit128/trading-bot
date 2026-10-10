@@ -1,4 +1,5 @@
 """Fetching 5-minute bars and archiving them: idempotent, round-trips exactly, and keeps sessions apart."""
+
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -12,8 +13,16 @@ from src.database import make_session_factory
 def frame(day, n=4, base=100.0, start=(9, 15)):
     idx = pd.DatetimeIndex([datetime(*day, *start, tzinfo=IST) + timedelta(minutes=5 * i) for i in range(n)])
     px = [base + i for i in range(n)]
-    return pd.DataFrame({"Open": px, "High": [p + 0.5 for p in px], "Low": [p - 0.5 for p in px], "Close": [p + 0.25 for p in px],
-                         "Volume": [1000.0 + i for i in range(n)]}, index=idx)
+    return pd.DataFrame(
+        {
+            "Open": px,
+            "High": [p + 0.5 for p in px],
+            "Low": [p - 0.5 for p in px],
+            "Close": [p + 0.25 for p in px],
+            "Volume": [1000.0 + i for i in range(n)],
+        },
+        index=idx,
+    )
 
 
 @pytest.fixture
@@ -23,7 +32,7 @@ def archive(tmp_path):
 
 # -- fetching -----------------------------------------------------------------------------------------------------------
 def test_fetch_returns_ist_frames_per_symbol_and_omits_symbols_without_data():
-    wide = pd.concat({"AAA.NS": frame((2026, 9, 21)).tz_convert("UTC")}, axis=1)     # BBB.NS is missing entirely
+    wide = pd.concat({"AAA.NS": frame((2026, 9, 21)).tz_convert("UTC")}, axis=1)  # BBB.NS is missing entirely
     out = fetch_5m_bars(["AAA", "BBB"], "1d", download=lambda tickers, **kw: wide)
     assert set(out) == {"AAA"} and str(out["AAA"].index.tz) == str(IST) and len(out["AAA"]) == 4
     assert fetch_5m_bars(["AAA"], download=lambda tickers, **kw: pd.DataFrame()) == {}
@@ -75,7 +84,7 @@ def test_a_new_symbol_on_a_stored_day_and_a_new_day_for_a_stored_symbol_are_both
 def test_a_frame_spanning_several_sessions_is_split_by_day_and_only_missing_days_are_added(archive):
     archive.save({"AAA": frame((2026, 9, 22))})
     window = pd.concat([frame((2026, 9, 21)), frame((2026, 9, 22)), frame((2026, 9, 23))])
-    assert archive.save({"AAA": window}) == 8                        # the 22nd was already stored
+    assert archive.save({"AAA": window}) == 8  # the 22nd was already stored
     assert archive.days() == ["2026-09-21", "2026-09-22", "2026-09-23"]
     assert len(archive.load()["AAA"]) == 12
 

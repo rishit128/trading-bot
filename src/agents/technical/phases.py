@@ -1,6 +1,7 @@
 """The parts of the agent's review step that need no model: how the critic's conviction chain is enforced, how its answer
 becomes audit details, and how the audit record is stamped. Pure functions over signals, so each rule is testable on its
 own and the agent class only orchestrates."""
+
 import dataclasses
 import json
 from typing import List, Optional, Tuple
@@ -28,8 +29,13 @@ def tag(sig: AgentSignal, key: str, value) -> AgentSignal:
     """The same signal with one more audit flag in its details, so a skipped review is visible in the record."""
     if sig.details is None:
         return sig
-    return AgentSignal(action=sig.action, confidence=sig.confidence, reasoning=sig.reasoning, degraded=sig.degraded,
-                       details=sig.details.model_copy(update={key: value}))
+    return AgentSignal(
+        action=sig.action,
+        confidence=sig.confidence,
+        reasoning=sig.reasoning,
+        degraded=sig.degraded,
+        details=sig.details.model_copy(update={key: value}),
+    )
 
 
 def stamp_base(sig: AgentSignal, market=None, company=None) -> AgentSignal:
@@ -37,29 +43,49 @@ def stamp_base(sig: AgentSignal, market=None, company=None) -> AgentSignal:
     rebuilt on replay). Signals without details (the compact tier) are left alone."""
     if sig.details is None:
         return sig
+
     def plain(data):  # JSON-shaped (tuples become lists) so the stored record equals what was used
         return json.loads(json.dumps(dataclasses.asdict(data))) if data is not None else None
 
     update: dict = {"market_context_json": plain(market), "company_json": plain(company)}
     if sig.details.base_confidence is None:
         update["base_confidence"] = sig.confidence
-    return AgentSignal(action=sig.action, confidence=sig.confidence, reasoning=sig.reasoning,
-                       degraded=sig.degraded, details=sig.details.model_copy(update=update))
+    return AgentSignal(
+        action=sig.action,
+        confidence=sig.confidence,
+        reasoning=sig.reasoning,
+        degraded=sig.degraded,
+        details=sig.details.model_copy(update=update),
+    )
 
 
-def reflection_details(base: AgentSignal, out: ReflectionChain, steps: List[Tuple[str, float, str]],
-                       final_confidence: float, critic_confidence: float, upheld: bool) -> ReflectionDetails:
+def reflection_details(
+    base: AgentSignal,
+    out: ReflectionChain,
+    steps: List[Tuple[str, float, str]],
+    final_confidence: float,
+    critic_confidence: float,
+    upheld: bool,
+) -> ReflectionDetails:
     return ReflectionDetails(
-        biggest_risk=out.biggest_risk, what_proves_us_wrong=out.what_proves_us_wrong, bias_check=out.bias_check,
+        biggest_risk=out.biggest_risk,
+        what_proves_us_wrong=out.what_proves_us_wrong,
+        bias_check=out.bias_check,
         conviction_adjustments=[ConvictionStage(stage=name, conviction=round(conviction, 4)) for name, conviction, _ in steps],
-        final_action=out.action, final_confidence=final_confidence, base_confidence_entering=round(base.confidence, 4),
-        humility_reduction=HUMILITY, critic_confidence=critic_confidence, upheld=upheld)
+        final_action=out.action,
+        final_confidence=final_confidence,
+        base_confidence_entering=round(base.confidence, 4),
+        humility_reduction=HUMILITY,
+        critic_confidence=critic_confidence,
+        upheld=upheld,
+    )
 
 
 def review_summary(current: AgentSignal, market=None, company=None) -> str:
     """What the critic is shown: the base reasoning, and the same company and market data the analyst had."""
-    return "\n".join([f"Base reasoning: {current.reasoning}", f"Company: {company_text(company)}",
-                      f"Market: {market_text(market)}"])
+    return "\n".join(
+        [f"Base reasoning: {current.reasoning}", f"Company: {company_text(company)}", f"Market: {market_text(market)}"]
+    )
 
 
 def stamp_review(current: AgentSignal) -> None:

@@ -1,12 +1,13 @@
 """The live-configuration backtest must run the live pieces (scanner filter, ranking, affordability, risk engine, exits)."""
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from src.research.backtest import simulate
 from src.config import RiskLimits
-from src.data.universe import (Candidate, ScreenConfig, UniverseScreener, screen_bars, select_candidates)
-from src.research.live_backtest import (make_buy_source, ranked_candidates, run_live_config, summarize_run)
+from src.data.universe import Candidate, ScreenConfig, UniverseScreener, screen_bars, select_candidates
+from src.research.backtest import simulate
+from src.research.live_backtest import make_buy_source, ranked_candidates, run_live_config, summarize_run
 
 CFG = ScreenConfig(max_candidates=5, min_price=1.0, min_traded_value=1.0, max_daily_volatility=0.5)
 N = 330
@@ -19,8 +20,16 @@ def bars_for(seed, slope, base=100.0, n=N, idx=None):
     idx = IDX[-n:] if idx is None else idx
     close = base * (1 + slope * np.arange(n)) + np.cumsum(rng.normal(0, 0.006 * base, n))
     close = pd.Series(close, index=idx)
-    return pd.DataFrame({"Open": close.shift(1).fillna(close.iloc[0]), "High": close * 1.01, "Low": close * 0.99,
-                         "Close": close, "Volume": 1_000_000.0}, index=idx)
+    return pd.DataFrame(
+        {
+            "Open": close.shift(1).fillna(close.iloc[0]),
+            "High": close * 1.01,
+            "Low": close * 0.99,
+            "Close": close,
+            "Volume": 1_000_000.0,
+        },
+        index=idx,
+    )
 
 
 UNIVERSE = {"AAA": bars_for(1, 0.002), "BBB": bars_for(2, 0.002), "CCC": bars_for(3, 0.002, base=5000.0)}
@@ -52,11 +61,13 @@ def test_unaffordable_stocks_are_dropped_in_live_and_backtest_alike():
     cfg = ScreenConfig(max_candidates=5, affordable_pct=0.10)
     source = make_buy_source({IDX[0]: ranked}, cfg, confidence=0.8)
     from src.engine.risk_engine import Portfolio
+
     assert source(IDX[0], Portfolio(cash=20_000, equity=20_000)) == [("CHEAP", 0.8)]
 
 
 def test_screener_applies_affordability_to_the_symbols_it_hands_the_pipeline():
     from datetime import date
+
     from src.engine.risk_engine import Portfolio
 
     long = pd.concat({s: df[["Close", "Volume"]] for s, df in UNIVERSE.items()}, names=["symbol", "timestamp"])
@@ -69,8 +80,10 @@ def test_screener_applies_affordability_to_the_symbols_it_hands_the_pipeline():
 
 def _two_stock_bars():
     idx = pd.bdate_range("2024-01-01", periods=10)
+
     def flat(p):
         return pd.DataFrame({"Open": p, "High": p, "Low": p, "Close": p, "Volume": 1e6}, index=idx)
+
     return {"AAA": flat(100.0), "ZZZ": flat(100.0)}, idx
 
 
@@ -79,7 +92,12 @@ def test_ordered_buy_source_fills_the_best_ranked_stock_not_the_alphabetical_one
     limits = RiskLimits(max_open_positions=1, min_position_pct=0.5, max_position_pct=0.5, max_portfolio_exposure_pct=0.8)
     by_signal = simulate(bars, {"AAA": {idx[0]: ("BUY", 0.9)}, "ZZZ": {idx[0]: ("BUY", 0.9)}}, limits)
     assert [t for t in by_signal.trades] == [] and by_signal.open_at_end == 1  # alphabetical: one slot goes to AAA
-    ranked = simulate(bars, {}, limits, buy_source=lambda day, pf: [("ZZZ", 0.9), ("AAA", 0.9)] if day == idx[0] else [],)
+    ranked = simulate(
+        bars,
+        {},
+        limits,
+        buy_source=lambda day, pf: [("ZZZ", 0.9), ("AAA", 0.9)] if day == idx[0] else [],
+    )
     sell_both = {s: {idx[2]: ("SELL", 0.9)} for s in ("AAA", "ZZZ")}  # only the stock actually held can be sold
     close = simulate(bars, sell_both, limits, buy_source=lambda day, pf: [("ZZZ", 0.9), ("AAA", 0.9)] if day == idx[0] else [])
     assert ranked.open_at_end == 1 and [t.symbol for t in close.trades] == ["ZZZ"]  # rank order wins the only slot
@@ -101,8 +119,18 @@ def test_live_config_run_uses_live_limits_costs_and_reports_expectancy():
     cfg = ScreenConfig(max_candidates=5, min_price=1.0, min_traded_value=1.0, max_daily_volatility=0.5, affordable_pct=0.10)
     run = run_live_config(UNIVERSE, limits, cfg, 20_000.0, dates=dates)
     s = summarize_run(run)
-    assert set(s) >= {"total_return", "cagr", "sharpe", "max_drawdown", "trades", "win_rate", "expectancy_pct",
-                      "profit_factor", "fees", "exits"}
+    assert set(s) >= {
+        "total_return",
+        "cagr",
+        "sharpe",
+        "max_drawdown",
+        "trades",
+        "win_rate",
+        "expectancy_pct",
+        "profit_factor",
+        "fees",
+        "exits",
+    }
     held = run.result.open_at_end + s["trades"]
     assert held >= 1
     assert "CCC" not in {t.symbol for t in run.result.trades}  # ~Rs 5,000+/share can't be bought with Rs 20,000 at 10%

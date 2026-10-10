@@ -29,6 +29,7 @@ waited for. Frozen rules:
     above the stop (the stop would already be breached);
   * at most the account's position limit; further eligible stocks are recorded as SKIPPED, not silently dropped.
 It answers one question: does waiting for the breakout add anything over simply buying the big gaps?"""
+
 from dataclasses import dataclass
 from datetime import time as dtime
 from typing import Optional, Tuple
@@ -45,10 +46,10 @@ ENTRY_FROM, ENTRY_UNTIL, SQUARE_OFF = dtime(9, 30), dtime(14, 0), dtime(15, 15)
 MIN_RANGE, MAX_RANGE = 0.003, 0.025
 VOLUME_MULT = 1.5
 TARGET_R = 2.0
-GAP_MIN = 0.02                   # gap-and-go: open at least 2% above the previous session's close...
+GAP_MIN = 0.02  # gap-and-go: open at least 2% above the previous session's close...
 GAP_ENTRY_UNTIL = dtime(10, 30)  # ...and break the opening range high within the first hour
-NO_TARGET = 1.0                  # a +100% "target" for a strategy that has none: it exits at the stop or the square-off
-GAP_ONLY_BAR = dtime(9, 25)          # gap-only: enter on the close of this bar (09:25-09:30, the last opening-range bar)...
+NO_TARGET = 1.0  # a +100% "target" for a strategy that has none: it exits at the stop or the square-off
+GAP_ONLY_BAR = dtime(9, 25)  # gap-only: enter on the close of this bar (09:25-09:30, the last opening-range bar)...
 GAP_ONLY_ENTRY_UNTIL = dtime(9, 30)  # ...so no bar starting at or after 09:30 can signal: only the 09:30 cycle trades
 CASH_HEADROOM = 1.003  # cash kept back per share bought: slippage (0.05%) and both fees fit inside 0.3%
 
@@ -60,6 +61,7 @@ class Setup:
     `volume_ratio` is the breakout bar's volume over the average of the bars before it; `strength` rescales it to 0-1
     (0.0 at the 1.5x minimum, 1.0 at 3x or more). It is recorded for analysis and no longer sizes the position: the audit
     found the strongest-volume signals did no better than the weakest."""
+
     symbol: str
     signal_price: float
     stop: float
@@ -74,11 +76,12 @@ class Setup:
 @dataclass(frozen=True)
 class Breakout:
     """The first breakout bar found in a session's arrays (see `first_breakout`)."""
+
     index: int
     range_high: float
     range_low: float
-    width: float           # the opening range as a fraction of its high
-    volume_ratio: float    # the bar's volume over the average of the bars before it
+    width: float  # the opening range as a fraction of its high
+    volume_ratio: float  # the bar's volume over the average of the bars before it
 
 
 def minute_of_day(t: dtime) -> int:
@@ -86,20 +89,29 @@ def minute_of_day(t: dtime) -> int:
     return t.hour * 60 + t.minute
 
 
-def session_vwap_and_volume_ratio(high: np.ndarray, low: np.ndarray, close: np.ndarray,
-                                  volume: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def session_vwap_and_volume_ratio(
+    high: np.ndarray, low: np.ndarray, close: np.ndarray, volume: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
     """Per bar: the session's VWAP up to and including that bar (typical price H+L+C over 3, volume-weighted), and the bar's
     volume over the mean volume of the bars BEFORE it (0 when there was none). Both use only data up to that bar."""
     running_volume = np.cumsum(volume)
     with np.errstate(invalid="ignore", divide="ignore"):
         vwap = np.cumsum((high + low + close) / 3 * volume) / running_volume
-        prior_average = np.concatenate([[np.nan], running_volume[:-1] / np.arange(1, len(close))])   # mean of bars 0..i-1
+        prior_average = np.concatenate([[np.nan], running_volume[:-1] / np.arange(1, len(close))])  # mean of bars 0..i-1
         ratio = np.where(prior_average > 0, volume / prior_average, 0.0)
     return vwap, ratio
 
 
-def first_breakout(high: np.ndarray, low: np.ndarray, close: np.ndarray, volume: np.ndarray, minutes: np.ndarray,
-                   use_range: bool = True, use_vwap: bool = True, use_volume: bool = True) -> Optional[Breakout]:
+def first_breakout(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    volume: np.ndarray,
+    minutes: np.ndarray,
+    use_range: bool = True,
+    use_vwap: bool = True,
+    use_volume: bool = True,
+) -> Optional[Breakout]:
     """The first bar after the opening range that closes above its high, above VWAP, on a volume surge, inside the entry
     window; or None. Works on whole-session numpy arrays (`minutes` = minutes since midnight per bar) and is the one place
     the rule is written down: the live engine reaches it through `find_setup`, the audit through switches that disable a
@@ -125,8 +137,14 @@ def first_breakout(high: np.ndarray, low: np.ndarray, close: np.ndarray, volume:
     return Breakout(i, range_high, range_low, width, float(ratio[i]))
 
 
-def first_gap_breakout(open_price: float, prev_close: Optional[float], high: np.ndarray, close: np.ndarray,
-                       minutes: np.ndarray, min_gap: float = GAP_MIN) -> Optional[int]:
+def first_gap_breakout(
+    open_price: float,
+    prev_close: Optional[float],
+    high: np.ndarray,
+    close: np.ndarray,
+    minutes: np.ndarray,
+    min_gap: float = GAP_MIN,
+) -> Optional[int]:
     """The gap-and-go entry bar: the session opened at least `min_gap` above `prev_close` and this is the first bar from
     09:30 to 10:30 that closes above the opening range high; or None. Shared by the live engine (`find_gap_setup`) and the
     research tests, like `first_breakout`."""
@@ -166,15 +184,29 @@ def find_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float] 
     if not opening_range_intact(day_bars):
         return None
     index = pd.DatetimeIndex(day_bars.index)
-    found = first_breakout(day_bars["High"].to_numpy(float), day_bars["Low"].to_numpy(float), day_bars["Close"].to_numpy(float),
-                           day_bars["Volume"].to_numpy(float), (index.hour * 60 + index.minute).to_numpy())
+    found = first_breakout(
+        day_bars["High"].to_numpy(float),
+        day_bars["Low"].to_numpy(float),
+        day_bars["Close"].to_numpy(float),
+        day_bars["Volume"].to_numpy(float),
+        (index.hour * 60 + index.minute).to_numpy(),
+    )
     if found is None:
         return None
     entry = float(day_bars["Close"].iloc[found.index])
     risk = entry - found.range_low
     strength = min(1.0, max(0.0, (found.volume_ratio - VOLUME_MULT) / VOLUME_MULT))
-    return Setup(symbol, entry, found.range_low, entry + TARGET_R * risk, found.range_high, found.range_low,
-                 day_bars.index[found.index], strength, found.volume_ratio)
+    return Setup(
+        symbol,
+        entry,
+        found.range_low,
+        entry + TARGET_R * risk,
+        found.range_high,
+        found.range_low,
+        day_bars.index[found.index],
+        strength,
+        found.volume_ratio,
+    )
 
 
 def find_gap_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float]) -> Optional[Setup]:
@@ -190,8 +222,9 @@ def find_gap_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[flo
         return None
     entry, range_high, range_low = float(close[i]), float(high[:RANGE_BARS].max()), float(low[:RANGE_BARS].min())
     _, ratio = session_vwap_and_volume_ratio(high, low, close, volume)
-    return Setup(symbol, entry, range_low, entry * (1 + NO_TARGET), range_high, range_low, day_bars.index[i],
-                 volume_ratio=float(ratio[i]))
+    return Setup(
+        symbol, entry, range_low, entry * (1 + NO_TARGET), range_high, range_low, day_bars.index[i], volume_ratio=float(ratio[i])
+    )
 
 
 def find_gap_only_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float]) -> Optional[Setup]:
@@ -209,12 +242,14 @@ def find_gap_only_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optiona
     if entry <= range_low:  # the stop would already be breached
         return None
     _, ratio = session_vwap_and_volume_ratio(high, low, close, volume)
-    return Setup(symbol, entry, range_low, entry * (1 + NO_TARGET), range_high, range_low, day_bars.index[i],
-                 volume_ratio=float(ratio[i]))
+    return Setup(
+        symbol, entry, range_low, entry * (1 + NO_TARGET), range_high, range_low, day_bars.index[i], volume_ratio=float(ratio[i])
+    )
 
 
-def position_size(equity: float, entry: float, stop: float, risk_pct: float, max_position_pct: float,
-                  cash: Optional[float] = None) -> Tuple[int, Optional[str]]:
+def position_size(
+    equity: float, entry: float, stop: float, risk_pct: float, max_position_pct: float, cash: Optional[float] = None
+) -> Tuple[int, Optional[str]]:
     """Shares to buy and, when that is zero, the reason (so a skipped signal is explained, never silent).
 
     Sized by risk: the loss if the stop is hit costs at most `risk_pct` of equity. The position is also capped at

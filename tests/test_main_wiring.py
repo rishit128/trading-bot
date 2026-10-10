@@ -1,8 +1,8 @@
-
 import pytest
 
 import main
-from src.app import wiring as app_kit, reports
+from src.app import reports
+from src.app import wiring as app_kit
 from src.config import Settings
 from src.database import make_session_factory
 from src.engine.paper_broker import PaperBroker
@@ -80,15 +80,15 @@ def test_print_graphs_lists_the_agents(capsys):
 
 def test_holdout_flag_returns_a_callable_hook():
     """Regression: `--holdout` used to leave reserve_callback as None, so the reserve was never marked."""
-    import main
     from types import SimpleNamespace
 
+    import main
+    from src.config import Settings
     from src.database import make_session_factory
 
-    from src.config import Settings
-
-    hook = main.build_holdout_callback(SimpleNamespace(sessions=make_session_factory("sqlite:///:memory:"),
-                                                       settings=Settings(cash_yield_pct=0.05)))
+    hook = main.build_holdout_callback(
+        SimpleNamespace(sessions=make_session_factory("sqlite:///:memory:"), settings=Settings(cash_yield_pct=0.05))
+    )
     assert callable(hook)
     reserve = next(c.cell_contents for c in hook.__closure__ if type(c.cell_contents).__name__ == "HoldoutReserve")
     assert reserve.cash_yield == 0.05  # the reserve earns what the paper account earns, so their drift is like for like
@@ -97,14 +97,16 @@ def test_holdout_flag_returns_a_callable_hook():
 def test_the_live_kit_downloads_a_stock_once_per_session_not_every_cycle(monkeypatch, tmp_path):
     """Regression: every 30-minute cycle re-downloaded two years of daily bars per stock."""
     import dataclasses
+
     from src.app import wiring as kit_module
     from src.config import Settings
     from src.data.indicators import Snapshot
     from src.database import make_session_factory
 
     calls = []
-    monkeypatch.setattr(kit_module, "fetch_snapshot",
-                        lambda symbol, **kw: calls.append(symbol) or Snapshot(symbol, 1.0, 1.0, 1.0, 50.0, 1))
+    monkeypatch.setattr(
+        kit_module, "fetch_snapshot", lambda symbol, **kw: calls.append(symbol) or Snapshot(symbol, 1.0, 1.0, 1.0, 50.0, 1)
+    )
     settings = dataclasses.replace(Settings(), universe="watchlist")
     built = kit_module.build_market_wiring(settings, make_session_factory(f"sqlite:///{tmp_path / 'k.db'}"))
     built.snapshot_fn("RELIANCE")

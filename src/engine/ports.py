@@ -3,6 +3,7 @@
 A broker, a price feed and a market clock used to be typed `object` and probed with `getattr`/`hasattr`, so a missing or
 misspelled method surfaced at run time, in the middle of a cycle. Now the required surface is a Protocol (checked by mypy)
 and each OPTIONAL broker capability is its own Protocol the pipeline tests for explicitly with `isinstance`."""
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Protocol, runtime_checkable
@@ -15,6 +16,7 @@ from src.engine.risk_engine import Portfolio
 @dataclass(frozen=True)
 class Fill:
     """What the broker reported for an order: id, status, and the quantity and price actually filled when known."""
+
     broker_order_id: str
     status: str
     filled_qty: Optional[int] = None
@@ -30,18 +32,21 @@ class PriceFeed(Protocol):
     `bars_since` returns the bars that START after `since`, indexed by their start time. The newest one may still be
     forming (Yahoo serves the bar in progress with only the highs, lows and volume traded so far), so a caller must not
     treat the last row as finished."""
+
     def last_price(self, symbol: str) -> float: ...
     def bars_since(self, symbol: str, since: datetime) -> pd.DataFrame: ...
 
 
 class MarketClock(Protocol):
     """When the market is open, and today's date there."""
+
     def is_open(self, now: Optional[datetime] = None) -> bool: ...
     def today_ist(self, now: Optional[datetime] = None) -> str: ...
 
 
 class Broker(Protocol):
     """What every broker must do. The paper broker is the implementation today; a real one would provide the same."""
+
     def portfolio(self) -> Portfolio: ...
     def is_market_open(self) -> bool: ...
     def has_open_order(self, symbol: str) -> bool: ...
@@ -52,16 +57,19 @@ class Broker(Protocol):
 @runtime_checkable
 class ChargesFees(Protocol):
     """A broker with a known fee schedule, so the risk engine can refuse fee-dominated positions."""
+
     fees: Callable[[str, float], float]
 
 
 @runtime_checkable
 class ListsHoldings(Protocol):
     """A broker that can list its open positions in detail (price paid, live price, profit, stop)."""
+
     def holdings(self) -> List[dict]: ...
 
 
 @runtime_checkable
 class ListsTrades(Protocol):
     """A broker that can list its closed trades."""
+
     def trade_history(self, limit: Optional[int] = None) -> List[dict]: ...

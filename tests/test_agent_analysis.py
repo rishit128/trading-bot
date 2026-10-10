@@ -1,5 +1,6 @@
 """The agent's inputs and review: what the model is shown (chart, 12-month momentum, company data, market situation), the
 providers behind the company and market data, the veto-only critic, persistence and exact replay of the prompt."""
+
 import json
 from datetime import date
 from types import SimpleNamespace
@@ -23,33 +24,60 @@ from src.pipeline import TradingPipeline
 from tests.test_llm_and_pipeline import FakeBroker
 
 SNAP = Snapshot("AAPL", 100.0, 98.0, 95.0, 60.0, 1000, momentum_12_1=0.85)
-MARKET = MarketContext(index_price=25_000.0, index_ma200=24_000.0, index_above_ma200=True, index_rsi=58.0,
-                       index_mom_6m=0.06, vix=13.0, vix_percentile=0.3, vs_index_6m=0.40)
-COMPANY = Fundamentals(sector="Industrials", industry="Machinery", market_cap=35_000_000_000.0, pe=19.5, debt_to_equity=0.18,
-                       profit_margin=0.145, revenue_growth=0.27, earnings_growth=0.64, promoter_holding=0.66,
-                       quarters=(Quarter("2026-06-30", 3_473_760_000.0, 566_090_000.0),
-                                 Quarter("2026-03-31", 3_389_250_000.0, 511_450_000.0)))
+MARKET = MarketContext(
+    index_price=25_000.0,
+    index_ma200=24_000.0,
+    index_above_ma200=True,
+    index_rsi=58.0,
+    index_mom_6m=0.06,
+    vix=13.0,
+    vix_percentile=0.3,
+    vs_index_6m=0.40,
+)
+COMPANY = Fundamentals(
+    sector="Industrials",
+    industry="Machinery",
+    market_cap=35_000_000_000.0,
+    pe=19.5,
+    debt_to_equity=0.18,
+    profit_margin=0.145,
+    revenue_growth=0.27,
+    earnings_growth=0.64,
+    promoter_holding=0.66,
+    quarters=(Quarter("2026-06-30", 3_473_760_000.0, 566_090_000.0), Quarter("2026-03-31", 3_389_250_000.0, 511_450_000.0)),
+)
 
-COT_GOOD = json.dumps({
-    "action": "BUY", "confidence": 0.75, "edge_confidence": 0.6,
-    "step1_trend": "Uptrend; price above MA50 and MA50 above MA200.",
-    "step2_overbought": "RSI 55; not overbought.",
-    "step3_volume": "Volume 1.3x average; confirms the move.",
-    "company_check": "Sales +27% and profit +64% year on year; low debt.",
-    "market_check": "Nifty above its 200-day average; VIX calm.",
-    "step4_confluence": 8, "step5_risks": ["Earnings miss", "Sector rotation", "Market pullback"],
-    "final_reasoning": "Strong momentum backed by growing results.", "rule_alignment": "agree",
-    "falsification": "a close below the 50-day average",
-})
-REFLECT_OK = json.dumps({"action": "BUY", "confidence": 0.5,
-                         "step2_reflection": {"conviction": 0.7, "reason": "the trend may be extended"},
-                         "step3_fundamental": {"conviction": 0.7, "reason": "results support the call"},
-                         "step4_macro": {"conviction": 0.65, "reason": "a calm market"},
-                         "step5_integration": {"conviction": 0.6, "reason": "the case survives"},
-                         "step6_risk": {"conviction": 0.6, "reason": "the biggest risk is a results miss"},
-                         "biggest_risk": "a gap-down on results",
-                         "what_proves_us_wrong": "a weekly close below the 200-day average",
-                         "bias_check": ["confirmation bias", "anchoring to the trend"]})
+COT_GOOD = json.dumps(
+    {
+        "action": "BUY",
+        "confidence": 0.75,
+        "edge_confidence": 0.6,
+        "step1_trend": "Uptrend; price above MA50 and MA50 above MA200.",
+        "step2_overbought": "RSI 55; not overbought.",
+        "step3_volume": "Volume 1.3x average; confirms the move.",
+        "company_check": "Sales +27% and profit +64% year on year; low debt.",
+        "market_check": "Nifty above its 200-day average; VIX calm.",
+        "step4_confluence": 8,
+        "step5_risks": ["Earnings miss", "Sector rotation", "Market pullback"],
+        "final_reasoning": "Strong momentum backed by growing results.",
+        "rule_alignment": "agree",
+        "falsification": "a close below the 50-day average",
+    }
+)
+REFLECT_OK = json.dumps(
+    {
+        "action": "BUY",
+        "confidence": 0.5,
+        "step2_reflection": {"conviction": 0.7, "reason": "the trend may be extended"},
+        "step3_fundamental": {"conviction": 0.7, "reason": "results support the call"},
+        "step4_macro": {"conviction": 0.65, "reason": "a calm market"},
+        "step5_integration": {"conviction": 0.6, "reason": "the case survives"},
+        "step6_risk": {"conviction": 0.6, "reason": "the biggest risk is a results miss"},
+        "biggest_risk": "a gap-down on results",
+        "what_proves_us_wrong": "a weekly close below the 200-day average",
+        "bias_check": ["confirmation bias", "anchoring to the trend"],
+    }
+)
 GOOD = json.dumps({"action": "BUY", "confidence": 0.8, "reasoning": "uptrend"})
 
 
@@ -167,10 +195,10 @@ def fake_ticker(info, statement):
 
 def test_yahoo_fundamentals_reads_ratios_and_the_newest_quarters_first():
     cols = [pd.Timestamp("2025-12-31"), pd.Timestamp("2026-06-30"), pd.Timestamp("2026-03-31")]
-    statement = pd.DataFrame([[1.0e9, 3.0e9, 2.0e9], [1.0e8, 3.0e8, float("nan")]],
-                             index=["Total Revenue", "Net Income"], columns=cols)
-    info = {"sector": "Industrials", "trailingPE": 19.5, "debtToEquity": 17.8, "revenueGrowth": 0.27,
-            "heldPercentInsiders": 0.66}
+    statement = pd.DataFrame(
+        [[1.0e9, 3.0e9, 2.0e9], [1.0e8, 3.0e8, float("nan")]], index=["Total Revenue", "Net Income"], columns=cols
+    )
+    info = {"sector": "Industrials", "trailingPE": 19.5, "debtToEquity": 17.8, "revenueGrowth": 0.27, "heldPercentInsiders": 0.66}
     f = yahoo_fundamentals("X", ticker=fake_ticker(info, statement))
     assert f.pe == 19.5 and f.debt_to_equity == pytest.approx(0.178) and f.promoter_holding == 0.66
     assert [q.period_end for q in f.quarters] == ["2026-06-30", "2026-03-31", "2025-12-31"]
@@ -246,9 +274,15 @@ def test_snapshot_computes_six_month_and_twelve_minus_one_month_momentum():
 def test_the_pipeline_hands_agents_the_company_and_market_data_and_replay_rebuilds_the_exact_prompt(tmp_path):
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'p.db'}")
     agent = TechnicalAgent(llm([COT_GOOD]), use_reflect=False)
-    pipe = TradingPipeline(Settings(watchlist=("AAPL",), dry_run=True), [agent],
-                           FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)), sessions, lambda sym: SNAP,
-                           market_context_fn=lambda snap: MARKET, fundamentals_fn=lambda symbol: COMPANY)
+    pipe = TradingPipeline(
+        Settings(watchlist=("AAPL",), dry_run=True),
+        [agent],
+        FakeBroker(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)),
+        sessions,
+        lambda sym: SNAP,
+        market_context_fn=lambda snap: MARKET,
+        fundamentals_fn=lambda symbol: COMPANY,
+    )
     pipe.run_once()
     with sessions() as s:
         row = s.scalar(select(DecisionRecord))
@@ -267,10 +301,18 @@ def test_reflect_and_cot_flags_default_on_and_toggle(monkeypatch):
 
 
 def test_a_stored_signal_from_before_this_change_still_loads():
-    old = {"action": "BUY", "confidence": 0.7, "reasoning": "r",
-           "details": {"tier": "cot", "pattern_id": "P>MA50+MA50>MA200|RSI60",
-                       "learning": {"adjusted_action": "BUY"}, "context": {"regime": "bull"},
-                       "reasoning_chain": {"trend": "t", "overbought": "o", "volume": "v"}}}
+    old = {
+        "action": "BUY",
+        "confidence": 0.7,
+        "reasoning": "r",
+        "details": {
+            "tier": "cot",
+            "pattern_id": "P>MA50+MA50>MA200|RSI60",
+            "learning": {"adjusted_action": "BUY"},
+            "context": {"regime": "bull"},
+            "reasoning_chain": {"trend": "t", "overbought": "o", "volume": "v"},
+        },
+    }
     signal = AgentSignal(**old)
     assert signal.details.reasoning_chain.company is None and signal.details.tier == "cot"
 

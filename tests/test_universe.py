@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.data.universe import (Candidate, ScreenConfig, UniverseScreener, delivery_filter, rank, screen_bars)
+from src.data.universe import Candidate, ScreenConfig, UniverseScreener, delivery_filter, rank, screen_bars
 from src.engine.risk_engine import Portfolio
 
 CFG = ScreenConfig(max_candidates=10)
@@ -16,21 +16,24 @@ def series(factors, start, n=260):
 
 
 def frame(symbol, close, volume=1_000_000):
-    idx = pd.MultiIndex.from_product([[symbol], pd.date_range("2025-08-01", periods=len(close), freq="B")],
-                                     names=["symbol", "timestamp"])
+    idx = pd.MultiIndex.from_product(
+        [[symbol], pd.date_range("2025-08-01", periods=len(close), freq="B")], names=["symbol", "timestamp"]
+    )
     return pd.DataFrame({"close": close, "volume": float(volume)}, index=idx)
 
 
 def market():
-    return pd.concat([
-        frame("GOOD", series([1.01, 0.994], 50)),                     # smooth uptrend, RSI ~62, liquid
-        frame("PENNY", series([1.01, 0.994], 2)),                     # price < $10
-        frame("ILLIQ", series([1.01, 0.994], 50), volume=1_000),      # tiny dollar volume
-        frame("DOWN", series([0.99, 1.004], 100)),                    # downtrend
-        frame("HOT", series([1.01], 20)),                             # only rises -> RSI 100 (overbought)
-        frame("SHORT", series([1.01, 0.994], 50, n=100)),             # < 200 bars of history
-        frame("WILD", series([1.09, 0.95], 20)),                      # uptrend but ~7% daily volatility
-    ])
+    return pd.concat(
+        [
+            frame("GOOD", series([1.01, 0.994], 50)),  # smooth uptrend, RSI ~62, liquid
+            frame("PENNY", series([1.01, 0.994], 2)),  # price < $10
+            frame("ILLIQ", series([1.01, 0.994], 50), volume=1_000),  # tiny dollar volume
+            frame("DOWN", series([0.99, 1.004], 100)),  # downtrend
+            frame("HOT", series([1.01], 20)),  # only rises -> RSI 100 (overbought)
+            frame("SHORT", series([1.01, 0.994], 50, n=100)),  # < 200 bars of history
+            frame("WILD", series([1.09, 0.95], 20)),  # uptrend but ~7% daily volatility
+        ]
+    )
 
 
 def test_screen_keeps_only_liquid_smooth_uptrends_not_overbought():
@@ -78,8 +81,9 @@ def make_screener(tmp_days, chunk=500, fetch=None, listing=None, sleep=lambda s:
         df = market()
         return df[df.index.get_level_values(0).isin(symbols)]
 
-    s = UniverseScreener(listing or default_listing, fetch or default_fetch, CFG, today=lambda: tmp_days[0],
-                         chunk=chunk, sleep=sleep)
+    s = UniverseScreener(
+        listing or default_listing, fetch or default_fetch, CFG, today=lambda: tmp_days[0], chunk=chunk, sleep=sleep
+    )
     return s, calls
 
 
@@ -139,7 +143,7 @@ def test_price_filter_works_independently_of_liquidity():
 def test_score_uses_12_1_momentum_when_known_and_the_old_score_otherwise():
     with_12_1 = Candidate("A", 50.0, 0.1, 60.0, 50e6, 0.02, momentum_12_1=0.8)
     assert with_12_1.score == 0.8
-    assert cand("B", 0.2, 0.02).score == pytest.approx(0.2 / (0.02 * 63 ** 0.5))
+    assert cand("B", 0.2, 0.02).score == pytest.approx(0.2 / (0.02 * 63**0.5))
 
 
 def test_stocks_are_ranked_by_12_1_momentum_not_by_recent_smoothness():
@@ -150,8 +154,9 @@ def test_stocks_are_ranked_by_12_1_momentum_not_by_recent_smoothness():
 
 def test_screen_needs_a_full_year_of_bars_for_12_1_momentum():
     days = pd.bdate_range(end="2026-09-18", periods=252)
-    bars = pd.DataFrame({"Close": np.linspace(100, 200, 252), "Volume": 5_000_000.0},
-                        index=pd.MultiIndex.from_product([["SHORT"], days]))
+    bars = pd.DataFrame(
+        {"Close": np.linspace(100, 200, 252), "Volume": 5_000_000.0}, index=pd.MultiIndex.from_product([["SHORT"], days])
+    )
     assert screen_bars(bars, CFG) == []
 
 
@@ -202,8 +207,9 @@ def test_screener_applies_the_delivery_filter_when_enabled():
     # GOOD2 passes the trend/liquidity screen too, but only GOOD clears the delivery filter (above the day's median).
     dates = pd.bdate_range(end="2026-09-18", periods=20)  # recent files: the filter switches off on stale ones
     deliv = delivery_frame(dates, {"GOOD": [80.0] * 20, "GOOD2": [20.0] * 20})
-    s = UniverseScreener(listing, fetch, CFG, today=lambda: date(2026, 9, 21), use_delivery_filter=True,
-                         delivery_loader=lambda years: deliv)
+    s = UniverseScreener(
+        listing, fetch, CFG, today=lambda: date(2026, 9, 21), use_delivery_filter=True, delivery_loader=lambda years: deliv
+    )
     assert [c.symbol for c in s.candidates()] == ["GOOD"]
 
 
@@ -214,6 +220,12 @@ def test_screener_ignores_the_delivery_filter_by_default_and_when_data_is_unavai
     def boom(years):
         raise RuntimeError("NSE unreachable")
 
-    s2 = UniverseScreener(lambda: ["GOOD"], lambda syms: market()[market().index.get_level_values(0).isin(syms)],
-                          CFG, today=lambda: date(2026, 9, 21), use_delivery_filter=True, delivery_loader=boom)
+    s2 = UniverseScreener(
+        lambda: ["GOOD"],
+        lambda syms: market()[market().index.get_level_values(0).isin(syms)],
+        CFG,
+        today=lambda: date(2026, 9, 21),
+        use_delivery_filter=True,
+        delivery_loader=boom,
+    )
     assert [c.symbol for c in s2.candidates()] == ["GOOD"]  # fails open: screening still works

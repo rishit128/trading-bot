@@ -1,5 +1,6 @@
 """Portfolio simulator that mirrors live behaviour: signals at a close execute at the next open, sizing comes from
 RiskEngine, bracket stop/target levels are set off the signal-day close, and a symbol with an open position is not added to."""
+
 import math
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -22,6 +23,7 @@ BuySource = Callable[[pd.Timestamp, Portfolio], Sequence[Tuple[str, float]]]
 class Trade:
     """A closed simulated trade; return_pct is net of fees when a fee model was used. `stop`/`target` are the levels
     the bracket set off the signal-day close, so a report can verify no exit ever slipped past its protective level."""
+
     symbol: str
     entry_date: pd.Timestamp
     entry_price: float
@@ -42,16 +44,24 @@ class Trade:
 @dataclass(frozen=True)
 class Result:
     """Simulation output: the equity curve, closed trades, and how many positions were still open."""
+
     equity: pd.Series
     trades: List[Trade]
     open_at_end: int
 
 
-def simulate(bars: Dict[str, pd.DataFrame], signals: SignalTable, limits: RiskLimits,
-             start_equity: float = START_EQUITY, trend_exit: bool = True,
-             fees: Optional[Callable[[str, float], float]] = None, slippage: float = 0.0,
-             buy_source: Optional[BuySource] = None, cash_yield: float = 0.0,
-             cash_yield_from: Optional[pd.Timestamp] = None) -> Result:
+def simulate(
+    bars: Dict[str, pd.DataFrame],
+    signals: SignalTable,
+    limits: RiskLimits,
+    start_equity: float = START_EQUITY,
+    trend_exit: bool = True,
+    fees: Optional[Callable[[str, float], float]] = None,
+    slippage: float = 0.0,
+    buy_source: Optional[BuySource] = None,
+    cash_yield: float = 0.0,
+    cash_yield_from: Optional[pd.Timestamp] = None,
+) -> Result:
     """Replay signals through the real risk engine: next-open fills, stop/target levels off the signal-day close.
 
     `cash_yield` is the annual rate idle cash earns (a liquid-fund sweep; 0 = cash earns nothing, the old behaviour). It
@@ -98,14 +108,27 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: SignalTable, limits: RiskLi
         pos = positions.pop(sym)
         exit_fee = fees(Action.SELL, pos["qty"] * price) if fees else 0.0
         cash += pos["qty"] * price - exit_fee
-        trades.append(Trade(sym, pos["entry_date"], pos["entry_price"], day, price, pos["qty"], reason,
-                            fees=exit_fee + pos["entry_fee"], stop=pos["stop"], target=pos["target"]))
+        trades.append(
+            Trade(
+                sym,
+                pos["entry_date"],
+                pos["entry_price"],
+                day,
+                price,
+                pos["qty"],
+                reason,
+                fees=exit_fee + pos["entry_fee"],
+                stop=pos["stop"],
+                target=pos["target"],
+            )
+        )
 
     def portfolio_at(day, column):
         """The portfolio as the risk engine would see it at the day's open or close prices."""
         values = {s: p["qty"] * price_at(s, day, column) for s, p in positions.items()}
-        return Portfolio(cash, cash + sum(values.values()), values, {s: p["qty"] for s, p in positions.items()},
-                         prev_equity, peak)
+        return Portfolio(
+            cash, cash + sum(values.values()), values, {s: p["qty"] for s, p in positions.items()}, prev_equity, peak
+        )
 
     def try_buy(sym, confidence, prev, day):
         """Size a BUY through the risk engine and fill it at the day's open."""
@@ -124,24 +147,39 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: SignalTable, limits: RiskLi
             return
         entry_fee = fees(Action.BUY, qty * open_price) if fees else 0.0
         cash -= qty * open_price + entry_fee
-        positions[sym] = dict(qty=qty, entry_price=open_price, entry_date=day, entry_fee=entry_fee,
-                              stop=ref * (1 - limits.stop_loss_pct), target=ref * (1 + limits.take_profit_pct))
+        positions[sym] = dict(
+            qty=qty,
+            entry_price=open_price,
+            entry_date=day,
+            entry_fee=entry_fee,
+            stop=ref * (1 - limits.stop_loss_pct),
+            target=ref * (1 + limits.take_profit_pct),
+        )
 
     for i, day in enumerate(calendar):
         prev = calendar[i - 1] if i else None
         if cash_yield and prev is not None and cash > 0 and (cash_yield_from is None or prev >= cash_yield_from):
             cash *= (1 + cash_yield) ** ((day - prev).days / 365)
-        peak, halted_since = drawdown_pause(peak, prev_equity, halted_since, day, limits.max_drawdown_pct,
-                                            limits.drawdown_pause_days)
+        peak, halted_since = drawdown_pause(
+            peak, prev_equity, halted_since, day, limits.max_drawdown_pct, limits.drawdown_pause_days
+        )
 
         if prev is not None:
             for sym in list(positions):
                 if not has_bar(sym, day):
                     continue
                 sig = signals.get(sym, {}).get(prev)
-                if trend_exit and prev in ma200[sym].index and trend_broken(float(bars[sym].loc[prev, "Close"]), ma200[sym].loc[prev]):
+                if (
+                    trend_exit
+                    and prev in ma200[sym].index
+                    and trend_broken(float(bars[sym].loc[prev, "Close"]), ma200[sym].loc[prev])
+                ):
                     sig = (Action.SELL, 1.0)
-                if sig and sig[0] == Action.SELL and engine.evaluate(Action.SELL, sig[1], sym, 1.0, portfolio_at(day, "Open")).approved:
+                if (
+                    sig
+                    and sig[0] == Action.SELL
+                    and engine.evaluate(Action.SELL, sig[1], sym, 1.0, portfolio_at(day, "Open")).approved
+                ):
                     fill = float(bars[sym].loc[day, "Open"]) * (1 - slippage)
                     close_position(sym, day, fill, "SIGNAL")
 

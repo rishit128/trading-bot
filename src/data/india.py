@@ -4,6 +4,7 @@ The stock and index lists are NSE files a person downloads in a browser: the ter
 niftyindices.com (read 2026-09-26) prohibit "systematic or automated data collection" without written consent, so the
 bot never downloads from those sites itself. It reads the files from NSE_FILES_DIR (default ./nse_files). Prices come
 from Yahoo Finance."""
+
 import io
 import logging
 import os
@@ -17,8 +18,8 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from .retry import retry_call
 from .data_honesty import ZERO_VOLUME, check_bars_honesty
+from .retry import retry_call
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +27,10 @@ IST = ZoneInfo("Asia/Kolkata")
 SUFFIX = ".NS"
 EQUITY_LIST_FILE = "EQUITY_L.csv"  # nseindia.com: the equity segment's list of securities available for trading
 INDEX_LIST_FILES: Dict[int, str] = {  # niftyindices.com: each index's page, "download constituents"
-    50: "ind_nifty50list.csv", 100: "ind_nifty100list.csv", 500: "ind_nifty500list.csv"}
+    50: "ind_nifty50list.csv",
+    100: "ind_nifty100list.csv",
+    500: "ind_nifty500list.csv",
+}
 STALE_LIST_DAYS = 60  # an older stock list misses new listings; warn, but still use it
 
 
@@ -43,8 +47,10 @@ def read_nse_file(name: str, directory: Optional[Path] = None) -> str:
     """The text of one hand-downloaded NSE file, or NseFileMissing saying exactly what to download and where."""
     path = (directory or nse_files_dir()) / name
     if not path.exists():
-        raise NseFileMissing(f"{path} not found: download {name} from NSE's website in a browser and save it there "
-                             "(the bot never downloads from NSE sites itself; see README, 'Files you download')")
+        raise NseFileMissing(
+            f"{path} not found: download {name} from NSE's website in a browser and save it there "
+            "(the bot never downloads from NSE sites itself; see README, 'Files you download')"
+        )
     age = (time.time() - path.stat().st_mtime) / 86400
     if age > STALE_LIST_DAYS:
         log.warning("%s is %.0f days old: download a fresh copy so new listings are included", path, age)
@@ -65,8 +71,13 @@ def _parse_symbols(csv_text: str) -> List[str]:
 YAHOO_EXCLUDED_SUFFIXES = ("-SM", "-IV", "-BL", "-RR", "-E1")
 
 
-def yahoo_nse_symbols(min_traded_value: float = 0.0, top: Optional[int] = None,
-                      screen: Optional[Callable] = None, page: int = 250, pause: float = 0.5) -> List[str]:
+def yahoo_nse_symbols(
+    min_traded_value: float = 0.0,
+    top: Optional[int] = None,
+    screen: Optional[Callable] = None,
+    page: int = 250,
+    pause: float = 0.5,
+) -> List[str]:
     """NSE main-board stocks from Yahoo Finance's screener (the same source as every price the bot uses). No manual step and no request to NSE's sites. Compared with NSE's own list on 2026-09-26 it
     covered all 2,317 EQ-series stocks; it also includes some trade-to-trade (BE) stocks, which the scanner's own
     liquidity, volatility and trend filters then judge like any other. ETFs, SME and other segments are dropped.
@@ -84,6 +95,7 @@ def yahoo_nse_symbols(min_traded_value: float = 0.0, top: Optional[int] = None,
 
         def screen(offset):
             return yf.screen(query, size=page, offset=offset, sortField="intradaymarketcap", sortAsc=False)
+
     quotes: list = []
     while True:
         r = retry_call(partial(screen, len(quotes)), attempts=3, delay=2.0, what="Yahoo NSE stock list")
@@ -97,7 +109,7 @@ def yahoo_nse_symbols(min_traded_value: float = 0.0, top: Optional[int] = None,
         sym = str(q.get("symbol", ""))
         if not sym.endswith(SUFFIX):
             continue
-        sym = sym[:-len(SUFFIX)]
+        sym = sym[: -len(SUFFIX)]
         if sym.endswith(YAHOO_EXCLUDED_SUFFIXES) or "NSETEST" in sym:
             continue
         # Yahoo types ETFs as equities too. Funds carry no financial reporting currency: measured 2026-09-26, missing on
@@ -114,8 +126,9 @@ def yahoo_nse_symbols(min_traded_value: float = 0.0, top: Optional[int] = None,
     return [sym for sym, _ in kept]
 
 
-def load_nse_symbols(directory: Optional[Path] = None, min_traded_value: float = 0.0,
-                     yahoo: Optional[Callable[[float], List[str]]] = None) -> List[str]:
+def load_nse_symbols(
+    directory: Optional[Path] = None, min_traded_value: float = 0.0, yahoo: Optional[Callable[[float], List[str]]] = None
+) -> List[str]:
     """The stocks the whole-market scan covers. A hand-saved EQUITY_L.csv wins when present (NSE's own list); otherwise
     Yahoo's NSE list, fetched automatically; the hand-saved Nifty 500 file is the last resort. Raises NseFileMissing (a
     RuntimeError, so the pipeline's scan-failure alert fires) when none of them is usable."""
@@ -148,8 +161,10 @@ def _nse_symbols_from_files(directory: Optional[Path], names) -> List[str]:
             log.info("%s: %d symbols", name, len(symbols))
             return symbols
         log.warning("%s lists only %d symbols; ignoring it", name, len(symbols))
-    raise NseFileMissing(f"no NSE stock list: Yahoo's list was unavailable and there is no usable {' or '.join(names)} "
-                         f"in {directory or nse_files_dir()} (a hand-saved copy from NSE's website works too)")
+    raise NseFileMissing(
+        f"no NSE stock list: Yahoo's list was unavailable and there is no usable {' or '.join(names)} "
+        f"in {directory or nse_files_dir()} (a hand-saved copy from NSE's website works too)"
+    )
 
 
 def load_index_symbols(index: int = 500, directory: Optional[Path] = None) -> List[str]:
@@ -162,12 +177,14 @@ def load_index_symbols(index: int = 500, directory: Optional[Path] = None) -> Li
     try:
         return _parse_symbols(text)
     except Exception as e:  # a half-saved or wrong file: same treatment as load_nse_symbols' own file reading
-        raise NseFileMissing(f"{name} could not be read ({type(e).__name__}: {e}); "
-                             "download a fresh copy from NSE's website") from e
+        raise NseFileMissing(
+            f"{name} could not be read ({type(e).__name__}: {e}); download a fresh copy from NSE's website"
+        ) from e
 
 
-def yf_bar_fetcher(lookback_days: int = 400, download: Optional[Callable] = None,
-                   today: Callable[[], datetime] = lambda: datetime.now(IST)):
+def yf_bar_fetcher(
+    lookback_days: int = 400, download: Optional[Callable] = None, today: Callable[[], datetime] = lambda: datetime.now(IST)
+):
     """Bulk completed daily bars in the same long format the screener uses. Symbols Yahoo cannot resolve are skipped."""
     if download is None:
         import yfinance as yf
@@ -201,11 +218,16 @@ def yf_bar_fetcher(lookback_days: int = 400, download: Optional[Callable] = None
             frames.append(sub)
         # One summary per batch instead of one warning per stock: the zero-volume line alone was 83% of a 3-day log.
         if zero_volume:
-            log.info("data check: %d of %d symbols have zero-volume days (normal for thinly traded stocks)",
-                     zero_volume, len(symbols))
+            log.info(
+                "data check: %d of %d symbols have zero-volume days (normal for thinly traded stocks)", zero_volume, len(symbols)
+            )
         if flagged:
-            log.warning("data check: %d finding(s) that make indicators unreliable for those stocks: %s%s", len(flagged),
-                        "; ".join(flagged[:8]), f"; ... and {len(flagged) - 8} more" if len(flagged) > 8 else "")
+            log.warning(
+                "data check: %d finding(s) that make indicators unreliable for those stocks: %s%s",
+                len(flagged),
+                "; ".join(flagged[:8]),
+                f"; ... and {len(flagged) - 8} more" if len(flagged) > 8 else "",
+            )
         return pd.concat(frames) if frames else pd.DataFrame()
 
     return fetch
@@ -274,8 +296,13 @@ def yahoo_corporate_actions(symbol: str, ticker: Optional[Callable] = None) -> T
 class IntradayFeed:
     """5-minute Yahoo bars: latest price for paper fills and high/low history for simulated stop/target checks."""
 
-    def __init__(self, download: Optional[Callable] = None, ttl_seconds: float = 30.0,
-                 clock: Callable[[], float] = time.monotonic, retry_sleep: Callable[[float], None] = time.sleep):
+    def __init__(
+        self,
+        download: Optional[Callable] = None,
+        ttl_seconds: float = 30.0,
+        clock: Callable[[], float] = time.monotonic,
+        retry_sleep: Callable[[float], None] = time.sleep,
+    ):
         # Settling exits, valuing positions and filling an order all need the same bars within seconds of each other.
         self._cache: Dict[str, Tuple[float, pd.DataFrame]] = {}
         self._lock, self._ttl, self._clock = threading.Lock(), ttl_seconds, clock
@@ -297,8 +324,13 @@ class IntradayFeed:
             hit = self._cache.get(symbol)
             if hit and self._clock() - hit[0] < self._ttl:
                 return hit[1]
-        df = retry_call(lambda: self._download(symbol + SUFFIX, period="5d", interval="5m"), attempts=2, delay=1.0,
-                        sleep=self._retry_sleep, what=f"5-minute bars for {symbol}")
+        df = retry_call(
+            lambda: self._download(symbol + SUFFIX, period="5d", interval="5m"),
+            attempts=2,
+            delay=1.0,
+            sleep=self._retry_sleep,
+            what=f"5-minute bars for {symbol}",
+        )
         bars = df.dropna(subset=["Close"]) if df is not None and not df.empty else pd.DataFrame()
         with self._lock:
             self._cache[symbol] = (self._clock(), bars)

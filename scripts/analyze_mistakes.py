@@ -4,6 +4,7 @@ then did (entry next open, exit `horizon` sessions later, net of costs). Read-on
 Run scripts/label_outcomes.py first (the bot also does it once a day).
 
     python scripts/analyze_mistakes.py [--horizon 20] [--min-samples 30]"""
+
 import argparse
 import sys
 from pathlib import Path
@@ -12,8 +13,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import load_settings  # noqa: E402
 from src.database import make_session_factory  # noqa: E402
-from src.learning.mistakes import (ai_vs_rule, breakdown, confidence_bucket, fmt, group_stats, load_judged,  # noqa: E402
-                                   missed_gains, worst_calls)
+from src.learning.mistakes import (  # noqa: E402
+    ai_vs_rule,
+    breakdown,
+    confidence_bucket,
+    fmt,
+    group_stats,
+    load_judged,
+    missed_gains,
+    worst_calls,
+)
 
 
 def main():
@@ -54,7 +63,9 @@ def main():
         print(fmt(g))
     print("\n=== worst BUYs (mistakes of commission) ===")
     for j in worst_calls(judged, "BUY"):
-        print(f"{j.bar_date} {j.symbol:<12} {j.net_return:+.1%} conf {j.confidence:.2f} stop {'yes' if j.hit_stop else 'no '} | {j.reasoning[:110]}")
+        print(
+            f"{j.bar_date} {j.symbol:<12} {j.net_return:+.1%} conf {j.confidence:.2f} stop {'yes' if j.hit_stop else 'no '} | {j.reasoning[:110]}"
+        )
     print("\n=== biggest gains the bot did not buy (mistakes of omission) ===")
     for j in missed_gains(judged):
         print(f"{j.bar_date} {j.symbol:<12} {j.net_return:+.1%} was {j.action} conf {j.confidence:.2f} | {j.reasoning[:110]}")

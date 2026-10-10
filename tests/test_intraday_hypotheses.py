@@ -1,5 +1,6 @@
 """Phase 2's machinery: every rule picks the trade it describes, the null is a fair null, the statistics are right, and the
 whole harness FINDS a planted edge and does NOT invent one in noise (so "no candidates" on real data means something)."""
+
 from datetime import timedelta
 
 import numpy as np
@@ -42,7 +43,7 @@ def path(**moves):
 def test_trade_returns_charge_slippage_on_both_fills_and_the_fee_once():
     gross, net = trade_returns(100.0, 102.0, 1, 0.001)
     assert gross == pytest.approx(0.02) and net == pytest.approx(102 * 0.999 / (100 * 1.001) - 1 - FEE_FRACTION)
-    gross, net = trade_returns(100.0, 98.0, -1, 0.001)                      # a short: sold at 99.9, bought back at 98.098
+    gross, net = trade_returns(100.0, 98.0, -1, 0.001)  # a short: sold at 99.9, bought back at 98.098
     assert gross == pytest.approx(0.02) and net == pytest.approx((99.9 - 98.098) / 100 - FEE_FRACTION)
     flat_long, flat_short = trade_returns(100.0, 100.0, 1, 0.0)[1], trade_returns(100.0, 100.0, -1, 0.0)[1]
     assert flat_long == pytest.approx(-FEE_FRACTION) == pytest.approx(flat_short)
@@ -79,13 +80,13 @@ def test_a_short_that_gaps_through_its_stop_is_filled_at_the_open_and_open_only_
 
 # -- the rules pick the trades they describe --------------------------------------------------------------------------------
 def test_orb_short_sells_a_volume_backed_breakdown_below_vwap_with_the_stop_above_the_range():
-    d = sday(path(b10=99.0), volumes=[1000] * 10 + [4000])                                            # close 99 < range low 99.5
+    d = sday(path(b10=99.0), volumes=[1000] * 10 + [4000])  # close 99 < range low 99.5
     plan = hyp.orb_short(d)
     assert (plan.index, plan.side, plan.stop) == (10, -1, 100.5) and plan.target == pytest.approx(99.0 - 2 * 1.5)
-    assert hyp.orb_short(sday(path(b10=99.0))) is None                                                # no volume surge
+    assert hyp.orb_short(sday(path(b10=99.0))) is None  # no volume surge
     # that is a breakout, not a breakdown
     assert hyp.orb_short(sday(path(b10=101.0), volumes=[1000] * 10 + [4000])) is None
-    assert hyp.orb_short(sday(path(b10=99.0), volumes=[1000] * 10 + [4000], rng=(103.0, 97.0))) is None   # range wider than 2.5%
+    assert hyp.orb_short(sday(path(b10=99.0), volumes=[1000] * 10 + [4000], rng=(103.0, 97.0))) is None  # range wider than 2.5%
     # a breakdown that is still ABOVE VWAP (the stock spent the morning far lower) is not sold: bars 3-8 at 90 drag VWAP down
     rebound = sday(path(b3=90.0, b9=99.0), volumes=[1000] * 9 + [9000])
     assert hyp.orb_short(rebound) is None
@@ -95,11 +96,11 @@ def test_orb_short_sells_a_volume_backed_breakdown_below_vwap_with_the_stop_abov
 
 def test_gap_and_go_needs_a_gap_of_at_least_one_percent_and_a_breakout_in_the_first_hour():
     up = path(b4=101.0)
-    plan = hyp.gap_and_go(sday(up, prev_close=98.0))                                                  # gap +2.04%
+    plan = hyp.gap_and_go(sday(up, prev_close=98.0))  # gap +2.04%
     assert (plan.index, plan.side, plan.stop, plan.target) == (4, 1, 99.5, None)
-    assert hyp.gap_and_go(sday(up, prev_close=99.6)) is None                                          # gap 0.4%: too small
-    assert hyp.gap_and_go(sday(up, prev_close=99.3)) is None                                          # gap 0.7%: still under 1%
-    assert hyp.gap_and_go(sday(up, prev_close=None)) is None                                          # no previous close known
+    assert hyp.gap_and_go(sday(up, prev_close=99.6)) is None  # gap 0.4%: too small
+    assert hyp.gap_and_go(sday(up, prev_close=99.3)) is None  # gap 0.7%: still under 1%
+    assert hyp.gap_and_go(sday(up, prev_close=None)) is None  # no previous close known
     # breakout after 10:30 is outside the window
     assert hyp.gap_and_go(sday(path(b40=101.0), prev_close=98.0)) is None
     # the window is [09:30, 10:30): bar 3 starts 09:30 (in), bar 14 starts 10:25 (in), bar 15 starts 10:30 (out)
@@ -126,7 +127,7 @@ def test_first_hour_momentum_needs_a_one_percent_move_and_the_same_side_of_vwap_
     assert (up.index, up.side) == (11, 1) and up.stop == pytest.approx(101.5 * 0.985) and up.target is None
     down = hyp.first_hour_momentum(sday(path(b11=98.5)))
     assert (down.index, down.side) == (11, -1) and down.stop == pytest.approx(98.5 * 1.015)
-    assert hyp.first_hour_momentum(sday(path(b11=100.9))) is None                                     # +0.9%: below the threshold
+    assert hyp.first_hour_momentum(sday(path(b11=100.9))) is None  # +0.9%: below the threshold
     # +2% at 10:15 but the morning spent far above that price, so it is BELOW VWAP: no long
     high_morning = sday(path(b3=110.0, b11=102.0), volumes=[1000] * 3 + [9000] * 8 + [1000])
     assert hyp.first_hour_momentum(high_morning) is None
@@ -162,13 +163,13 @@ def test_the_orb_random_entry_covers_exactly_the_live_entry_window_and_the_live_
     d = sday(closes)
     picks = {random_entry(d, np.random.default_rng(seed)).index for seed in range(60)}
     assert picks == {3, 56}
-    assert random_entry(sday(closes, rng=(103.0, 97.0)), np.random.default_rng(0)) is None       # range wider than 2.5%: no trade
+    assert random_entry(sday(closes, rng=(103.0, 97.0)), np.random.default_rng(0)) is None  # range wider than 2.5%: no trade
 
 
 def test_the_fixed_time_nulls_keep_the_same_days_but_toss_a_coin_for_the_side():
     d = sday(path(b65=101.2))
     sides = [hyp.last_half_hour_null(d, np.random.default_rng(seed)).side for seed in range(200)]
-    assert 60 < sides.count(1) < 140 and set(sides) == {1, -1}                                       # ~ a fair coin
+    assert 60 < sides.count(1) < 140 and set(sides) == {1, -1}  # ~ a fair coin
     # same eligibility as the rule
     assert hyp.last_half_hour_null(sday(path(b65=100.2)), np.random.default_rng(0)) is None
     flipped = [hyp.first_hour_momentum_null(sday(path(b11=101.5)), np.random.default_rng(s)) for s in range(50)]
@@ -187,8 +188,11 @@ def test_cluster_t_is_the_t_statistic_of_the_per_date_means():
 
 
 def trades(net_by_date, per_date=10, side=1, exit_=101.0, price=100.0):
-    rows = [{"date": d, "net": n, "gross": n + 0.001, "price": price, "exit": exit_, "side": side, "symbol": "S", "why": "EOD"}
-            for d, n in net_by_date.items() for _ in range(per_date)]
+    rows = [
+        {"date": d, "net": n, "gross": n + 0.001, "price": price, "exit": exit_, "side": side, "symbol": "S", "why": "EOD"}
+        for d, n in net_by_date.items()
+        for _ in range(per_date)
+    ]
     return pd.DataFrame(rows)
 
 
@@ -222,9 +226,9 @@ def test_each_criterion_can_veto_a_candidate(case):
         # good on average, but only in the second half
         signal = trades({d: (-0.001 if i < 20 else 0.008) for i, d in enumerate(dates(40))})
     elif case == "slippage":
-        signal = trades(good, exit_=100.05)                              # gross ~0.05%: doubling the slippage turns it negative
+        signal = trades(good, exit_=100.05)  # gross ~0.05%: doubling the slippage turns it negative
     elif case == "null":
-        null = trades(good)                                              # the null does just as well: the signal adds nothing
+        null = trades(good)  # the null does just as well: the signal adds nothing
     out = hyp.judge("h", "idea", signal, null, 0.0005)
     assert not out.candidate and out.failed
 
@@ -269,7 +273,7 @@ def test_the_harness_flags_a_planted_last_half_hour_edge_as_a_candidate_and_not_
     assert planted.trades >= hyp.MIN_TRADES and planted.mean_net > 0.003, planted
     assert planted.candidate, planted.failed
     noise = hyp.run(stock_days(market(edge=False)), [hyp.HYPOTHESES[4]], seeds=3)[0]
-    assert not noise.candidate and noise.mean_net < 0                       # costs make a zero-edge rule a steady loser
+    assert not noise.candidate and noise.mean_net < 0  # costs make a zero-edge rule a steady loser
 
 
 def test_report_lists_every_hypothesis_says_why_each_failed_and_states_the_kill_criterion():
@@ -282,7 +286,7 @@ def test_report_lists_every_hypothesis_says_why_each_failed_and_states_the_kill_
 
 
 def test_previous_close_is_only_known_when_the_previous_stored_session_is_adjacent():
-    near = pd.concat([session(0, 1), session(1, 2)])                       # consecutive days
-    far = pd.concat([session(0, 1), session(20, 2)])                       # twenty days apart: a hole in the archive
+    near = pd.concat([session(0, 1), session(1, 2)])  # consecutive days
+    far = pd.concat([session(0, 1), session(20, 2)])  # twenty days apart: a hole in the archive
     assert stock_days({"S": near})[1].prev_close is not None and stock_days({"S": near})[0].prev_close is None
     assert stock_days({"S": far})[1].prev_close is None

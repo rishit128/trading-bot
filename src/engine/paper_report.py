@@ -6,6 +6,7 @@ adds no new recording and cannot show anything the two accounts did not already 
 
 The engine layer has no notion of "IST"; callers pass the timezone a trading day is measured in (src.data.india.IST for
 this bot's one market)."""
+
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, tzinfo
@@ -15,7 +16,8 @@ from typing import Dict, List, Optional
 @dataclass(frozen=True)
 class PeriodPnl:
     """Realized P&L over one calendar day or ISO week."""
-    label: str          # "2026-09-29" for a day, "2026-W40" for a week
+
+    label: str  # "2026-09-29" for a day, "2026-W40" for a week
     trades: int
     wins: int
     net_pnl: float
@@ -45,15 +47,24 @@ def _group(trades: List[dict], tz: tzinfo, key) -> List[PeriodPnl]:
     buckets: Dict[str, List[dict]] = defaultdict(list)
     for t in trades:
         buckets[key(_closed_date(t, tz))].append(t)
-    return [PeriodPnl(label, len(rows), sum(1 for r in rows if r["net_pnl"] > 0), sum(r["net_pnl"] for r in rows),
-                      sum(r["fees"] for r in rows)) for label, rows in sorted(buckets.items())]
+    return [
+        PeriodPnl(
+            label,
+            len(rows),
+            sum(1 for r in rows if r["net_pnl"] > 0),
+            sum(r["net_pnl"] for r in rows),
+            sum(r["fees"] for r in rows),
+        )
+        for label, rows in sorted(buckets.items())
+    ]
 
 
 def totals(trades: List[dict], tz: tzinfo) -> PeriodPnl:
     """All closed trades as one period, labelled "total"."""
     rows = group_by_day(trades, tz)
-    return PeriodPnl("total", sum(r.trades for r in rows), sum(r.wins for r in rows),
-                     sum(r.net_pnl for r in rows), sum(r.fees for r in rows))
+    return PeriodPnl(
+        "total", sum(r.trades for r in rows), sum(r.wins for r in rows), sum(r.net_pnl for r in rows), sum(r.fees for r in rows)
+    )
 
 
 def merge_periods(a: List[PeriodPnl], b: List[PeriodPnl]) -> List[PeriodPnl]:

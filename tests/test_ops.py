@@ -16,8 +16,17 @@ from src.database import DecisionRecord, EquityRecord, make_session_factory
 from src.engine.risk_engine import Portfolio
 from src.logging_setup import JsonFormatter, TextFormatter, configure_logging
 from src.monitoring.telegram import HELP, handle_command
-from src.ops.preflight import (CheckResult, build_checks, broker_check, critical_failures, format_results, market_data_check,
-                           openrouter_check, run_checks, telegram_check)
+from src.ops.preflight import (
+    CheckResult,
+    broker_check,
+    build_checks,
+    critical_failures,
+    format_results,
+    market_data_check,
+    openrouter_check,
+    run_checks,
+    telegram_check,
+)
 from src.ops.replay import replay
 from tests.test_llm_and_pipeline import FakeBroker, make_pipeline
 
@@ -95,11 +104,13 @@ def test_run_checks_collects_results_and_never_raises():
     results = run_checks([("a", True, lambda: "fine"), ("b", True, boom), ("c", False, boom)])
     assert [r.ok for r in results] == [True, False, False]
     assert results[1].detail.startswith("ConnectionError: dns")
-    assert [r.name for r in critical_failures(results)] == ["b"]   # only the critical failure blocks startup
+    assert [r.name for r in critical_failures(results)] == ["b"]  # only the critical failure blocks startup
 
 
 def test_results_are_formatted_as_ok_fail_or_warn():
-    text = format_results([CheckResult("k", True, "ok", True), CheckResult("m", False, "x", True), CheckResult("d", False, "y", False)])
+    text = format_results(
+        [CheckResult("k", True, "ok", True), CheckResult("m", False, "x", True), CheckResult("d", False, "y", False)]
+    )
     assert "OK   k" in text and "FAIL m" in text and "WARN d" in text
 
 
@@ -139,17 +150,29 @@ def test_broker_and_telegram_checks_report_what_they_found():
 
 
 def test_build_checks_marks_keys_and_broker_critical_and_covers_the_market():
-    india = build_checks(Settings(market="india"), FakeBroker(Portfolio(1, 1)), {"OPENROUTER_API_KEY": "k"}, download=lambda *a, **k: None)
+    india = build_checks(
+        Settings(market="india"), FakeBroker(Portfolio(1, 1)), {"OPENROUTER_API_KEY": "k"}, download=lambda *a, **k: None
+    )
     assert [(n.split(" (")[0], crit) for n, crit, _ in india] == [
-        ("OpenRouter key", True), ("Broker", True), ("Market data", False),
-        ("NSE stock list", True)]  # the whole-market scan has nothing to scan without it
-    with_delivery = build_checks(Settings(market="india", delivery_filter=True), FakeBroker(Portfolio(1, 1)), {},
-                                 download=lambda *a, **k: None)
+        ("OpenRouter key", True),
+        ("Broker", True),
+        ("Market data", False),
+        ("NSE stock list", True),
+    ]  # the whole-market scan has nothing to scan without it
+    with_delivery = build_checks(
+        Settings(market="india", delivery_filter=True), FakeBroker(Portfolio(1, 1)), {}, download=lambda *a, **k: None
+    )
     assert ("NSE delivery files", False) in [(n, crit) for n, crit, _ in with_delivery]  # without files: just off
-    watchlist = build_checks(Settings(market="india", universe="watchlist", delivery_filter=False), FakeBroker(Portfolio(1, 1)),
-                             {}, download=lambda *a, **k: None)
+    watchlist = build_checks(
+        Settings(market="india", universe="watchlist", delivery_filter=False),
+        FakeBroker(Portfolio(1, 1)),
+        {},
+        download=lambda *a, **k: None,
+    )
     assert not [n for n, _, _ in watchlist if n.startswith("NSE")]
-    with_tg = build_checks(Settings(market="india"), FakeBroker(Portfolio(1, 1)), {"TELEGRAM_BOT_TOKEN": "t"}, download=lambda *a, **k: None)
+    with_tg = build_checks(
+        Settings(market="india"), FakeBroker(Portfolio(1, 1)), {"TELEGRAM_BOT_TOKEN": "t"}, download=lambda *a, **k: None
+    )
     assert with_tg[-1][0] == "Telegram bot" and with_tg[-1][1] is False
 
 
@@ -175,10 +198,10 @@ def test_rebase_clears_a_drawdown_halt_and_only_that_halt(tmp_path):
     pipe.control = Control(sessions)
     messages = []
     pipe._notify = messages.append
-    pipe._record_equity(100_000.0)                               # an old peak
-    assert "drawdown" in pipe.run_once()[0].risk.reason           # halted
+    pipe._record_equity(100_000.0)  # an old peak
+    assert "drawdown" in pipe.run_once()[0].risk.reason  # halted
     pipe.control.rebase_peak(datetime.now(timezone.utc) + timedelta(seconds=1))
-    with sessions() as s:                                          # equity recorded after the rebase point
+    with sessions() as s:  # equity recorded after the rebase point
         s.add(EquityRecord(equity=75_000.0, created_at=datetime.now(timezone.utc) + timedelta(seconds=2)))
         s.commit()
     result = pipe.run_once()[0]
@@ -280,12 +303,12 @@ def test_drawdown_halt_ends_by_itself_after_the_pause_and_only_then(tmp_path):
     pipe.control = Control(sessions)
     messages = []
     pipe._notify = messages.append
-    pipe._record_equity(100_000.0)                                  # an old peak: equity is 25% below it
-    assert "drawdown" in pipe.run_once()[0].risk.reason              # day 0: halted, the cool-off clock starts
+    pipe._record_equity(100_000.0)  # an old peak: equity is 25% below it
+    assert "drawdown" in pipe.run_once()[0].risk.reason  # day 0: halted, the cool-off clock starts
     assert pipe.control.drawdown_since() is not None
-    assert "drawdown" in pipe.run_once()[0].risk.reason              # still inside the 30 days
+    assert "drawdown" in pipe.run_once()[0].risk.reason  # still inside the 30 days
     pipe.control.set_drawdown_since(datetime.now(timezone.utc) - timedelta(days=31))
-    result = pipe.run_once()[0]                                      # cool-off over: peak rebased, buying resumes
+    result = pipe.run_once()[0]  # cool-off over: peak rebased, buying resumes
     assert result.risk.approved
     assert any("Drawdown pause over" in m for m in messages) and pipe.control.drawdown_since() is None
     assert pipe.control.peak_since() is not None
@@ -293,6 +316,7 @@ def test_drawdown_halt_ends_by_itself_after_the_pause_and_only_then(tmp_path):
 
 def test_a_zero_pause_leaves_the_drawdown_halt_permanent(tmp_path):
     import dataclasses
+
     broker = FakeBroker(Portfolio(75_000.0, 75_000.0, {}, {}, 75_000.0))
     pipe, _, sessions = make_pipeline(tmp_path, broker=broker)
     pipe.settings = dataclasses.replace(pipe.settings, risk=dataclasses.replace(pipe.settings.risk, drawdown_pause_days=0))

@@ -1,4 +1,5 @@
 """Technical indicators (moving averages, Wilder RSI) and the per-stock snapshot the agents analyse."""
+
 from dataclasses import dataclass
 from typing import Optional
 
@@ -21,6 +22,7 @@ class BarNotReadyError(StaleDataError):
 @dataclass(frozen=True)
 class Snapshot:
     """Indicator values for one stock as of its last completed bar."""
+
     symbol: str
     price: float
     ma50: float
@@ -89,7 +91,7 @@ def _volume_trend(volume: pd.Series, period: int = 20) -> Optional[float]:
     if len(volume) < 2 * period:
         return None
     recent = float(volume.iloc[-period:].mean())
-    older = float(volume.iloc[-2 * period:-period].mean())
+    older = float(volume.iloc[-2 * period : -period].mean())
     if older <= 0:
         return None
     return float(recent / older - 1)

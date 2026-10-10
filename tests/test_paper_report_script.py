@@ -1,4 +1,5 @@
 """The combined report script runs end to end against two real (small, synthetic) paper accounts."""
+
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -25,9 +26,14 @@ def seed(tmp_path, name, prices, cash=20_000.0):
 
 def run(monkeypatch, capsys, prices, *argv):
     """Run the script with network prices stubbed (a real IntradayFeed would otherwise hit Yahoo for open positions)."""
+
     def fake_broker(settings, database_url=None, fees=None):
-        return PaperBroker(make_session_factory(database_url or settings.database_url), FakeFeed(prices), FakeClock(),
-                           fees=fees or (lambda s, v: 1.0))
+        return PaperBroker(
+            make_session_factory(database_url or settings.database_url),
+            FakeFeed(prices),
+            FakeClock(),
+            fees=fees or (lambda s, v: 1.0),
+        )
 
     if "--gapgo-database-url" not in argv:  # never create the real default databases in the working directory
         argv = (*argv, "--gapgo-database-url", "sqlite://", "--gaponly-database-url", "sqlite://")
@@ -52,14 +58,30 @@ def test_the_report_runs_on_two_real_accounts_and_shows_every_section(tmp_path, 
 def test_no_trades_hides_the_trade_by_trade_listing_but_keeps_the_pl_tables(tmp_path, monkeypatch, capsys):
     swing = seed(tmp_path, "s.db", {"WIN": 110.0, "OPEN": 205.0})
     intraday = seed(tmp_path, "i2.db", {"WIN": 90.0, "OPEN": 195.0})
-    out = run(monkeypatch, capsys, {"WIN": 110.0, "OPEN": 205.0}, "--database-url", swing, "--intraday-database-url", intraday, "--no-trades")
+    out = run(
+        monkeypatch,
+        capsys,
+        {"WIN": 110.0, "OPEN": 205.0},
+        "--database-url",
+        swing,
+        "--intraday-database-url",
+        intraday,
+        "--no-trades",
+    )
     assert "every closed trade" not in out and "by day" in out and "by week" in out
 
 
 def test_an_account_with_no_closed_trades_shows_n_a_win_rate_and_an_empty_pl_table(tmp_path, monkeypatch, capsys):
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'empty.db'}")
-    PaperBroker(sessions, FakeFeed(), FakeClock(), initial_cash=20_000.0)   # never trades
+    PaperBroker(sessions, FakeFeed(), FakeClock(), initial_cash=20_000.0)  # never trades
     swing = seed(tmp_path, "s.db", {"WIN": 110.0, "OPEN": 205.0})
-    out = run(monkeypatch, capsys, {"WIN": 110.0, "OPEN": 205.0}, "--database-url", f"sqlite:///{tmp_path / 'empty.db'}",
-             "--intraday-database-url", swing)
+    out = run(
+        monkeypatch,
+        capsys,
+        {"WIN": 110.0, "OPEN": 205.0},
+        "--database-url",
+        f"sqlite:///{tmp_path / 'empty.db'}",
+        "--intraday-database-url",
+        swing,
+    )
     assert "win rate n/a" in out

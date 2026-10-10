@@ -12,7 +12,9 @@ def test_index_cache_expires_and_falls_back_to_the_stale_copy(tmp_path):
     import os
     import time
     from datetime import date
+
     import pandas as pd
+
     from src.data.price_history import load_index_close
 
     def frame(last):
@@ -45,9 +47,11 @@ def test_index_cache_expires_and_falls_back_to_the_stale_copy(tmp_path):
 
 
 def test_ohlc_universe_downloads_in_chunks_caches_to_disk_and_skips_unresolvable_symbols(tmp_path):
+    from datetime import date
+
     import numpy as np
     import pandas as pd
-    from datetime import date
+
     from src.data.price_history import load_ohlc_universe
 
     idx = pd.bdate_range("2024-01-01", periods=30)
@@ -63,8 +67,9 @@ def test_ohlc_universe_downloads_in_chunks_caches_to_disk_and_skips_unresolvable
         known = {"AAA.NS": frame(100), "BBB.NS": frame(200), "CCC.NS": frame(300)}
         return pd.concat({t: known[t] for t in tickers if t in known}, axis=1)  # ZZZ.NS is not in the download
 
-    kwargs = dict(index=500, years=1, cache_dir=tmp_path, symbols=["AAA", "BBB", "CCC", "ZZZ"], chunk=2,
-                  today=lambda: date(2024, 3, 1))
+    kwargs = dict(
+        index=500, years=1, cache_dir=tmp_path, symbols=["AAA", "BBB", "CCC", "ZZZ"], chunk=2, today=lambda: date(2024, 3, 1)
+    )
     out = load_ohlc_universe(download=download, **kwargs)
     assert set(out) == {"AAA", "BBB", "CCC"} and calls == [["AAA.NS", "BBB.NS"], ["CCC.NS", "ZZZ.NS"]]  # chunked, ZZZ skipped
     assert list(out["AAA"].columns) == ["Open", "High", "Low", "Close", "Volume"] and len(out["AAA"]) == 30

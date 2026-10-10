@@ -4,11 +4,13 @@ import pandas as pd
 
 from src.data.delivery import load_delivery, parse_bhavcopy
 
-CSV = ("SYMBOL, SERIES, DATE1, PREV_CLOSE, OPEN_PRICE, HIGH_PRICE, LOW_PRICE, LAST_PRICE, CLOSE_PRICE, AVG_PRICE, "
-       "TTL_TRD_QNTY, TURNOVER_LACS, NO_OF_TRADES, DELIV_QTY, DELIV_PER\n"
-       "AAA, EQ, 18-Sep-2026, 1, 1, 1, 1, 1, 1, 1, 100, 1, 1, 60, 60.00\n"
-       "BBB, EQ, 18-Sep-2026, 1, 1, 1, 1, 1, 1, 1, 100, 1, 1, 30, 30.00\n"
-       "CCC, BE, 18-Sep-2026, 1, 1, 1, 1, 1, 1, 1, 100, 1, 1, -, -\n")
+CSV = (
+    "SYMBOL, SERIES, DATE1, PREV_CLOSE, OPEN_PRICE, HIGH_PRICE, LOW_PRICE, LAST_PRICE, CLOSE_PRICE, AVG_PRICE, "
+    "TTL_TRD_QNTY, TURNOVER_LACS, NO_OF_TRADES, DELIV_QTY, DELIV_PER\n"
+    "AAA, EQ, 18-Sep-2026, 1, 1, 1, 1, 1, 1, 1, 100, 1, 1, 60, 60.00\n"
+    "BBB, EQ, 18-Sep-2026, 1, 1, 1, 1, 1, 1, 1, 100, 1, 1, 30, 30.00\n"
+    "CCC, BE, 18-Sep-2026, 1, 1, 1, 1, 1, 1, 1, 100, 1, 1, -, -\n"
+)
 
 
 def test_parse_keeps_only_eq_series_and_reads_delivery_percent():

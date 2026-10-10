@@ -1,5 +1,6 @@
 """The interfaces the engine depends on (src/engine/ports.py): the real broker satisfies them, optional capabilities are
 detected explicitly, and the whole application type-checks."""
+
 from pathlib import Path
 
 import pytest

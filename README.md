@@ -93,8 +93,10 @@ must agree) or `advisor` (can only confirm or veto). Register it and the graph g
 ```python
 class FundamentalsAgent:
     name, role = "fundamentals", "advisor"
-    def analyze(self, ctx):                 # ctx.symbol, ctx.snapshot, ctx.market()
-        return AgentSignal(action="BUY", confidence=0.7, reasoning="...")   # or None to abstain
+
+    def analyze(self, ctx):  # ctx.symbol, ctx.snapshot, ctx.market()
+        return AgentSignal(action="BUY", confidence=0.7, reasoning="...")  # or None to abstain
+
 
 pipeline.agents["fundamentals"] = FundamentalsAgent()
 pipeline.rebuild_graphs()

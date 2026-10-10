@@ -2,24 +2,27 @@
 
 import pytest
 
+from src.data.indicators import Snapshot
 from src.engine import rules
 from src.engine.strategy import TREND_EXIT_PREFIX, trend_exit_decision
-from src.data.indicators import Snapshot
 
 
 def snap(price=100.0, ma50=98.0, ma200=95.0, rsi=60.0):
     return Snapshot("X", price, ma50, ma200, rsi, 1000)
 
 
-@pytest.mark.parametrize("args,expected", [
-    ((100, 98, 95, 60), True),
-    ((100, 98, 95, 69.99), True),
-    ((100, 98, 95, 70.0), False),   # exactly overbought is out
-    ((100, 100, 95, 60), False),    # price equal to MA50 is not "above"
-    ((100, 98, 98, 60), False),     # MA50 equal to MA200 is not a bullish stack
-    ((97, 98, 95, 60), False),      # below MA50
-    ((100, 94, 95, 60), False),     # MA50 below MA200
-])
+@pytest.mark.parametrize(
+    "args,expected",
+    [
+        ((100, 98, 95, 60), True),
+        ((100, 98, 95, 69.99), True),
+        ((100, 98, 95, 70.0), False),  # exactly overbought is out
+        ((100, 100, 95, 60), False),  # price equal to MA50 is not "above"
+        ((100, 98, 98, 60), False),  # MA50 equal to MA200 is not a bullish stack
+        ((97, 98, 95, 60), False),  # below MA50
+        ((100, 94, 95, 60), False),  # MA50 below MA200
+    ],
+)
 def test_the_entry_filter_boundaries(args, expected):
     assert rules.entry_filter(*args) is expected
 
@@ -40,9 +43,9 @@ def test_the_trend_exit_decision_only_applies_to_a_held_stock_below_its_200_day_
     d = trend_exit_decision(below, held_qty=100)
     assert d.action == "SELL" and d.confidence == 1.0 and d.reasoning.startswith(TREND_EXIT_PREFIX)
     assert "90.00" in d.reasoning and "95.00" in d.reasoning
-    assert trend_exit_decision(below, held_qty=0) is None              # nothing to sell
+    assert trend_exit_decision(below, held_qty=0) is None  # nothing to sell
     assert trend_exit_decision(below, held_qty=100, enabled=False) is None
-    assert trend_exit_decision(snap(), held_qty=100) is None            # trend intact
+    assert trend_exit_decision(snap(), held_qty=100) is None  # trend intact
 
 
 def test_every_consumer_of_the_rules_uses_this_module_not_its_own_copy():
@@ -51,14 +54,19 @@ def test_every_consumer_of_the_rules_uses_this_module_not_its_own_copy():
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent
-    banned = [r"price\s*>\s*(?:snap\.|s\.)?ma50", r"ma50\s*>\s*(?:snap\.|s\.)?ma200", r"(?:price|close)\s*<\s*(?:snap\.|s\.)?ma200",
-              r"rsi\s*<\s*70", r"rsi\s*>=\s*70"]
+    banned = [
+        r"price\s*>\s*(?:snap\.|s\.)?ma50",
+        r"ma50\s*>\s*(?:snap\.|s\.)?ma200",
+        r"(?:price|close)\s*<\s*(?:snap\.|s\.)?ma200",
+        r"rsi\s*<\s*70",
+        r"rsi\s*>=\s*70",
+    ]
     offenders = []
     for path in list((root / "src").rglob("*.py")) + [root / "main.py"]:
         if path.name == "rules.py" or "indicators" in path.name:
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             code = line.split("#")[0]
-            if any(re.search(pattern, code) for pattern in banned) and not code.strip().startswith(('"', "'", "f\"", "f'")):
+            if any(re.search(pattern, code) for pattern in banned) and not code.strip().startswith(('"', "'", 'f"', "f'")):
                 offenders.append(f"{path.relative_to(root)}:{number}: {line.strip()[:90]}")
     assert not offenders, "the entry/exit rule is written out again outside src/engine/rules.py:\n" + "\n".join(offenders)

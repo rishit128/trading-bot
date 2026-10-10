@@ -1,4 +1,5 @@
 """Startup connectivity checks, so a bad key or a dead service is reported clearly at launch instead of on the first cycle."""
+
 from dataclasses import dataclass
 from typing import Callable, List, Mapping, Optional, Sequence
 
@@ -8,6 +9,7 @@ import httpx
 @dataclass(frozen=True)
 class CheckResult:
     """Outcome of one startup check."""
+
     name: str
     ok: bool
     detail: str
@@ -82,7 +84,9 @@ def critical_failures(results: Sequence[CheckResult]) -> List[CheckResult]:
     return [r for r in results if not r.ok and r.critical]
 
 
-def build_checks(settings, broker, env: Mapping[str, str], get: Callable = httpx.get, download: Optional[Callable] = None) -> list:
+def build_checks(
+    settings, broker, env: Mapping[str, str], get: Callable = httpx.get, download: Optional[Callable] = None
+) -> list:
     """The checks for the configured market. Keys and the broker are critical; market data and Telegram only warn."""
     if download is None:
         import yfinance as yf

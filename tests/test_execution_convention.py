@@ -1,17 +1,18 @@
 """the backtest and the paper broker must express ONE execution convention.
 
-    signal at day T's close -> fills at the next open, +slippage, +delivery fees; stop/target exits hit at their exact
-    level. The tests pin that equality on the same inputs and make the one admitted divergence (paper prices at the
-    current 5-minute close, backtest at the next open) explicit instead of hidden."""
+signal at day T's close -> fills at the next open, +slippage, +delivery fees; stop/target exits hit at their exact
+level. The tests pin that equality on the same inputs and make the one admitted divergence (paper prices at the
+current 5-minute close, backtest at the next open) explicit instead of hidden."""
+
 from datetime import datetime, timezone
 
 import pandas as pd
 import pytest
 
-from src.research.backtest import Result, simulate
 from src.config import RiskLimits
-from src.engine.costs import SLIPPAGE
-from src.engine.costs import india_delivery_fees
+from src.engine.costs import SLIPPAGE, india_delivery_fees
+from src.research.backtest import Result, simulate
+
 
 def apply_slippage(price, side, slippage=SLIPPAGE):
     """The convention as a spec: a buy fills higher, a sell fills lower. The oracle the broker and simulator are held to."""
@@ -54,8 +55,7 @@ def _paper_broker(feed_price, sessions_dir):
     sessions = make_session_factory(f"sqlite:///{sessions_dir}/p.db")
     from src.engine.paper_broker import PaperBroker
 
-    return PaperBroker(sessions, FakeFeed(feed_price), Clock(),
-                       now_fn=lambda: datetime(2024, 1, 3, 12, 0, tzinfo=timezone.utc))
+    return PaperBroker(sessions, FakeFeed(feed_price), Clock(), now_fn=lambda: datetime(2024, 1, 3, 12, 0, tzinfo=timezone.utc))
 
 
 def test_backtest_fill_equals_paper_fill_off_the_same_next_open():
@@ -65,8 +65,9 @@ def test_backtest_fill_equals_paper_fill_off_the_same_next_open():
     bars = _daily_bars()
     df = bars["A"]
     entry_open = float(df.loc["2024-01-03", "Open"])
-    signals = {"A": {pd.Timestamp("2024-01-02"): ("BUY", 0.9),
-                     pd.Timestamp("2024-01-04"): ("SELL", 0.9)}}  # decided at the 2024-01-02 close; exited later
+    signals = {
+        "A": {pd.Timestamp("2024-01-02"): ("BUY", 0.9), pd.Timestamp("2024-01-04"): ("SELL", 0.9)}
+    }  # decided at the 2024-01-02 close; exited later
 
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:  # Windows: SQLite may still hold the file
         broker = _paper_broker(entry_open, td)  # paper executed at the same next open
@@ -111,9 +112,12 @@ def test_stop_and_target_exits_have_no_extra_slippage_in_either_path():
     """Stop/target are limit-like: the backtest fills a gap-down stop at the bar open, never widened by slippage
     (the paper broker's _settle_exits does the same thing: bar-Open on a gap, exact level otherwise)."""
     idx = pd.to_datetime(["2024-01-02", "2024-01-03"])
-    bars = {"A": pd.DataFrame(
-        {"Open": [100.0, 90.0], "High": [100.0, 92.0], "Low": [100.0, 88.0], "Close": [100.5, 91.0], "Volume": [1] * 2},
-        index=idx)}
+    bars = {
+        "A": pd.DataFrame(
+            {"Open": [100.0, 90.0], "High": [100.0, 92.0], "Low": [100.0, 88.0], "Close": [100.5, 91.0], "Volume": [1] * 2},
+            index=idx,
+        )
+    }
     signals = {"A": {pd.Timestamp("2024-01-02"): ("BUY", 0.9)}}  # stop set off the 100.5 signal close: 92.46
 
     # The next open is 90.0 <= the 92.46 stop: a gap-down, so the trade exits at the bar OPEN, with no slippage on top.
@@ -137,9 +141,14 @@ def test_the_admitted_divergence_is_exactly_the_overnight_gap():
         broker = _paper_broker(evening_close, td)
         sig_price = float(df.loc["2024-01-02", "Close"])
         fill = broker.buy_with_bracket("A", 100, sig_price, LIMITS.stop_loss_pct, LIMITS.take_profit_pct)
-        res: Result = simulate(bars, {"A": {pd.Timestamp("2024-01-02"): ("BUY", 0.9),
-                                            pd.Timestamp("2024-01-04"): ("SELL", 0.9)}}, LIMITS,
-                               start_equity=100_000, fees=india_delivery_fees, slippage=SLIPPAGE)
+        res: Result = simulate(
+            bars,
+            {"A": {pd.Timestamp("2024-01-02"): ("BUY", 0.9), pd.Timestamp("2024-01-04"): ("SELL", 0.9)}},
+            LIMITS,
+            start_equity=100_000,
+            fees=india_delivery_fees,
+            slippage=SLIPPAGE,
+        )
         trades = [t for t in res.trades if t.reason == "SIGNAL"]
         assert len(trades) == 1
     paper = fill.avg_price

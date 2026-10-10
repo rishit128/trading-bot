@@ -1,6 +1,7 @@
 """The layering rules, enforced. The structure was cleaned up deliberately (production code no longer imports research, the
 domain layer stands alone, the `src/` root holds only the application core); these tests stop it decaying again.
 Imports under `if TYPE_CHECKING:` are ignored: they cost nothing at run time and create no real dependency."""
+
 import ast
 from pathlib import Path
 
@@ -8,7 +9,20 @@ import pytest
 
 SRC = Path(__file__).resolve().parent.parent / "src"
 ROOT_ALLOWED = {"config", "control", "logging_setup", "pipeline", "results", "runner", "versions", "workflow"}
-PACKAGES = {"agents", "app", "data", "database", "engine", "intraday", "learning", "llm", "monitoring", "ops", "portfolio", "research"}
+PACKAGES = {
+    "agents",
+    "app",
+    "data",
+    "database",
+    "engine",
+    "intraday",
+    "learning",
+    "llm",
+    "monitoring",
+    "ops",
+    "portfolio",
+    "research",
+}
 
 
 def module_name(path: Path) -> str:
@@ -44,8 +58,9 @@ IMPORTS = {m: runtime_imports(p) for m, p in MODULES.items()}
 
 
 def offenders(sources, forbidden):
-    return sorted(f"{m} imports {t}" for m in MODULES if package_of(m) in sources
-                  for t, _, _ in IMPORTS[m] if package_of(t) in forbidden)
+    return sorted(
+        f"{m} imports {t}" for m in MODULES if package_of(m) in sources for t, _, _ in IMPORTS[m] if package_of(t) in forbidden
+    )
 
 
 def test_production_code_never_depends_on_research_or_ops():
@@ -59,7 +74,9 @@ def test_the_engine_is_a_leaf_of_the_domain_it_does_not_reach_up_into_agents_llm
 
 def test_the_data_layer_does_not_depend_on_agents_llm_or_the_orchestration():
     assert offenders({"data"}, {"agents", "llm", "app", "research", "ops"}) == []
-    assert not [m for m in MODULES if package_of(m) == "data" and any(t in ("src.pipeline", "src.workflow") for t, _, _ in IMPORTS[m])]
+    assert not [
+        m for m in MODULES if package_of(m) == "data" and any(t in ("src.pipeline", "src.workflow") for t, _, _ in IMPORTS[m])
+    ]
 
 
 def test_the_learning_layer_reads_the_database_and_data_only_and_nothing_trades_through_it():
@@ -76,8 +93,13 @@ def test_the_src_root_holds_only_the_application_core():
 
 
 def test_no_module_imports_a_private_name_from_another_module():
-    found = [f"{m} imports {t}.{n}" for m, deps in IMPORTS.items() for t, names, _ in deps for n in names
-             if n.startswith("_") and not n.startswith("__")]
+    found = [
+        f"{m} imports {t}.{n}"
+        for m, deps in IMPORTS.items()
+        for t, names, _ in deps
+        for n in names
+        if n.startswith("_") and not n.startswith("__")
+    ]
     assert found == []
 
 
@@ -89,7 +111,7 @@ def test_there_are_no_import_cycles_between_modules():
         state[node] = "open"
         for nxt in graph[node]:
             if state.get(nxt) == "open":
-                cycles.append(path[path.index(nxt):] + [nxt] if nxt in path else [node, nxt])
+                cycles.append(path[path.index(nxt) :] + [nxt] if nxt in path else [node, nxt])
             elif nxt not in state:
                 visit(nxt, path + [nxt])
         state[node] = "done"
@@ -103,10 +125,14 @@ def test_there_are_no_import_cycles_between_modules():
 def test_the_real_portfolio_agent_is_walled_off_from_the_trading_code():
     """It reads a real-money account: it imports nothing of the trading code (no path to the paper broker, pipeline or
     orders), and only its one wiring module (app/portfolio_agent.py) imports it."""
-    assert not [f"{m} imports {t}" for m in MODULES if package_of(m) == "portfolio"
-                for t, _, _ in IMPORTS[m] if not t.startswith("src.portfolio")]
-    importers = {m for m in MODULES if package_of(m) != "portfolio"
-                 for t, _, _ in IMPORTS[m] if package_of(t) == "portfolio"}
+    assert not [
+        f"{m} imports {t}"
+        for m in MODULES
+        if package_of(m) == "portfolio"
+        for t, _, _ in IMPORTS[m]
+        if not t.startswith("src.portfolio")
+    ]
+    importers = {m for m in MODULES if package_of(m) != "portfolio" for t, _, _ in IMPORTS[m] if package_of(t) == "portfolio"}
     assert importers == {"src.app.portfolio_agent"}
 
 

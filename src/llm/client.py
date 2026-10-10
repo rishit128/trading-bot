@@ -15,6 +15,7 @@ Each failure is classified, because each needs a different response:
   PERMANENT  model gone / auth / bad request                      -> skip the model (gone models are skipped for the session)
 A model that fails several calls in a row is benched for a cool-off so healthy models answer first; if every model is
 benched the least recently benched is still tried, so the client can never wedge itself."""
+
 import logging
 import os
 import random
@@ -28,8 +29,8 @@ import openai
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
-from src.engine.enums import ACTION_VALUES
 from src.engine.agent_signal import AgentSignal
+from src.engine.enums import ACTION_VALUES
 from src.llm.errors import FORMAT, PERMANENT, TRANSIENT, TRUNCATED, Failure, LLMUnavailable
 from src.llm.parsing import extract_json_object, retry_after, upstream_message
 
@@ -38,8 +39,10 @@ log = logging.getLogger(__name__)
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 
 # Appended when a model's answer could not be parsed or validated: re-ask strictly before giving up.
-RETRY_HINT = ("Your previous response was not a valid JSON object for the required schema. Respond with ONLY a single "
-              "raw JSON object matching the schema, with no prose, no markdown fences, and no trailing text.")
+RETRY_HINT = (
+    "Your previous response was not a valid JSON object for the required schema. Respond with ONLY a single "
+    "raw JSON object matching the schema, with no prose, no markdown fences, and no trailing text."
+)
 
 SIGNAL_SCHEMA = {
     "name": "trading_signal",
@@ -66,13 +69,29 @@ class LLMClient:
     which is what the chain-of-thought agents use. The defaults do no waiting and no pacing so unit tests stay fast;
     `from_settings` wires the production values."""
 
-    def __init__(self, models, client=None, max_tokens: int = 3000, clock: Callable[[], float] = time.monotonic,
-                 reasoning_off: bool = False, max_tokens_cap: int = 8000, timeout: float = 120.0,
-                 transient_retries: int = 2, format_retries: int = 1, truncation_retries: int = 2,
-                 backoff_base: float = 0.0, backoff_cap: float = 60.0, call_budget_seconds: float = 180.0,
-                 breaker_threshold: int = 3, breaker_cooldown: float = 300.0,
-                 min_interval: float = 0.0, max_concurrency: int = 0, temperature: Optional[float] = None,
-                 sleep: Callable[[float], None] = time.sleep, jitter: Callable[[], float] = random.random):
+    def __init__(
+        self,
+        models,
+        client=None,
+        max_tokens: int = 3000,
+        clock: Callable[[], float] = time.monotonic,
+        reasoning_off: bool = False,
+        max_tokens_cap: int = 8000,
+        timeout: float = 120.0,
+        transient_retries: int = 2,
+        format_retries: int = 1,
+        truncation_retries: int = 2,
+        backoff_base: float = 0.0,
+        backoff_cap: float = 60.0,
+        call_budget_seconds: float = 180.0,
+        breaker_threshold: int = 3,
+        breaker_cooldown: float = 300.0,
+        min_interval: float = 0.0,
+        max_concurrency: int = 0,
+        temperature: Optional[float] = None,
+        sleep: Callable[[float], None] = time.sleep,
+        jitter: Callable[[], float] = random.random,
+    ):
         if not models:
             raise ValueError("at least one model is required")
         self.models = list(models)
@@ -93,33 +112,48 @@ class LLMClient:
         self._slots = threading.BoundedSemaphore(max_concurrency) if max_concurrency > 0 else None
         self._rate_lock, self._next_slot = threading.Lock(), 0.0
         # The SDK's own retry is off: it would hide rate limits from, and multiply, our own accounted retries.
-        self.client = client or OpenAI(base_url=OPENROUTER_URL, api_key=os.environ["OPENROUTER_API_KEY"],
-                                       timeout=timeout, max_retries=0)
+        self.client = client or OpenAI(
+            base_url=OPENROUTER_URL, api_key=os.environ["OPENROUTER_API_KEY"], timeout=timeout, max_retries=0
+        )
 
     @classmethod
     def from_settings(cls, settings, **overrides):
         """The production client: reasoning off, paced to the free tier's request limit, bounded concurrency, backoff."""
-        params = dict(reasoning_off=settings.llm_reasoning_off,
-                      min_interval=settings.llm_min_interval, max_concurrency=settings.llm_concurrency,
-                      temperature=settings.llm_temperature, backoff_base=4.0)
+        params = dict(
+            reasoning_off=settings.llm_reasoning_off,
+            min_interval=settings.llm_min_interval,
+            max_concurrency=settings.llm_concurrency,
+            temperature=settings.llm_temperature,
+            backoff_base=4.0,
+        )
         params.update(overrides)
         return cls(settings.models, **params)
 
     # ------------------------------------------------------------------ public calls
     def signal(self, prompt: str) -> AgentSignal:
         """Ask the models in order for an AgentSignal."""
-        return self.structured_call(prompt, AgentSignal, SIGNAL_SCHEMA,
-                                    parse=lambda raw: AgentSignal.model_validate(
-                                        {k: raw[k] for k in ("action", "confidence", "reasoning") if k in raw}))
+        return self.structured_call(
+            prompt,
+            AgentSignal,
+            SIGNAL_SCHEMA,
+            parse=lambda raw: AgentSignal.model_validate({k: raw[k] for k in ("action", "confidence", "reasoning") if k in raw}),
+        )
 
-    def structured_call(self, prompt: str, model_class: Type[_T], schema: dict,
-                        parse: Optional[Callable[[dict], _T]] = None,
-                        max_tokens: Optional[int] = None) -> _T:
+    def structured_call(
+        self,
+        prompt: str,
+        model_class: Type[_T],
+        schema: dict,
+        parse: Optional[Callable[[dict], _T]] = None,
+        max_tokens: Optional[int] = None,
+    ) -> _T:
         """Ask the models in order for a JSON object matching `schema`, validated into model_class.
 
         `parse` overrides how the raw JSON dict becomes an instance (used by `signal` to drop model-controlled fields
         such as `degraded`)."""
-        return cast(_T, self._ask(prompt, schema, parse or model_class.model_validate, max_tokens))  # `parse` builds a model_class
+        return cast(
+            _T, self._ask(prompt, schema, parse or model_class.model_validate, max_tokens)
+        )  # `parse` builds a model_class
 
     # ------------------------------------------------------------------ model selection and health
     def _order(self) -> list:
@@ -150,14 +184,19 @@ class LLMClient:
             if self.breaker_threshold > 0 and self._consecutive_failures[model] >= self.breaker_threshold:
                 self._benched_until[model] = self.clock() + self.breaker_cooldown
                 self._window.setdefault(model, Counter())["benched"] += 1
-                log.warning("model %s failed %d calls in a row: benched for %.0fs", model,
-                            self._consecutive_failures[model], self.breaker_cooldown)
+                log.warning(
+                    "model %s failed %d calls in a row: benched for %.0fs",
+                    model,
+                    self._consecutive_failures[model],
+                    self.breaker_cooldown,
+                )
 
     def drain_stats(self) -> Dict[str, dict]:
         """Per-model counters since the last drain (ok, failures by kind, benched), for the cycle's health line."""
         with self._state_lock:
-            out: Dict[str, dict] = {m: {**c, **({"seconds": self._seconds[m]} if m in self._seconds else {})}
-                                    for m, c in self._window.items() if c}
+            out: Dict[str, dict] = {
+                m: {**c, **({"seconds": self._seconds[m]} if m in self._seconds else {})} for m, c in self._window.items() if c
+            }
             self._window, self._seconds = {}, {}
         return out
 
@@ -171,13 +210,15 @@ class LLMClient:
             bad = ", ".join(f"{k} {v}" for k, v in sorted(c.items()) if k not in ("ok", "benched", "seconds"))
             ok = c.get("ok", 0)
             speed = f" (avg {c['seconds'] / ok:.0f}s)" if ok else ""
-            parts.append(f"{model.split('/')[-1]} ok {ok}{speed}" + (f" | {bad}" if bad else "")
-                         + (" | BENCHED" if c.get("benched") else ""))
+            parts.append(
+                f"{model.split('/')[-1]} ok {ok}{speed}"
+                + (f" | {bad}" if bad else "")
+                + (" | BENCHED" if c.get("benched") else "")
+            )
         return "LLM health: " + "; ".join(parts)
 
     # ------------------------------------------------------------------ one call
-    def _ask(self, prompt: str, schema: dict, parse: Callable[[dict], BaseModel],
-             max_tokens: Optional[int]) -> BaseModel:
+    def _ask(self, prompt: str, schema: dict, parse: Callable[[dict], BaseModel], max_tokens: Optional[int]) -> BaseModel:
         """Try the models in health order until one answers; every model failing raises LLMUnavailable."""
         deadline = self.clock() + self.call_budget
         errors = []
@@ -241,8 +282,9 @@ class LLMClient:
 
     def _create(self, model: str, messages: list, tokens: int, schema: dict):
         """The API call, with the reasoning switch that is dropped for any model that rejects it."""
-        kwargs: Dict[str, Any] = dict(model=model, max_tokens=tokens, messages=messages,
-                                      response_format={"type": "json_schema", "json_schema": schema})
+        kwargs: Dict[str, Any] = dict(
+            model=model, max_tokens=tokens, messages=messages, response_format={"type": "json_schema", "json_schema": schema}
+        )
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
         if self.reasoning_off and model not in self._no_reasoning_control:
@@ -279,8 +321,7 @@ class LLMClient:
         finish = getattr(choice, "finish_reason", None)
         text = getattr(choice.message, "content", None)
         if not text or not text.strip():
-            raise Failure(TRUNCATED if finish == "length" else TRANSIENT,
-                           f"empty content (finish_reason={finish})")
+            raise Failure(TRUNCATED if finish == "length" else TRANSIENT, f"empty content (finish_reason={finish})")
         try:
             instance = parse(extract_json_object(text))
         except (ValueError, ValidationError) as e:

@@ -1,8 +1,8 @@
 import pandas as pd
 import pytest
 
-from src.research.backtest import curve_metrics, simulate
 from src.config import RiskLimits
+from src.research.backtest import curve_metrics, simulate
 
 LIM = RiskLimits(max_position_pct=0.05, stop_loss_pct=0.02, take_profit_pct=0.05, min_confidence=0.6)
 DAYS = pd.bdate_range("2026-01-05", periods=15)
@@ -123,6 +123,7 @@ def test_fees_never_let_cash_go_negative():
 def test_trend_exit_sells_at_the_next_open_after_a_close_below_the_200_day_average():
     import numpy as np
     import pandas as pd
+
     from src.config import RiskLimits
 
     idx = pd.bdate_range("2020-01-01", periods=320)
@@ -141,7 +142,9 @@ def test_trend_exit_sells_at_the_next_open_after_a_close_below_the_200_day_avera
 
 def test_simulator_resumes_buying_after_the_drawdown_pause_but_not_when_permanent():
     import dataclasses
+
     import numpy as np
+
     from src.config import RiskLimits
 
     idx = pd.bdate_range("2024-01-01", periods=120)
@@ -154,24 +157,31 @@ def test_simulator_resumes_buying_after_the_drawdown_pause_but_not_when_permanen
 
     bars = {"X": frame(crash), "Y": frame(np.full(120, 100.0))}
     sig = {"X": {idx[2]: ("BUY", 0.9)}, "Y": {idx[80]: ("BUY", 0.9)}}  # Y is bought long after X's crash tripped -20%
-    base = RiskLimits(max_position_pct=0.5, min_position_pct=0.5, max_portfolio_exposure_pct=1.0, stop_loss_pct=0.99,
-                      max_drawdown_pct=0.20, max_open_positions=5)
+    base = RiskLimits(
+        max_position_pct=0.5,
+        min_position_pct=0.5,
+        max_portfolio_exposure_pct=1.0,
+        stop_loss_pct=0.99,
+        max_drawdown_pct=0.20,
+        max_open_positions=5,
+    )
     # X at 50% of equity falling 40% is a 20%+ drawdown, so the halt starts around day 20
     permanent = simulate(bars, sig, dataclasses.replace(base, drawdown_pause_days=0))
     paused = simulate(bars, sig, dataclasses.replace(base, drawdown_pause_days=30))
     assert permanent.open_at_end == 1  # the day-80 BUY of Y was refused by the standing halt
-    assert paused.open_at_end == 2     # 30 days later the peak was rebased and Y was bought
+    assert paused.open_at_end == 2  # 30 days later the peak was rebased and Y was bought
 
 
 def test_every_research_entry_point_simulates_with_the_live_exit_policy(monkeypatch, tmp_path):
     """the holdout and the live-config backtest must not quietly pick their own exits."""
     import numpy as np
-    from src.research import backtest as backtest_module
+
     from src.config import RiskLimits
-    from src.ops.holdout import HoldoutReserve
-    from src.research import live_backtest
     from src.data.universe import ScreenConfig
     from src.database import make_session_factory
+    from src.ops.holdout import HoldoutReserve
+    from src.research import backtest as backtest_module
+    from src.research import live_backtest
 
     seen = []
     real = backtest_module.simulate
@@ -182,21 +192,34 @@ def test_every_research_entry_point_simulates_with_the_live_exit_policy(monkeypa
 
     monkeypatch.setattr(live_backtest, "simulate", spy)
     import src.ops.holdout as holdout_module
+
     monkeypatch.setattr(holdout_module, "simulate", spy)
 
     idx = pd.bdate_range("2023-01-02", periods=320)
     close = pd.Series(np.linspace(100, 160, 320) + np.sin(np.arange(320)), index=idx)
     bars = pd.DataFrame({"Open": close, "High": close * 1.01, "Low": close * 0.99, "Close": close, "Volume": 1e6}, index=idx)
-    live_backtest.run_live_config({"A": bars}, RiskLimits(), ScreenConfig(min_price=1, min_traded_value=1), 20_000.0,
-                                  dates=list(idx[250:]))
+    live_backtest.run_live_config(
+        {"A": bars}, RiskLimits(), ScreenConfig(min_price=1, min_traded_value=1), 20_000.0, dates=list(idx[250:])
+    )
     from datetime import datetime, timezone
+
     from src.database import DecisionRecord
 
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'h.db'}")
     with sessions() as s:  # one approved BUY on a day the bars cover, so the reserve really replays something
-        s.add(DecisionRecord(symbol="A", price=100.0, final_action="BUY", final_confidence=0.8, reasoning="r",
-                             risk_approved=True, risk_quantity=10, risk_reason="ok",
-                             created_at=datetime(2023, 9, 14, 5, 30, tzinfo=timezone.utc)))
+        s.add(
+            DecisionRecord(
+                symbol="A",
+                price=100.0,
+                final_action="BUY",
+                final_confidence=0.8,
+                reasoning="r",
+                risk_approved=True,
+                risk_quantity=10,
+                risk_reason="ok",
+                created_at=datetime(2023, 9, 14, 5, 30, tzinfo=timezone.utc),
+            )
+        )
         s.commit()
     before = len(seen)
     HoldoutReserve(sessions, lambda symbol: bars, initial_cash=100_000.0).mark()
@@ -208,6 +231,7 @@ def test_idle_cash_accrues_at_cash_yield_only_from_cash_yield_from():
     """No signals, so every rupee is idle: equity must grow exactly at the sweep rate from the start date, and the
     warm-up before it must earn nothing (it would otherwise show up as a gain in a curve reported from the start)."""
     import pandas as pd
+
     from src.config import RiskLimits
     from src.research.backtest import simulate
 

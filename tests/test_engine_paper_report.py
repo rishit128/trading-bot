@@ -1,4 +1,5 @@
 """The combined P&L report's aggregation: grouping by day/week, totals, and merging two accounts' periods."""
+
 from datetime import datetime, timezone
 
 import pytest
@@ -14,7 +15,12 @@ def test_group_by_day_sums_each_calendar_day_and_counts_wins():
     trades = [trade("2026-09-29T04:00", 100.0), trade("2026-09-29T09:00", -30.0), trade("2026-09-30T04:00", 50.0)]
     rows = group_by_day(trades, timezone.utc)
     assert [r.label for r in rows] == ["2026-09-29", "2026-09-30"]
-    assert rows[0].trades == 2 and rows[0].wins == 1 and rows[0].net_pnl == pytest.approx(70.0) and rows[0].fees == pytest.approx(2.0)
+    assert (
+        rows[0].trades == 2
+        and rows[0].wins == 1
+        and rows[0].net_pnl == pytest.approx(70.0)
+        and rows[0].fees == pytest.approx(2.0)
+    )
     assert rows[1].win_rate == 1.0
 
 

@@ -3,6 +3,7 @@
 Source: NSE's full bhavcopy, one CSV per trading day, saved by a person from a browser into NSE_FILES_DIR/bhavcopy under
 the name NSE gives it (sec_bhavdata_full_DDMMYYYY.csv). NSE's terms of use prohibit automated data collection, so the
 bot never downloads these itself. Without recent files the delivery filter is simply off for the day (it fails open)."""
+
 import io
 import logging
 import re
@@ -31,8 +32,7 @@ def parse_bhavcopy(text: str) -> pd.Series:
     return pd.to_numeric(df.set_index("SYMBOL")["DELIV_PER"], errors="coerce")
 
 
-def load_delivery(years: float = 3, directory: Optional[Path] = None,
-                  today: Callable[[], date] = date.today) -> pd.DataFrame:
+def load_delivery(years: float = 3, directory: Optional[Path] = None, today: Callable[[], date] = date.today) -> pd.DataFrame:
     """Dates x symbols delivery percent from the bhavcopy files in the folder dated within the last `years`. Empty when
     there are none; a file that cannot be parsed is skipped with a warning, never guessed."""
     folder = bhavcopy_dir(directory)

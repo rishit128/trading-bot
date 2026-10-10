@@ -12,6 +12,7 @@
 * Risk limits and order sizing stay in plain deterministic code (`RiskEngine`); the graphs only orchestrate.
 * The graphs know the application only through `CycleServices` (below): a handful of public methods. Nothing here reaches
   into the pipeline's internals, so a node can be tested with a small fake and the pipeline can change freely."""
+
 import logging
 import operator
 from typing import Annotated, Dict, List, Mapping, Optional, Protocol, Sequence, TypedDict
@@ -23,8 +24,8 @@ from src.agents.base import LEAD, Agent, AgentContext
 from src.config import Settings
 from src.data.indicators import BarNotReadyError, Snapshot
 from src.data.retry import is_transient_data_error
-from src.engine.risk_engine import Portfolio
 from src.engine.agent_signal import AgentSignal
+from src.engine.risk_engine import Portfolio
 from src.results import SymbolResult, Verdict
 
 log = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ def merge_dicts(left: Optional[dict], right: Optional[dict]) -> dict:
 
 class AnalysisState(TypedDict, total=False):
     """State of the per-stock analysis graph."""
+
     symbol: str
     snapshot: Snapshot
     signals: Annotated[Dict[str, Optional[AgentSignal]], merge_dicts]
@@ -44,6 +46,7 @@ class AnalysisState(TypedDict, total=False):
 
 class DecisionState(TypedDict, total=False):
     """State of the per-stock decision graph."""
+
     symbol: str
     portfolio: Portfolio
     snapshot: Snapshot
@@ -55,11 +58,13 @@ class DecisionState(TypedDict, total=False):
 
 class SymbolInput(TypedDict):
     """Input for one parallel analysis task."""
+
     symbol: str
 
 
 class CycleState(TypedDict, total=False):
     """State of the whole-cycle graph."""
+
     portfolio: Portfolio
     symbols: List[str]
     analyses: Annotated[List[dict], operator.add]
@@ -74,6 +79,7 @@ def agent_node_name(name: str) -> str:
 class CycleServices(Protocol):
     """What the graphs need from the application, and nothing more. `TradingPipeline` is the production implementation; a
     test can pass a small fake. Every member is public: the graphs never touch anything with a leading underscore."""
+
     @property
     def agents(self) -> Mapping[str, Agent]: ...
     @property
@@ -84,8 +90,14 @@ class CycleServices(Protocol):
     def agent_context(self, symbol: str, snapshot: Snapshot) -> AgentContext: ...
     def open_cycle(self) -> Portfolio: ...
     def select_symbols(self, portfolio: Portfolio) -> Sequence[str]: ...
-    def decide(self, symbol: str, portfolio: Portfolio, snapshot: Snapshot, signals: Mapping[str, Optional[AgentSignal]],
-               universe_size: Optional[int] = None) -> Verdict: ...
+    def decide(
+        self,
+        symbol: str,
+        portfolio: Portfolio,
+        snapshot: Snapshot,
+        signals: Mapping[str, Optional[AgentSignal]],
+        universe_size: Optional[int] = None,
+    ) -> Verdict: ...
     def place(self, symbol: str, verdict: Verdict) -> Optional[str]: ...
     def refresh_portfolio(self) -> Portfolio: ...
     def note_lead_health(self, degraded: bool) -> None: ...
@@ -117,6 +129,7 @@ def build_analysis_graph(services: CycleServices, snapshot_retry: RetryPolicy = 
 
     def make_agent_node(name: str):
         """Build the graph node that runs one agent."""
+
         def node(state: AnalysisState):
             """Run one agent for the stock."""
             ctx = services.agent_context(state["symbol"], state["snapshot"])
@@ -143,10 +156,14 @@ def build_analysis_graph(services: CycleServices, snapshot_retry: RetryPolicy = 
 
 def build_decision_graph(services: CycleServices):
     """Per-stock graph: decide (combine, risk-size, record), then place the order if the risk engine approved it."""
+
     def decide(state: DecisionState):
         """Decide and record one stock's call."""
-        return {"verdict": services.decide(state["symbol"], state["portfolio"], state["snapshot"], state["signals"],
-                                           state.get("universe_size"))}
+        return {
+            "verdict": services.decide(
+                state["symbol"], state["portfolio"], state["snapshot"], state["signals"], state.get("universe_size")
+            )
+        }
 
     def execute(state: DecisionState):
         """Place the approved order."""
@@ -167,6 +184,7 @@ def build_decision_graph(services: CycleServices):
 
 def build_cycle_graph(services: CycleServices, analysis_graph, decision_graph):
     """Whole-cycle graph: open the account, choose stocks, analyse them in parallel, then decide each in order."""
+
     def open_cycle(state: CycleState):
         """Read the account and run the start-of-cycle safeguards."""
         return {"portfolio": services.open_cycle(), "analyses": [], "results": []}
@@ -210,22 +228,43 @@ def build_cycle_graph(services: CycleServices, analysis_graph, decision_graph):
                 services.notify(f"ERROR processing {symbol}: {a['error']}")
                 continue
             try:
-                out = decision_graph.invoke({"symbol": symbol, "portfolio": portfolio, "snapshot": a["snapshot"],
-                                             "signals": a["signals"], "universe_size": len(state["symbols"])})
+                out = decision_graph.invoke(
+                    {
+                        "symbol": symbol,
+                        "portfolio": portfolio,
+                        "snapshot": a["snapshot"],
+                        "signals": a["signals"],
+                        "universe_size": len(state["symbols"]),
+                    }
+                )
             except Exception as e:
                 log.exception("%s decision failed", symbol)
                 results.append(SymbolResult(symbol, "ERROR", 0.0, None, None, f"{type(e).__name__}: {e}"))
                 services.notify(f"ERROR processing {symbol}: {type(e).__name__}: {e}")
                 continue
             decision, risk, status = out["verdict"].decision, out["verdict"].risk, out.get("order_status")
-            said = {n: (f"{a['signals'][n].action}({a['signals'][n].confidence:.2f})" if a["signals"].get(n) else "none")
-                    for n in services.agents}  # registry order, not the order parallel nodes happened to finish
-            log.info("%s %s conf=%.2f risk=%s order=%s agents=%s", symbol, decision.action, decision.confidence,
-                     risk.reason, status, " ".join(f"{n}:{v}" for n, v in said.items()),
-                     extra={"symbol": symbol, "action": decision.action, "confidence": round(decision.confidence, 3),
-                            "risk_approved": risk.approved, "order_status": status, "agents": said})
-            services.note_lead_health(any(s is not None and s.degraded for n, s in a["signals"].items()
-                                          if roles.get(n) == LEAD))
+            said = {
+                n: (f"{a['signals'][n].action}({a['signals'][n].confidence:.2f})" if a["signals"].get(n) else "none")
+                for n in services.agents
+            }  # registry order, not the order parallel nodes happened to finish
+            log.info(
+                "%s %s conf=%.2f risk=%s order=%s agents=%s",
+                symbol,
+                decision.action,
+                decision.confidence,
+                risk.reason,
+                status,
+                " ".join(f"{n}:{v}" for n, v in said.items()),
+                extra={
+                    "symbol": symbol,
+                    "action": decision.action,
+                    "confidence": round(decision.confidence, 3),
+                    "risk_approved": risk.approved,
+                    "order_status": status,
+                    "agents": said,
+                },
+            )
+            services.note_lead_health(any(s is not None and s.degraded for n, s in a["signals"].items() if roles.get(n) == LEAD))
             results.append(SymbolResult(symbol, decision.action, decision.confidence, risk, status))
             if status and not services.settings.dry_run:
                 portfolio = services.refresh_portfolio()

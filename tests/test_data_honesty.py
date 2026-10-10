@@ -1,5 +1,6 @@
 """Corporate-action guard: a split/bonus restates a symbol's price scale while a real crash expands the
 intraday range; only a bar with a large overnight gap AND an ordinary range is a split lookalike."""
+
 import pandas as pd
 import pytest
 
@@ -66,9 +67,14 @@ def test_yf_fetcher_wiring_logs_a_split_finding(caplog):
 
     def fake_download(tickers, **kw):
         ns = lambda s: pd.DataFrame(  # noqa: E731 - compact OHLCV for one symbol
-            {"Close": [100.0] * 300 + [50.0], "High": [102.0] * 300 + [51.5],
-             "Low": [98.0] * 300 + [49.5], "Volume": [10000] * 301},
-            index=pd.date_range("2020-01-02", periods=301, freq="B"))
+            {
+                "Close": [100.0] * 300 + [50.0],
+                "High": [102.0] * 300 + [51.5],
+                "Low": [98.0] * 300 + [49.5],
+                "Volume": [10000] * 301,
+            },
+            index=pd.date_range("2020-01-02", periods=301, freq="B"),
+        )
         wide = pd.concat({t: ns(t) for t in ["A.NS"]}, axis=1)
         return wide
 
@@ -77,12 +83,15 @@ def test_yf_fetcher_wiring_logs_a_split_finding(caplog):
         fetch(["A"])
     assert any("split-like" in m for m in caplog.messages)
 
+
 def test_the_fetcher_summarises_data_findings_instead_of_logging_every_stock(caplog):
     """Regression: a warning per zero-volume stock per scan made up 83% of a three-day log."""
     import logging
-    import numpy as np
-    from src.data.india import yf_bar_fetcher
     from datetime import datetime
+
+    import numpy as np
+
+    from src.data.india import yf_bar_fetcher
 
     idx = pd.date_range("2025-06-02", periods=300, freq="B")
 
@@ -90,7 +99,9 @@ def test_the_fetcher_summarises_data_findings_instead_of_logging_every_stock(cap
         close = np.asarray(close, dtype=float)
         return pd.DataFrame({"Close": close, "High": close * 1.02, "Low": close * 0.98, "Volume": volume}, index=idx)
 
-    thin = [frame([100.0 + i * 0.1 for i in range(300)], volume=[0 if i % 7 == 0 else 5000 for i in range(300)]) for _ in range(3)]
+    thin = [
+        frame([100.0 + i * 0.1 for i in range(300)], volume=[0 if i % 7 == 0 else 5000 for i in range(300)]) for _ in range(3)
+    ]
     split = frame([100.0] * 299 + [50.0])
     split.loc[idx[-1], ["High", "Low"]] = [51.5, 49.5]
     good = frame([100.0 + i * 0.1 for i in range(300)])
@@ -109,6 +120,7 @@ def test_the_fetcher_summarises_data_findings_instead_of_logging_every_stock(cap
 
 def test_honesty_check_is_fast_enough_to_run_on_the_whole_market():
     import time
+
     import numpy as np
 
     rng = np.random.default_rng(0)

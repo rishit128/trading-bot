@@ -6,6 +6,7 @@ identical D1/D2 conventions, nothing read back from broker state. These tests pi
 replays only approved high-confidence BUYs, ignoring HOLD / weak / rejected calls and symbols it cannot
 price; (b) repeated marks are idempotent in value; (c) marks accumulate as timestamped ledger rows; and
 (d) reports compare the reserve to the paper account's last mark without touching its state."""
+
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -38,9 +39,19 @@ def _fetch(symbol: str):
 
 
 def _decision(s, symbol, action, conf, approved=True, created=None):
-    s.add(DecisionRecord(symbol=symbol, price=100.0, final_action=action, final_confidence=conf,
-                         reasoning="r", risk_approved=approved, risk_quantity=0 if not approved else 10,
-                         risk_reason="ok", created_at=created or datetime(2026, 9, 10, 5, 30, tzinfo=timezone.utc)))
+    s.add(
+        DecisionRecord(
+            symbol=symbol,
+            price=100.0,
+            final_action=action,
+            final_confidence=conf,
+            reasoning="r",
+            risk_approved=approved,
+            risk_quantity=0 if not approved else 10,
+            risk_reason="ok",
+            created_at=created or datetime(2026, 9, 10, 5, 30, tzinfo=timezone.utc),
+        )
+    )
 
 
 def _factory():
