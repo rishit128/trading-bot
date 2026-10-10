@@ -2,11 +2,9 @@
 minutes: the opening-range breakout, gap-and-go, and gap-only (gap-and-go's control: the same gaps, no breakout)."""
 
 import os
-import sys
 from typing import Any
 
-from src.app.wiring import gapgo_db_url, gaponly_db_url, intraday_db_url, make_paper_broker
-from src.config import load_settings
+from src.app.wiring import gapgo_db_url, gaponly_db_url, intraday_db_url, load_settings_or_exit, make_paper_broker
 from src.data.intraday_bars import BarArchive, fetch_5m_bars
 from src.engine.costs import intraday_fees
 from src.intraday.engine import IntradayEngine, run_together
@@ -26,10 +24,7 @@ GAP_EXPERIMENTS = (
 
 def run_intraday(live: bool) -> None:
     """Run the three intraday paper strategies, each against its own account, until interrupted."""
-    try:
-        settings = load_settings()
-    except ValueError as e:
-        sys.exit(f"Invalid configuration: {e}")
+    settings = load_settings_or_exit()
     broker = make_paper_broker(settings, intraday_db_url(), fees=intraday_fees)
     token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
     notify = Notifier(token, chat_id).send if token and chat_id else None

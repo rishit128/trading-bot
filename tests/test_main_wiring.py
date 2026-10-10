@@ -1,7 +1,6 @@
 import pytest
 
-import main
-from src.app import reports
+from src.app import bootstrap, reports
 from src.app import wiring as app_kit
 from src.config import Settings
 from src.database import make_session_factory
@@ -37,7 +36,7 @@ def test_india_needs_only_the_openrouter_key(monkeypatch):
     monkeypatch.setenv("UNIVERSE", "watchlist")
     monkeypatch.setenv("DATABASE_URL", "sqlite://")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
-    pipeline = main.build_pipeline(live=False)
+    pipeline = bootstrap.build_pipeline(live=False)
     assert pipeline.settings.market == "india" and pipeline.universe_fn is None
 
 
@@ -66,7 +65,7 @@ def test_india_pipeline_registers_only_the_technical_agent(monkeypatch, tmp_path
     monkeypatch.setenv("UNIVERSE", "watchlist")
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'i.db'}")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
-    pipeline = main.build_pipeline(live=False)
+    pipeline = bootstrap.build_pipeline(live=False)
     assert list(pipeline.agents) == ["technical"] and pipeline.quote_fn is not None
     assert set(pipeline.analysis_graph.get_graph().nodes) == {"__start__", "fetch_data", "agent_technical", "collect", "__end__"}
 
@@ -82,11 +81,10 @@ def test_holdout_flag_returns_a_callable_hook():
     """Regression: `--holdout` used to leave reserve_callback as None, so the reserve was never marked."""
     from types import SimpleNamespace
 
-    import main
     from src.config import Settings
     from src.database import make_session_factory
 
-    hook = main.build_holdout_callback(
+    hook = bootstrap.build_holdout_callback(
         SimpleNamespace(sessions=make_session_factory("sqlite:///:memory:"), settings=Settings(cash_yield_pct=0.05))
     )
     assert callable(hook)
@@ -120,6 +118,6 @@ def test_the_bot_labels_its_decisions_with_outcomes_using_the_live_stop(tmp_path
     monkeypatch.setenv("UNIVERSE", "watchlist")
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'w.db'}")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
-    pipeline = main.build_pipeline(live=False)
-    labeller = main.build_outcome_labeller(pipeline)
+    pipeline = bootstrap.build_pipeline(live=False)
+    labeller = bootstrap.build_outcome_labeller(pipeline)
     assert labeller.stop_pct == pipeline.settings.risk.stop_loss_pct and labeller.control is pipeline.control

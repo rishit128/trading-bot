@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.app import intraday_cli, reports
+from src.app import intraday_cli, reports, wiring
 from src.config import Settings
 from src.data.universe import Candidate
 from src.database import make_session_factory
@@ -151,7 +151,7 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
 
 
 def test_intraday_launcher_refuses_an_invalid_configuration(monkeypatch):
-    monkeypatch.setattr(intraday_cli, "load_settings", lambda: (_ for _ in ()).throw(ValueError("bad MAX_POSITION_PCT")))
+    monkeypatch.setattr(wiring, "load_settings", lambda: (_ for _ in ()).throw(ValueError("bad MAX_POSITION_PCT")))
     with pytest.raises(SystemExit, match="Invalid configuration: bad MAX_POSITION_PCT"):
         intraday_cli.run_intraday(live=False)
 

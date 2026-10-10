@@ -4,6 +4,7 @@ import html
 import logging
 import threading
 import time
+from functools import partial
 from typing import Callable, Mapping, Optional, Tuple
 
 import httpx
@@ -151,6 +152,49 @@ class Notifier:
             return False
 
 
+def _command_name(text: str) -> str:
+    """ "/status@MyBot extra words" -> "/status"; blank text -> ""."""
+    words = (text or "").split()
+    return words[0].split("@")[0].lower() if words else ""
+
+
+def _status(control, broker, settings) -> Html:
+    p = broker.portfolio()
+    mode = "DRY RUN" if settings.dry_run else "PAPER ORDERS"
+    state = "PAUSED" if control.is_paused() else "RUNNING"
+    day = f"{(p.equity / p.start_of_day_equity - 1):+.2%} today" if p.start_of_day_equity else "n/a"
+    cur = settings.currency
+    icon = "⏸" if state == "PAUSED" else "▶️"
+    return Html(
+        f"{icon} <b>{state}</b>  ·  {mode}\n\n💰 Equity   <b>{cur}{p.equity:,.2f}</b> ({day})\n"
+        f"💵 Cash       {cur}{p.cash:,.2f}\n📦 Positions  {len(p.positions)}"
+    )
+
+
+def _positions(broker, cur: str) -> str:
+    if isinstance(broker, ListsHoldings):
+        return format_positions(broker.holdings(), cur)
+    p = broker.portfolio()
+    if not p.positions:
+        return "No open positions."
+    return "\n".join(f"{s}: {p.position_qty.get(s, 0)} sh, {cur}{v:,.0f}" for s, v in sorted(p.positions.items()))
+
+
+def _rebase(control, broker, cur: str) -> str:
+    control.rebase_peak()
+    return (
+        f"Peak-equity baseline reset to {cur}{broker.portfolio().equity:,.2f}. "
+        "A drawdown halt clears on the next cycle; the daily-loss limit is unaffected."
+    )
+
+
+def _set_paused(control, paused: bool) -> str:
+    control.set_paused(paused)
+    if paused:
+        return "Trading PAUSED. No new orders will be placed. Existing broker stop/target orders stay active."
+    return "Trading RESUMED."
+
+
 def handle_command(
     text: str,
     control,
@@ -162,51 +206,29 @@ def handle_command(
     gaponly=None,
 ) -> str:
     """Turn a command text into a reply, applying pause/resume/rebase as needed. `extra` adds commands:
-    {"/name": (help line, handler)}."""
-    cmd = (text or "").strip().split()[0].split("@")[0].lower() if (text or "").strip() else ""
+    {"/name": (help line, handler)}. Anything unknown (or a command this broker cannot answer) gets the help text."""
+    cmd = _command_name(text)
     if extra and cmd in extra:
         return extra[cmd][1]()
-    if cmd == "/pause":
-        control.set_paused(True)
-        return "Trading PAUSED. No new orders will be placed. Existing broker stop/target orders stay active."
-    if cmd == "/resume":
-        control.set_paused(False)
-        return "Trading RESUMED."
-    if cmd == "/rebase":
-        control.rebase_peak()
-        p = broker.portfolio()
-        return (
-            f"Peak-equity baseline reset to {settings.currency}{p.equity:,.2f}. "
-            "A drawdown halt clears on the next cycle; the daily-loss limit is unaffected."
+    cur = settings.currency
+    handlers: dict[str, Callable[[], str]] = {
+        "/pause": lambda: _set_paused(control, True),
+        "/resume": lambda: _set_paused(control, False),
+        "/rebase": lambda: _rebase(control, broker, cur),
+        "/status": lambda: _status(control, broker, settings),
+        "/positions": lambda: _positions(broker, cur),
+    }
+    if isinstance(broker, ListsTrades):
+        handlers["/history"] = lambda: format_history(broker.trade_history(), cur)
+        handlers["/pnl"] = lambda: format_pnl(
+            broker.trade_history(), intraday.trade_history() if isinstance(intraday, ListsTrades) else None, cur
         )
-    if cmd == "/status":
-        p = broker.portfolio()
-        mode = "DRY RUN" if settings.dry_run else "PAPER ORDERS"
-        state = "PAUSED" if control.is_paused() else "RUNNING"
-        day = f"{(p.equity / p.start_of_day_equity - 1):+.2%} today" if p.start_of_day_equity else "n/a"
-        cur = settings.currency
-        icon = "⏸" if state == "PAUSED" else "▶️"
-        return Html(
-            f"{icon} <b>{state}</b>  ·  {mode}\n\n💰 Equity   <b>{cur}{p.equity:,.2f}</b> ({day})\n"
-            f"💵 Cash       {cur}{p.cash:,.2f}\n📦 Positions  {len(p.positions)}"
-        )
-    if cmd == "/positions":
-        if isinstance(broker, ListsHoldings):
-            return format_positions(broker.holdings(), settings.currency)
-        p = broker.portfolio()
-        if not p.positions:
-            return "No open positions."
-        return "\n".join(
-            f"{s}: {p.position_qty.get(s, 0)} sh, {settings.currency}{v:,.0f}" for s, v in sorted(p.positions.items())
-        )
-    if cmd == "/history" and isinstance(broker, ListsTrades):
-        return format_history(broker.trade_history(), settings.currency)
-    if cmd == "/pnl" and isinstance(broker, ListsTrades):
-        intraday_trades = intraday.trade_history() if isinstance(intraday, ListsTrades) else None
-        return format_pnl(broker.trade_history(), intraday_trades, settings.currency)
     for name, account in (("intraday", intraday), ("gapgo", gapgo), ("gaponly", gaponly)):
-        if cmd in (f"/{name}", f"/{name}_history") and account is not None:
-            return _account_view(account, name, cmd.endswith("_history"), settings.currency)
+        if account is not None:
+            handlers[f"/{name}"] = partial(_account_view, account, name, False, cur)
+            handlers[f"/{name}_history"] = partial(_account_view, account, name, True, cur)
+    if cmd in handlers:
+        return handlers[cmd]()
     return HELP + "".join(f"\n{name} - {line}" for name, (line, _) in (extra or {}).items())
 
 

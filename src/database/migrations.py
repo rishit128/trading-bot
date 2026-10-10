@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Tuple
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, func, inspect, select, text
 
 from src.database.models import Base
 
@@ -27,13 +27,6 @@ log = logging.getLogger(__name__)
 EXTRA_INDEXES = {
     "ix_decisions_confluence": "CREATE INDEX IF NOT EXISTS ix_decisions_confluence ON decisions (confluence_score)",
     "ix_decisions_raw_model": "CREATE INDEX IF NOT EXISTS ix_decisions_raw_model ON decisions (raw_model)",
-}
-
-# Uniqueness the application already relies on, enforced by the database as well (the same indexes the models declare, for
-# databases that predate them): name -> (table, columns).
-UNIQUE_INDEXES = {
-    "ux_orders_decision": ("orders", ("decision_id",)),
-    "ux_intraday_signals_day_symbol": ("intraday_signals", ("day", "symbol")),
 }
 
 
@@ -62,29 +55,27 @@ def ensure_indexes(engine) -> None:
 
 
 def ensure_unique_indexes(engine) -> List[str]:
-    """Create the uniqueness indexes an older database lacks. A database whose rows already break a rule keeps working:
-    that index is skipped with a warning (nothing is ever deleted or rewritten) and its name is returned."""
+    """Create the unique indexes the models declare on an older database that lacks them (a new database gets them from
+    create_all). A database whose rows already break a rule keeps working: that index is skipped with a warning (nothing is
+    ever deleted or rewritten) and its name is returned."""
     skipped: List[str] = []
     inspector = inspect(engine)
     with engine.begin() as conn:
-        for name, (table, columns) in UNIQUE_INDEXES.items():
-            if not inspector.has_table(table):
+        for table in Base.metadata.sorted_tables:
+            if not inspector.has_table(table.name):
                 continue
-            cols = ", ".join(columns)
-            duplicates = conn.execute(
-                text(f"SELECT COUNT(*) FROM (SELECT 1 FROM {table} GROUP BY {cols} HAVING COUNT(*) > 1)")
-            ).scalar()
-            if duplicates:
-                log.warning(
-                    "%s: %d duplicated (%s) in %s: the unique index is NOT created; fix the data first",
-                    name,
-                    duplicates,
-                    cols,
-                    table,
-                )
-                skipped.append(name)
-            else:
-                conn.execute(text(f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON {table} ({cols})"))
+            for index in (i for i in table.indexes if i.unique):
+                columns = list(index.columns)
+                repeated = select(*columns).group_by(*columns).having(func.count() > 1).subquery()
+                duplicates = conn.execute(select(func.count()).select_from(repeated)).scalar()
+                if duplicates:
+                    log.warning(
+                        "%s: %d repeated (%s) in %s: the unique index is NOT created; fix the data first",
+                        index.name, duplicates, ", ".join(c.name for c in columns), table.name,
+                    )  # fmt: skip
+                    skipped.append(str(index.name))
+                else:
+                    index.create(conn, checkfirst=True)
     return skipped
 
 

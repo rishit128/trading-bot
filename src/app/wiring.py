@@ -1,11 +1,12 @@
 """Wiring shared by the command-line entry point and the reports: the market wiring and the paper-broker factory."""
 
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
-from src.config import Settings
+from src.config import Settings, load_settings
 from src.data.intraday_bars import BarArchive
 from src.data.market_data import cached_per_session, fetch_snapshot
 from src.data.universe import ScreenConfig, UniverseScreener
@@ -126,3 +127,11 @@ def build_market_wiring(settings: Settings, sessions) -> MarketWiring:
         "built-in paper simulator",
         quote_fn=feed.last_price,
     )
+
+
+def load_settings_or_exit() -> Settings:
+    """The validated settings, or a clear message and exit code 1 (what every command-line entry point wants)."""
+    try:
+        return load_settings()
+    except ValueError as e:
+        sys.exit(f"Invalid configuration: {e}")
