@@ -27,7 +27,7 @@ def main():
     ap.add_argument("--end", help="last session (ISO date); default: the newest archived")
     ap.add_argument("--capital", type=float, default=settings.paper_initial_cash,
                     help="starting equity (default: PAPER_INITIAL_CASH)")
-    ap.add_argument("--strategy", choices=STRATEGIES, default="orb", help="the rule to replay (default: the breakout)")
+    ap.add_argument("--strategy", choices=sorted(STRATEGIES), default="orb", help="the rule to replay (default: the breakout)")
     ap.add_argument("--bars-file", help="replay a pickle of {symbol: 5-minute bars} instead of the archive")
     args = ap.parse_args()
     bars = pickle.loads(Path(args.bars_file).read_bytes()) if args.bars_file else open_bar_archive().load(args.start, args.end)

@@ -9,7 +9,7 @@ inability to buy a Rs 9,000 stock all matter. This module runs the actual pipeli
     with the affordability rule the live scanner applies (`select_candidates`);
   * sizing / limits:   `RiskEngine` with the live `RiskLimits` (confidence-scaled size, position and exposure caps,
     daily-loss and drawdown halts);
-  * exits:             8% protective stop + the MA200 trend exit, no time limit (`LIVE_EXITS`, simulate's default);
+  * exits:             the protective stop + the MA200 trend exit, no time limit (simulate's default);
   * costs:             the paper broker's delivery fee schedule and slippage.
 
 The one stand-in is the AI: it is replaced by a constant approval confidence (`confidence`), because a backtest cannot
@@ -138,7 +138,7 @@ def summarize_run(run: LiveRun) -> dict:
         "profit_factor": (sum(wins) / -sum(losses)) if wins and losses and sum(losses) < 0 else None,
         "fees": float(sum(t.fees for t in r.trades)),
         "fees_pct_of_capital": float(sum(t.fees for t in r.trades) / capital),
-        "exits": {k: sum(1 for t in r.trades if t.reason == k) for k in ("STOP", "TARGET", "SIGNAL", "TIME")},
+        "exits": {k: sum(1 for t in r.trades if t.reason == k) for k in ("STOP", "TARGET", "SIGNAL")},
     }
 
 

@@ -1,6 +1,6 @@
 # The AWS deployment: the swing paper bot, the intraday paper bot, and the real-portfolio agent (Playwright +
-# Chromium) all built from one image, as TWO containers (locally, scripts/start_bots.sh runs the same two commands as
-# separate background processes; this is that split, in Compose). Run on the EC2 instance with:
+# Chromium) all built from one image, as TWO containers (the swing bot, and the intraday engines). Run on the EC2
+# instance with:
 #   docker compose -f docker-compose.aws.yml up -d --build
 #
 # .env on the instance needs only: OPENROUTER_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (never the Integrated

@@ -51,6 +51,7 @@ class IntradayEngine:
     entry_until: dtime = st.ENTRY_UNTIL  # no bar starting at or after this can signal: the scan stops one bar later
     label: str = "INTRADAY"  # prefix of its Telegram messages
     version: str = INTRADAY_VERSION  # recorded with every signal and universe row
+    record_capped: bool = False  # also record (as SKIPPED) the signals the position limit left out: the gap experiments
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     _day: Optional[str] = field(default=None, init=False)
     _done_today: Set[str] = field(default_factory=set, init=False)
@@ -111,7 +112,7 @@ class IntradayEngine:
         day_start_equity = pf.start_of_day_equity or pf.equity
         if pf.equity < day_start_equity * (1 - self.max_daily_loss_pct):
             return "daily loss limit reached: no new entries"
-        if len(pf.positions) >= self.max_positions:
+        if len(pf.positions) >= self.max_positions and not self.record_capped:
             return "max positions open"
         return self._scan(pf, local)
 
@@ -122,7 +123,8 @@ class IntradayEngine:
         entered = skipped = 0
         cash = pf.cash
         for sym, df in bars.items():
-            if len(pf.positions) + entered >= self.max_positions:
+            full = len(pf.positions) + entered >= self.max_positions
+            if full and not self.record_capped:
                 break
             finished = df[(pd.DatetimeIndex(df.index) + BAR) <= pd.Timestamp(local)]
             earlier = finished[pd.DatetimeIndex(finished.index).tz_convert(IST).date < local.date()]
@@ -130,6 +132,11 @@ class IntradayEngine:
             df = session_rows(finished, local.date())
             setup = self.find_setup(sym, df, prev_close) if len(df) else None
             if setup is None or setup.bar_time < df.index[-1] - BAR:  # a stale breakout from earlier in the day: skip
+                continue
+            if full:  # only with record_capped: the signal is real, the account had no free position
+                self._done_today.add(setup.symbol)
+                self._record(setup, SignalOutcome.SKIPPED, 0, f"position limit reached ({self.max_positions} open)")
+                skipped += 1
                 continue
             outcome, fill = self._enter(setup, pf.equity, cash)
             if outcome == SignalOutcome.SKIPPED:

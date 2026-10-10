@@ -9,6 +9,7 @@ The bot keeps **two independent ledgers** so results never mix:
 | Swing (daily decisions + the paper account driving them) | `DATABASE_URL` | `sqlite:///trading.db` | `decisions`, `orders`, `paper_*`, `equity_history`, `holdout_marks`, `control_flags` |
 | Intraday breakout engine | `INTRADAY_DATABASE_URL` | `sqlite:///intraday.db` | its own copy of the same tables, own starting cash |
 | Gap-and-go paper strategy | `GAPGO_DATABASE_URL` | `sqlite:///gapgo.db` | the same again: its own account, signals and trades |
+| Gap-only control | `GAPONLY_DATABASE_URL` | `sqlite:///gaponly.db` | the same again |
 
 Every consumer reaches the database through `make_session_factory(database_url)`: it creates the
 engine, applies migrations idempotently (create tables, add nullable columns, add indexes), enables

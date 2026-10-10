@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.research.backtest import ExitPolicy, Result, simulate
+from src.research.backtest import Result, simulate
 from src.config import RiskLimits
 from src.database import make_session_factory
 from src.engine.paper_broker import PaperBroker
@@ -49,7 +49,7 @@ def test_every_trade_in_a_noisy_sweep_remembers_its_bracket():
     for seed in (1, 7, 99):
         bars = {"A": _walk(seed)}
         res: Result = simulate(bars, {"A": _scheduled_signals(bars["A"].index)}, LIMITS, start_equity=100_000,
-                               exits=ExitPolicy(max_hold_days=10), fees=india_delivery_fees, slippage=0.0005)
+                               fees=india_delivery_fees, slippage=0.0005)
         for t in res.trades:
             assert t.stop is not None and t.target is not None, f"seed {seed}: {t} was opened without a bracket!"
             assert t.stop < t.target

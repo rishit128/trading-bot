@@ -29,8 +29,8 @@ def run(monkeypatch, capsys, prices, *argv):
         return PaperBroker(make_session_factory(database_url or settings.database_url), FakeFeed(prices), FakeClock(),
                            fees=fees or (lambda s, v: 1.0))
 
-    if "--gapgo-database-url" not in argv:  # never create the real default database in the working directory
-        argv = (*argv, "--gapgo-database-url", "sqlite://")
+    if "--gapgo-database-url" not in argv:  # never create the real default databases in the working directory
+        argv = (*argv, "--gapgo-database-url", "sqlite://", "--gaponly-database-url", "sqlite://")
     monkeypatch.setattr(sys, "argv", ["paper_report.py", *argv])
     monkeypatch.setattr(paper_report, "load_settings", lambda: Settings())
     monkeypatch.setattr(paper_report, "make_paper_broker", fake_broker)
@@ -45,7 +45,8 @@ def test_the_report_runs_on_two_real_accounts_and_shows_every_section(tmp_path, 
     assert "SWING: 1 open, 1 closed" in out and "INTRADAY: 1 open, 1 closed" in out and "COMBINED (swing + intraday)" in out
     assert "WIN" in out and "OPEN" in out and "2026-09-29" in out and "2026-W40" in out
     assert out.count("every closed trade") == 2
-    assert "GAP-AND-GO (paper experiment): 0 open, 0 closed" in out  # its own section, outside the combined figures
+    assert "GAP-AND-GO (paper experiment): 0 open, 0 closed" in out  # their own sections, outside the combined figures
+    assert "GAP-ONLY (paper control for gap-and-go): 0 open, 0 closed" in out
 
 
 def test_no_trades_hides_the_trade_by_trade_listing_but_keeps_the_pl_tables(tmp_path, monkeypatch, capsys):

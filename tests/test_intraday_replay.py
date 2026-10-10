@@ -208,3 +208,13 @@ def test_the_recent_view_includes_the_previous_session_for_the_gap():
     yesterday = bars_for(D1 - timedelta(days=3), [50, 51, 52])
     feed = at(ReplayFeed({"A": pd.concat([yesterday, bars_for(D1, [100, 110, 120])])}), D1, 9, 32)
     assert list(feed.recent(["A", "C"])["A"]["Open"]) == [50, 51, 52, 100, 110, 120]
+
+
+def test_gap_only_replays_buying_the_gap_at_0930_without_waiting_for_the_breakout():
+    flat = scripted_session(0).copy()
+    flat[["Open", "High", "Low", "Close"]] = 97.0
+    bars = {"AAA": pd.concat([flat, scripted_session(1)])}             # opens at 100 (+3.1%); the range closes at 100
+    result = replay(bars, ReplayConfig(capital=20_000.0), strategy="gaponly")
+    [trade] = result.trades.to_dict("records")
+    assert trade["entry_price"] == pytest.approx(100 * 1.0005) and trade["reason"] == "SIGNAL"  # bought at 09:30, held
+    assert result.signals.to_dict("records")[0]["system_version"] == "gaponly-v1"

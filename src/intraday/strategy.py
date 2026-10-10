@@ -18,7 +18,17 @@ entering at a random time with the same stop and target, and neither the VWAP no
 Gap-and-go (`find_gap_setup`, a second paper strategy since 2026-10-10): the stock opened at least 2% above the previous
 session's close, and a 5-minute bar between 09:30 and 10:30 closes above the opening range high. Stop at the range low, no
 profit target: held to the 15:15 square-off. The only idea that stayed positive after costs in both years of the 2-year
-test (STRATEGY.md, 2026-10-10), but not proven: it runs in its own paper account to gather forward evidence."""
+test (STRATEGY.md, 2026-10-10), but not proven: it runs in its own paper account to gather forward evidence.
+
+Gap-only (`find_gap_only_setup`, a paper CONTROL for gap-and-go since 2026-10-10): the same 2% gap, but no breakout is
+waited for. Frozen rules:
+  * entry on the close of the 09:25-09:30 bar (the last opening-range bar), on the 09:30 cycle only: if that bar is not
+    available by then (late or missing data) the stock is not traded that day, never chased later;
+  * stop at the opening range low, no target, squared off at 15:15 like gap-and-go;
+  * skipped when the previous close is unknown, the opening range is not the real 09:15-09:30 bars, or the entry is not
+    above the stop (the stop would already be breached);
+  * at most the account's position limit; further eligible stocks are recorded as SKIPPED, not silently dropped.
+It answers one question: does waiting for the breakout add anything over simply buying the big gaps?"""
 from dataclasses import dataclass
 from datetime import time as dtime
 from typing import Optional, Tuple
@@ -38,6 +48,8 @@ TARGET_R = 2.0
 GAP_MIN = 0.02                   # gap-and-go: open at least 2% above the previous session's close...
 GAP_ENTRY_UNTIL = dtime(10, 30)  # ...and break the opening range high within the first hour
 NO_TARGET = 1.0                  # a +100% "target" for a strategy that has none: it exits at the stop or the square-off
+GAP_ONLY_BAR = dtime(9, 25)          # gap-only: enter on the close of this bar (09:25-09:30, the last opening-range bar)...
+GAP_ONLY_ENTRY_UNTIL = dtime(9, 30)  # ...so no bar starting at or after 09:30 can signal: only the 09:30 cycle trades
 CASH_HEADROOM = 1.003  # cash kept back per share bought: slippage (0.05%) and both fees fit inside 0.3%
 
 
@@ -127,6 +139,15 @@ def first_gap_breakout(open_price: float, prev_close: Optional[float], high: np.
     return int(hits[0]) if len(hits) else None
 
 
+def gap_only_bar(open_price: float, prev_close: Optional[float], minutes: np.ndarray, min_gap: float = GAP_MIN) -> Optional[int]:
+    """The gap-only entry bar: the 09:25 bar of a session that opened at least `min_gap` above `prev_close`; or None.
+    Shared by the live engine (`find_gap_only_setup`) and the research comparison."""
+    if not prev_close or open_price / prev_close - 1 < min_gap:
+        return None
+    hits = np.flatnonzero(minutes == minute_of_day(GAP_ONLY_BAR))
+    return int(hits[0]) if len(hits) else None
+
+
 def opening_range_intact(day_bars: pd.DataFrame) -> bool:
     """True when the first RANGE_BARS bars are the real opening bars: the first starts at 09:15 and they follow each other
     without a gap. Yahoo drops a bar a stock did not trade in, so an illiquid stock's "first three bars" can be 09:25-09:35
@@ -168,6 +189,25 @@ def find_gap_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[flo
     if i is None:
         return None
     entry, range_high, range_low = float(close[i]), float(high[:RANGE_BARS].max()), float(low[:RANGE_BARS].min())
+    _, ratio = session_vwap_and_volume_ratio(high, low, close, volume)
+    return Setup(symbol, entry, range_low, entry * (1 + NO_TARGET), range_high, range_low, day_bars.index[i],
+                 volume_ratio=float(ratio[i]))
+
+
+def find_gap_only_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float]) -> Optional[Setup]:
+    """The day's gap-only entry in `day_bars` (one session's completed 5-minute bars), or None (see the module docstring
+    for every case in which a stock is not traded)."""
+    if prev_close is None or not opening_range_intact(day_bars):
+        return None
+    index = pd.DatetimeIndex(day_bars.index)
+    i = gap_only_bar(float(day_bars["Open"].iloc[0]), prev_close, (index.hour * 60 + index.minute).to_numpy())
+    if i is None:
+        return None
+    high, low = day_bars["High"].to_numpy(float), day_bars["Low"].to_numpy(float)
+    close, volume = day_bars["Close"].to_numpy(float), day_bars["Volume"].to_numpy(float)
+    entry, range_high, range_low = float(close[i]), float(high[:RANGE_BARS].max()), float(low[:RANGE_BARS].min())
+    if entry <= range_low:  # the stop would already be breached
+        return None
     _, ratio = session_vwap_and_volume_ratio(high, low, close, volume)
     return Setup(symbol, entry, range_low, entry * (1 + NO_TARGET), range_high, range_low, day_bars.index[i],
                  volume_ratio=float(ratio[i]))

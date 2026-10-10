@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from src.research.backtest import ExitPolicy, LIVE_EXITS, curve_metrics, simulate
+from src.research.backtest import curve_metrics, simulate
 from src.config import RiskLimits
 
 LIM = RiskLimits(max_position_pct=0.05, stop_loss_pct=0.02, take_profit_pct=0.05, min_confidence=0.6)
@@ -54,26 +54,13 @@ def test_stop_wins_when_stop_and_target_both_touched_same_day():
     assert t.reason == "STOP"
 
 
-def test_time_exit_after_max_hold_days_at_close():
-    bars = make_bars({10: dict(Close=101.0)})
-    [t] = simulate({"X": bars}, buy_on(0), LIM, exits=ExitPolicy(max_hold_days=10)).trades
-    assert t.reason == "TIME" and t.exit_date == DAYS[10] and t.exit_price == 101.0
-
-
 def test_the_default_exit_policy_is_the_live_one_so_a_backtest_tests_the_running_strategy():
     """Regression: simulate() used to default to a 10-day time exit, so the holdout and other research paths silently tested a
     strategy that is not the one running. The live policy is now the default and any other must be requested by name."""
     bars = make_bars({10: dict(Close=101.0)}, n=15)
     default = simulate({"X": bars}, buy_on(0), LIM)
     assert default.trades == [] and default.open_at_end == 1  # no time limit: still holding at the end of the data
-    assert simulate({"X": bars}, buy_on(0), LIM, exits=LIVE_EXITS).equity.equals(default.equity)
-    assert LIVE_EXITS == ExitPolicy(max_hold_days=None, trend_exit=True)
-
-
-def test_exit_policy_rejects_a_nonsensical_hold_limit():
-    with pytest.raises(ValueError, match="max_hold_days"):
-        ExitPolicy(max_hold_days=0)
-    assert ExitPolicy(max_hold_days=None).max_hold_days is None
+    assert simulate({"X": bars}, buy_on(0), LIM, trend_exit=True).equity.equals(default.equity)  # the trend exit is the default
 
 
 def test_sell_signal_exits_next_open():
@@ -143,9 +130,9 @@ def test_trend_exit_sells_at_the_next_open_after_a_close_below_the_200_day_avera
     df = pd.DataFrame({"Open": close, "High": close * 1.001, "Low": close * 0.999, "Close": close, "Volume": 1e6}, index=idx)
     signals = {"A": {idx[250]: ("BUY", 0.9)}}
     limits = RiskLimits(stop_loss_pct=0.99)  # keep the protective stop out of the way
-    held = simulate({"A": df}, signals, limits, exits=ExitPolicy(max_hold_days=None, trend_exit=False))
+    held = simulate({"A": df}, signals, limits, trend_exit=False)
     assert held.open_at_end == 1  # no time exit, no trend exit: still holding at the end
-    out = simulate({"A": df}, signals, limits, exits=LIVE_EXITS)
+    out = simulate({"A": df}, signals, limits)
     assert out.open_at_end == 0 and out.trades[0].reason == "SIGNAL"
     ma200 = df["Close"].rolling(200).mean()
     broke = df.index[(df["Close"] < ma200) & (df.index > idx[250])][0]
@@ -190,7 +177,7 @@ def test_every_research_entry_point_simulates_with_the_live_exit_policy(monkeypa
     real = backtest_module.simulate
 
     def spy(*args, **kwargs):
-        seen.append(kwargs.get("exits", LIVE_EXITS))  # absent means "the default", which is the live policy
+        seen.append(kwargs.get("trend_exit", True))  # absent means "the default", which is the live trend exit
         return real(*args, **kwargs)
 
     monkeypatch.setattr(live_backtest, "simulate", spy)
@@ -214,7 +201,7 @@ def test_every_research_entry_point_simulates_with_the_live_exit_policy(monkeypa
     before = len(seen)
     HoldoutReserve(sessions, lambda symbol: bars, initial_cash=100_000.0).mark()
     assert len(seen) == before + 1, "the holdout reserve never reached the simulator, so this test would prove nothing about it"
-    assert len(seen) == 2 and all(policy == LIVE_EXITS for policy in seen)  # the live-config backtest and the holdout
+    assert len(seen) == 2 and all(seen)  # the live-config backtest and the holdout
 
 
 def test_idle_cash_accrues_at_cash_yield_only_from_cash_yield_from():

@@ -46,6 +46,11 @@ def gapgo_db_url() -> str:
     return os.getenv("GAPGO_DATABASE_URL", "sqlite:///gapgo.db")
 
 
+def gaponly_db_url() -> str:
+    """The gap-only control's own account (gap-and-go without waiting for the breakout)."""
+    return os.getenv("GAPONLY_DATABASE_URL", "sqlite:///gaponly.db")
+
+
 def open_bar_archive() -> BarArchive:
     """The archive of 5-minute bars kept in the intraday database (see src.data.intraday_bars)."""
     from src.database import make_session_factory

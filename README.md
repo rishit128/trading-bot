@@ -26,7 +26,7 @@ python main.py --loop 30       # repeat every 30 min while NSE is open (dry run)
 python main.py --loop 30 --live   # same, but trade in the built-in paper simulator
 python main.py --positions     # every open position (P&L, buy date), closed-trade history, overall status
 python main.py --intraday [--live]   # intraday breakout engine, own paper account (dry run without --live); backtest lost, see STRATEGY.md
-python main.py --intraday-report     # both intraday accounts (breakout, gap-and-go): positions, history, status
+python main.py --intraday-report     # the intraday accounts (breakout, gap-and-go, gap-only): positions, history, status
 python main.py --report        # paper account: equity, trades, win rate, fees, exits
 python main.py --graph         # print the LangGraph workflows as Mermaid diagrams
 python main.py --check         # test keys and connectivity (OpenRouter, broker, Yahoo, Telegram) and exit
@@ -241,8 +241,8 @@ dividends, sales and lots.
 
 - `scripts/backtest_live_config.py` - the live configuration (account size, sizing, exits, costs, scanner) on 10 years of
   Nifty 500 history (`--index 0` = every NSE stock), next to the Nifty 50 and an equal-weight basket.
-- `scripts/backtest_intraday.py` - the live intraday engine replayed over the archived 5-minute sessions (`--strategy gapgo`
-  for gap-and-go, `--bars-file` for a saved pickle of bars);
+- `scripts/backtest_intraday.py` - the live intraday engine replayed over the archived 5-minute sessions (`--strategy gapgo` or
+  `gaponly`, `--bars-file` for a saved pickle of bars); `scripts/compare_gap.py` compares the two gap accounts;
   `scripts/audit_intraday.py` and `scripts/research_intraday.py` re-run the intraday audit and the pre-declared ideas as
   the archive grows.
 - The finished experiments (signal research, exit and sizing grids, cash sweep, decomposition, calibration) are
@@ -391,8 +391,8 @@ src/data/               NSE list, Yahoo data, indicators, universe scanner, mark
 src/database/           models, session (open + upgrade a file), migrations
 src/ops/                operational tools: holdout reserve, decision replay, ledger reconciliation, start-up checks
 src/research/           the simulator (backtest.py), the live-configuration backtest; for the intraday rule:
-                        intraday_replay (the live engine over stored bars), intraday_audit, intraday_hypotheses
-src/intraday/           opening-range-breakout and gap-and-go rules (shared numpy cores), risk-based sizing, the 5-minute
+                        intraday_replay (the live engine over stored bars), intraday_audit, intraday_hypotheses, gap_compare
+src/intraday/           opening-range-breakout, gap-and-go and gap-only rules (shared numpy cores), risk-based sizing, the 5-minute
                         engine (one per paper account, stepped together), the universe selector
 src/monitoring/         Telegram alerts and commands
 src/app/                wiring.py (market wiring, paper-broker factory), reports.py (--report/--positions/--screen/--graph),

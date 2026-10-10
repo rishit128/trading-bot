@@ -10,9 +10,10 @@ from src.engine.paper_broker import PaperBroker
 
 @pytest.fixture(autouse=True)
 def side_accounts_in_tmp(monkeypatch, tmp_path):
-    """build_pipeline opens the intraday and gap-and-go accounts for the Telegram views: keep their files out of the repo."""
+    """build_pipeline opens the intraday, gap-and-go and gap-only accounts for the Telegram views: keep them out of the repo."""
     monkeypatch.setenv("INTRADAY_DATABASE_URL", f"sqlite:///{tmp_path / 'intraday.db'}")
     monkeypatch.setenv("GAPGO_DATABASE_URL", f"sqlite:///{tmp_path / 'gapgo.db'}")
+    monkeypatch.setenv("GAPONLY_DATABASE_URL", f"sqlite:///{tmp_path / 'gaponly.db'}")
 
 
 def sessions(tmp_path):

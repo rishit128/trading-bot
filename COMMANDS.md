@@ -21,7 +21,7 @@ sudo docker compose -f docker-compose.aws.yml logs -f intraday-bot            # 
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --report        # paper account summary
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --positions     # open positions & history
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --check         # test all connections
-sudo docker compose -f docker-compose.aws.yml exec intraday-bot python main.py --intraday-report  # both intraday accounts' status
+sudo docker compose -f docker-compose.aws.yml exec intraday-bot python main.py --intraday-report  # the intraday accounts' status
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python scripts/paper_report.py       # full P&L history, both accounts
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio setup  # one-time: save your Integrated login
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio check  # what's saved (masked)
@@ -38,6 +38,7 @@ sudo docker compose -f docker-compose.aws.yml down                            # 
 /pnl                  profit/loss by day and week, both accounts
 /intraday             intraday (breakout) account and open positions; /intraday_history for its closed trades
 /gapgo                gap-and-go paper account and open positions; /gapgo_history for its closed trades
+/gaponly              gap-only control account (gap-and-go without the breakout); /gaponly_history
 /portfolio            read your real Integrated account (read-only); it will ask for the OTP here
 /pause                stop placing new orders
 /resume               allow orders again
@@ -62,7 +63,7 @@ python main.py                    # one dry-run cycle: scan + AI + risk check, r
 python main.py --loop 30          # repeat every 30 min while NSE is open (dry run)
 python main.py --loop 30 --live   # same, but trade in the built-in paper simulator
 python main.py --intraday [--live]     # intraday breakout engine, its own paper account
-python main.py --intraday-report       # both intraday accounts (breakout, gap-and-go): positions, history, status
+python main.py --intraday-report       # the intraday accounts (breakout, gap-and-go, gap-only): positions, history, status
 ```
 **Don't run this at the same time as the AWS deployment** — they'd fight over the same Telegram bot. Stop one first.
 
@@ -96,12 +97,12 @@ docker compose down              # stop (the database volume, and your paper his
 
 ```
 scripts/test_openrouter_api.py             # tries each configured AI model with a real call (safe)
-scripts/check_angel_data.py [SYMBOLS]     # read-only: logs in to Angel One SmartAPI (asks for login), compares its candles with Yahoo
 scripts/reconcile_paper.py                 # rebuilds cash from recorded fills, flags any mismatch
 scripts/paper_report.py                    # full history, both accounts: every trade, P&L by day/week/total
 scripts/analyze_mistakes.py                # judges every analysed stock against what then happened
 scripts/intraday_archive.py status|refresh|import-cache   # the archive of 5-minute bars (fills itself while the engine runs)
-scripts/backtest_intraday.py [--strategy gapgo] [--bars-file F]   # the LIVE engine replayed over stored sessions (Rs 20,000 by default)
+scripts/compare_gap.py                     # gap-and-go vs its gap-only control: per trade, date by date, costs, drawdown
+scripts/backtest_intraday.py [--strategy gapgo|gaponly] [--bars-file F]   # the LIVE engine replayed over stored sessions (Rs 20,000 by default)
 scripts/audit_intraday.py                  # does the intraday rule beat a random entry? which filters add anything?
 scripts/research_intraday.py               # five pre-declared intraday ideas vs a random null; re-run as the archive grows
 scripts/backtest_live_config.py [--index 0|50|100|500]   # the live swing setup on 10 years of history (0 = every NSE stock)

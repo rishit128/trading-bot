@@ -16,7 +16,8 @@ log = logging.getLogger(__name__)
 API = "https://api.telegram.org"
 HELP = ("/status - equity, cash, mode\n/positions - open positions with profit/loss\n/history - closed trades\n/pnl - profit/loss by day and week, both accounts\n"
         "/intraday - intraday account and open positions\n/intraday_history - intraday closed trades\n"
-        "/gapgo - gap-and-go paper account\n/gapgo_history - gap-and-go closed trades\n/pause - stop placing orders\n/resume - allow orders again\n"
+        "/gapgo - gap-and-go paper account\n/gapgo_history - gap-and-go closed trades\n"
+        "/gaponly - gap-only control account\n/gaponly_history - gap-only closed trades\n/pause - stop placing orders\n/resume - allow orders again\n"
         "/rebase - reset the peak-equity baseline (clears a drawdown halt)")
 
 # The bot token is part of every request URL; never let the HTTP library log it.
@@ -127,7 +128,7 @@ class Notifier:
 
 
 def handle_command(text: str, control, broker, settings, intraday=None,
-                   extra: Optional[Mapping[str, Tuple[str, Callable[[], str]]]] = None, gapgo=None) -> str:
+                   extra: Optional[Mapping[str, Tuple[str, Callable[[], str]]]] = None, gapgo=None, gaponly=None) -> str:
     """Turn a command text into a reply, applying pause/resume/rebase as needed. `extra` adds commands:
     {"/name": (help line, handler)}."""
     cmd = (text or "").strip().split()[0].split("@")[0].lower() if (text or "").strip() else ""
@@ -165,19 +166,19 @@ def handle_command(text: str, control, broker, settings, intraday=None,
     if cmd == "/pnl" and isinstance(broker, ListsTrades):
         intraday_trades = intraday.trade_history() if isinstance(intraday, ListsTrades) else None
         return format_pnl(broker.trade_history(), intraday_trades, settings.currency)
-    for name, account in (("intraday", intraday), ("gapgo", gapgo)):
+    for name, account in (("intraday", intraday), ("gapgo", gapgo), ("gaponly", gaponly)):
         if cmd in (f"/{name}", f"/{name}_history") and account is not None:
             return _account_view(account, name, cmd.endswith("_history"), settings.currency)
     return HELP + "".join(f"\n{name} - {line}" for name, (line, _) in (extra or {}).items())
 
 
 def _account_view(account, name: str, history: bool, cur: str) -> str:
-    """/intraday and /gapgo (equity, cash, open positions) and their _history variants (closed trades)."""
+    """/intraday, /gapgo and /gaponly (equity, cash, open positions) and their _history variants (closed trades)."""
     if history:
         return format_history(account.trade_history(), cur)
     p, held = account.portfolio(), account.holdings()
     day = f"{(p.equity / p.start_of_day_equity - 1):+.2%} today" if p.start_of_day_equity else "n/a"
-    title = "INTRADAY account" if name == "intraday" else "GAP-AND-GO paper account"
+    title = {"intraday": "INTRADAY account", "gapgo": "GAP-AND-GO paper account", "gaponly": "GAP-ONLY control account"}[name]
     head = f"⚡ <b>{title}</b>\n💰 Equity <b>{cur}{p.equity:,.2f}</b> ({day})\n💵 Cash {cur}{p.cash:,.2f}\n\n"
     return Html(head + format_positions(held, cur))
 

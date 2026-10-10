@@ -16,7 +16,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import date as Date, datetime, time as dtime, timezone
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -30,8 +30,9 @@ from src.engine.costs import SLIPPAGE
 from src.engine.paper_broker import PaperBroker
 from src.engine.ports import BAR
 from src.intraday.engine import IntradayEngine
-from src.intraday.strategy import ENTRY_UNTIL, GAP_ENTRY_UNTIL, find_gap_setup, find_setup, intraday_fees
-from src.versions import GAPGO_VERSION, INTRADAY_VERSION
+from src.intraday.strategy import (ENTRY_UNTIL, GAP_ENTRY_UNTIL, GAP_ONLY_ENTRY_UNTIL, find_gap_only_setup, find_gap_setup,
+                                   Setup, find_setup, intraday_fees)
+from src.versions import GAPGO_VERSION, GAPONLY_VERSION, INTRADAY_VERSION
 
 FIRST_CYCLE, LAST_CYCLE = dtime(9, 20, 15), dtime(15, 25, 15)  # the engine's cycles, 15 s past each 5-minute boundary
 
@@ -133,7 +134,13 @@ def _run_session(engine: IntradayEngine, feed: ReplayFeed, day: Date) -> None:
         t += BAR
 
 
-STRATEGIES = ("orb", "gapgo")  # the opening-range breakout (the default engine) and gap-and-go, as the launcher runs them
+# name -> (rule, last bar that may signal, Telegram label, version), as the launcher (src/app/intraday_cli.py) runs them
+Rule = Callable[[str, pd.DataFrame, Optional[float]], Optional[Setup]]
+STRATEGIES: Dict[str, Tuple[Rule, dtime, str, str]] = {
+    "orb": (find_setup, ENTRY_UNTIL, "INTRADAY", INTRADAY_VERSION),
+    "gapgo": (find_gap_setup, GAP_ENTRY_UNTIL, "GAP-GO", GAPGO_VERSION),
+    "gaponly": (find_gap_only_setup, GAP_ONLY_ENTRY_UNTIL, "GAP-ONLY", GAPONLY_VERSION),
+}
 
 
 def replay(bars: Dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(), universe: Optional[List[str]] = None,
@@ -141,9 +148,9 @@ def replay(bars: Dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(),
            progress: Optional[Callable[[Date], None]] = None, strategy: str = "orb") -> ReplayResult:
     """Run the live engine over every stored session in [start, end] and return what it did. One continuous account, so
     equity compounds and drawdowns carry across days exactly as they would live. `strategy` picks the rule the same way
-    the launcher (src/app/intraday_cli.py) does: "orb" or "gapgo"."""
+    the launcher (src/app/intraday_cli.py) does: "orb", "gapgo" or "gaponly"."""
     if strategy not in STRATEGIES:
-        raise ValueError(f"strategy must be one of {STRATEGIES}, got {strategy!r}")
+        raise ValueError(f"strategy must be one of {sorted(STRATEGIES)}, got {strategy!r}")
     days = session_days(bars, start, end)
     feed, clock = ReplayFeed(bars), IndiaClock()
     symbols = sorted(bars) if universe is None else universe
@@ -153,14 +160,13 @@ def replay(bars: Dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(),
         broker = PaperBroker(sessions, feed, clock, initial_cash=config.capital, fees=intraday_fees,
                              now_fn=lambda: feed.now,
                              slippage=SLIPPAGE if config.slippage is None else config.slippage)
-        gap = strategy == "gapgo"
+        rule, until, label, version = STRATEGIES[strategy]
+        gap = strategy != "orb"  # the gap rules need the previous session's close and record capped signals, as live
         engine = IntradayEngine(broker, symbols, clock, fetch_bars=feed.recent if gap else feed.today, live=True,
                                 max_positions=config.max_positions, risk_pct=config.risk_pct,
                                 max_position_pct=config.max_position_pct, max_daily_loss_pct=config.max_daily_loss_pct,
-                                universe_source="", now_fn=lambda: feed.now,
-                                find_setup=find_gap_setup if gap else find_setup,
-                                entry_until=GAP_ENTRY_UNTIL if gap else ENTRY_UNTIL, label="GAP-GO" if gap else "INTRADAY",
-                                version=GAPGO_VERSION if gap else INTRADAY_VERSION)
+                                universe_source="", now_fn=lambda: feed.now, find_setup=rule, entry_until=until,
+                                label=label, version=version, record_capped=gap)
         equity: Dict[Date, float] = {}
         for day in days:
             _run_session(engine, feed, day)

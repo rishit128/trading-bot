@@ -25,7 +25,7 @@ def _bars(symbol: str) -> pd.DataFrame:
     idx = pd.date_range("2026-09-01", "2026-09-30")
     df = pd.DataFrame({"Open": 100.0, "High": 100.0, "Low": 100.0, "Close": 100.0}, index=idx)
     if symbol == "A":
-        df.loc["2026-09-13":, ["Open", "Close", "High"]] = 300.0  # gaps up 2 sessions after entry: TARGET, not TIME
+        df.loc["2026-09-13":, ["Open", "Close", "High"]] = 300.0  # gaps up 2 sessions after entry: exits at the TARGET
         df.loc["2026-09-13":, ["Low"]] = 295.0
     df["Volume"] = 1_000_000
     return df

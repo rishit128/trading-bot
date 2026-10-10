@@ -20,6 +20,8 @@ INTRADAY_VERSION = "orb-v2"
 # The gap-and-go paper strategy (its own account): gap >= 2% then a close above the opening range by 10:30, stop at
 # the range low, held to the square-off.
 GAPGO_VERSION = "gapgo-v1"
+# The gap-only paper control (its own account): the same gap, bought on the 09:30 close with no breakout.
+GAPONLY_VERSION = "gaponly-v1"
 
 VERSIONS = {
     "feature": FEATURE_VERSION,

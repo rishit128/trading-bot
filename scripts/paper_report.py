@@ -1,6 +1,6 @@
 """Full paper-trading history, both accounts: every closed trade and open position, and realized P&L by day, by week, and
-in total, for the swing account, the intraday account, and the two combined; then the gap-and-go paper strategy's account on
-its own (an experiment, kept out of the combined figures).
+in total, for the swing account, the intraday account, and the two combined; then the gap-and-go and gap-only experiment
+accounts on their own (kept out of the combined figures).
 
     python scripts/paper_report.py                         # the live databases (DATABASE_URL / INTRADAY_DATABASE_URL)
     python scripts/paper_report.py --no-trades              # P&L tables only, skip the trade-by-trade listing
@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.app.wiring import gapgo_db_url, intraday_db_url, make_paper_broker  # noqa: E402
+from src.app.wiring import gapgo_db_url, gaponly_db_url, intraday_db_url, make_paper_broker  # noqa: E402
 from src.config import load_settings  # noqa: E402
 from src.data.india import IST  # noqa: E402
 from src.engine.paper_report import group_by_day, group_by_week, merge_periods, totals  # noqa: E402
@@ -55,6 +55,7 @@ def main():
     ap.add_argument("--database-url", default=settings.database_url, help="the swing account's database")
     ap.add_argument("--intraday-database-url", default=intraday_db_url(), help="the intraday account's database")
     ap.add_argument("--gapgo-database-url", default=gapgo_db_url(), help="the gap-and-go paper strategy's database")
+    ap.add_argument("--gaponly-database-url", default=gaponly_db_url(), help="the gap-only control's database")
     ap.add_argument("--no-trades", action="store_true", help="skip the trade-by-trade listing, just the P&L tables")
     args = ap.parse_args()
 
@@ -74,10 +75,12 @@ def main():
     period_table("by day", merge_periods(group_by_day(swing_trades, IST), group_by_day(intraday_trades, IST)))
     period_table("by week", merge_periods(group_by_week(swing_trades, IST), group_by_week(intraday_trades, IST)))
 
-    gap = make_paper_broker(settings, args.gapgo_database_url, fees=intraday_fees)
-    gap_summary = gap.summary()
-    account_report("GAP-AND-GO (paper experiment)", gap.trade_history(), gap.holdings(), gap_summary["equity"],
-                   gap_summary["initial_cash"], not args.no_trades)
+    for title, url in (("GAP-AND-GO (paper experiment)", args.gapgo_database_url),
+                       ("GAP-ONLY (paper control for gap-and-go)", args.gaponly_database_url)):
+        gap = make_paper_broker(settings, url, fees=intraday_fees)
+        gap_summary = gap.summary()
+        account_report(title, gap.trade_history(), gap.holdings(), gap_summary["equity"], gap_summary["initial_cash"],
+                       not args.no_trades)
 
 
 if __name__ == "__main__":

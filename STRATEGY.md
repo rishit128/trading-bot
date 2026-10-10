@@ -708,3 +708,48 @@ every signal recorded with system version `gapgo-v1`. The rule is one function (
 the live engine and the research test (re-run through it: identical trades and results). The breakout engine is unchanged.
 Judge it on its own forward record: the 2-year test had ~1.4 signals a day across 214 stocks, so on the ~100-stock live
 universe expect roughly one every one or two days; months are needed before the record means anything.
+
+### Gap-only control vs gap-and-go: timing or selection? (2026-10-10)
+Pre-declared control: the same gap filter (>= 2%), entry at the 09:30 close with no breakout needed, the same stop (range
+low), held to the square-off. 2 years, 214 stocks:
+
+| rule | trades | gross | net | net t | 2x slippage |
+|---|---|---|---|---|---|
+| gap-and-go (breakout by 10:30) | 750 | +0.294% | +0.087% | +0.6 | -0.013% |
+| gap-only (enter 09:30) | 2,806 | +0.099% | -0.107% | -2.0 | -0.207% |
+
+Per trade, the breakout condition looks like it matters: gap stocks that never broke out lost -0.53% a trade under
+gap-only. But compared date by date on the 211 dates both traded, gap-only did better (-0.22% a day for gap-and-go,
+paired t -2.0): on days with breakouts, buying every gap at 09:30 caught the same winners earlier and cheaper. So the
+gap-and-go edge seems to come mostly from staying out on days when gaps fail, not from better entries on the days it
+trades. The earlier sentence "the gain comes from big-gap stocks drifting up" was too simple: the evidence is mixed and
+not conclusive either way, which is why the control is worth measuring forward.
+
+### The live engine replayed on 2 years, Rs 20,000 account (2026-10-10)
+`scripts/backtest_intraday.py --bars-file research_cache/intraday_5m_2y.pkl` (live engine + paper broker, INTRADAY_*
+sizing, intraday fees, 0.05% slippage a side, 2% daily-loss halt, 5 positions):
+
+| strategy | trades | win rate | fees | Rs 20,000 -> | max drawdown | 1st / 2nd half P&L |
+|---|---|---|---|---|---|---|
+| ORB (live rule) | 3,330 | 38% | Rs 6,743 | Rs 6,111 (-69%) | -71% | -9,454 / -4,436 |
+| gap-and-go | 337 | 46% | Rs 1,076 | Rs 20,170 (+0.9%) | -8.4% | +367 / -197 |
+
+Execution assumptions checked trade by trade on 3 months (432 ORB trades): never more than 5 positions open; no position
+above 20% of equity or risking more than 0.5%; every entry exactly the next bar's open + 0.05% and every square-off the
+15:15 open - 0.05%; fees equal the intraday schedule on all trades (0.106% of value on Rs ~3,200 positions); no trade
+before a stock's first bar; 97 signals skipped because one share cost more than the 20% cap. The replay's per-trade loss
+(-0.23%) is a little worse than the research estimate (-0.18%) because the live engine enters at the NEXT bar's open,
+not the signal bar's close. Remaining bias: the 214 stocks are today's F&O list (survivorship), wider than the live
+top-100 universe. At account level gap-and-go is about break-even (positive first year, negative second): the +0.09% a
+trade of the research does not survive next-bar entries on a Rs 20,000 account. The forward paper comparison with
+gap-only (below) is how it will be judged.
+
+### Gap-only control added (2026-10-10, gaponly-v1)
+Owner's decision, paper only: its own account (`GAPONLY_DATABASE_URL`, `gaponly.db`, Telegram `/gaponly`). Frozen rules
+in `src/intraday/strategy.py`: a gap >= 2% bought on the close of the 09:25-09:30 bar on the 09:30 cycle only (never
+chased later), stop at the opening-range low, no target, squared off at 15:15; skipped when the previous close is
+unknown, the opening range is not the real 09:15-09:30 bars, or the entry is not above the stop. Same universe, sizing
+and fee model as gap-and-go. Both gap accounts record the signals a full position limit made them skip. The breakout
+engine and the swing bot are unchanged. Judged by `scripts/compare_gap.py`: gap-and-go is credited with a timing edge
+only if it beats gap-only per trade AND date by date (paired t >= 2.6); the report also shows the same stock on the same
+day, fees, daily return, drawdown and how much of each account was used.
