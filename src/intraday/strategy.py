@@ -13,7 +13,12 @@ Sizing is by risk under a position cap (`position_size`). The rule itself is one
 live engine and every research script, so nothing that is tested differs from what trades.
 
 An audit of this rule on 58 sessions of Nifty 100 bars (STRATEGY.md, 2026-09-28) found no edge: it does no better than
-entering at a random time with the same stop and target, and neither the VWAP nor the volume filter adds anything."""
+entering at a random time with the same stop and target, and neither the VWAP nor the volume filter adds anything.
+
+Gap-and-go (`find_gap_setup`, a second paper strategy since 2026-10-10): the stock opened at least 2% above the previous
+session's close, and a 5-minute bar between 09:30 and 10:30 closes above the opening range high. Stop at the range low, no
+profit target: held to the 15:15 square-off. The only idea that stayed positive after costs in both years of the 2-year
+test (STRATEGY.md, 2026-10-10), but not proven: it runs in its own paper account to gather forward evidence."""
 from dataclasses import dataclass
 from datetime import time as dtime
 from typing import Optional, Tuple
@@ -30,6 +35,9 @@ ENTRY_FROM, ENTRY_UNTIL, SQUARE_OFF = dtime(9, 30), dtime(14, 0), dtime(15, 15)
 MIN_RANGE, MAX_RANGE = 0.003, 0.025
 VOLUME_MULT = 1.5
 TARGET_R = 2.0
+GAP_MIN = 0.02                   # gap-and-go: open at least 2% above the previous session's close...
+GAP_ENTRY_UNTIL = dtime(10, 30)  # ...and break the opening range high within the first hour
+NO_TARGET = 1.0                  # a +100% "target" for a strategy that has none: it exits at the stop or the square-off
 CASH_HEADROOM = 1.003  # cash kept back per share bought: slippage (0.05%) and both fees fit inside 0.3%
 
 
@@ -105,6 +113,20 @@ def first_breakout(high: np.ndarray, low: np.ndarray, close: np.ndarray, volume:
     return Breakout(i, range_high, range_low, width, float(ratio[i]))
 
 
+def first_gap_breakout(open_price: float, prev_close: Optional[float], high: np.ndarray, close: np.ndarray,
+                       minutes: np.ndarray, min_gap: float = GAP_MIN) -> Optional[int]:
+    """The gap-and-go entry bar: the session opened at least `min_gap` above `prev_close` and this is the first bar from
+    09:30 to 10:30 that closes above the opening range high; or None. Shared by the live engine (`find_gap_setup`) and the
+    research tests, like `first_breakout`."""
+    if not prev_close or open_price / prev_close - 1 < min_gap or len(close) <= RANGE_BARS:
+        return None
+    range_high = float(high[:RANGE_BARS].max())
+    ok = (close > range_high) & (minutes >= minute_of_day(ENTRY_FROM)) & (minutes < minute_of_day(GAP_ENTRY_UNTIL))
+    ok[:RANGE_BARS] = False
+    hits = np.flatnonzero(ok)
+    return int(hits[0]) if len(hits) else None
+
+
 def opening_range_intact(day_bars: pd.DataFrame) -> bool:
     """True when the first RANGE_BARS bars are the real opening bars: the first starts at 09:15 and they follow each other
     without a gap. Yahoo drops a bar a stock did not trade in, so an illiquid stock's "first three bars" can be 09:25-09:35
@@ -117,9 +139,9 @@ def opening_range_intact(day_bars: pd.DataFrame) -> bool:
     return all(idx[i + 1] - idx[i] == BAR for i in range(RANGE_BARS - 1))
 
 
-def find_setup(symbol: str, day_bars: pd.DataFrame) -> Optional[Setup]:
+def find_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float] = None) -> Optional[Setup]:
     """The day's first breakout in `day_bars` (one session's completed 5-minute bars, IST index), or None. One trade per
-    stock per day means only the first signal counts."""
+    stock per day means only the first signal counts. `prev_close` is unused (the same signature as `find_gap_setup`)."""
     if not opening_range_intact(day_bars):
         return None
     index = pd.DatetimeIndex(day_bars.index)
@@ -132,6 +154,23 @@ def find_setup(symbol: str, day_bars: pd.DataFrame) -> Optional[Setup]:
     strength = min(1.0, max(0.0, (found.volume_ratio - VOLUME_MULT) / VOLUME_MULT))
     return Setup(symbol, entry, found.range_low, entry + TARGET_R * risk, found.range_high, found.range_low,
                  day_bars.index[found.index], strength, found.volume_ratio)
+
+
+def find_gap_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float]) -> Optional[Setup]:
+    """The day's gap-and-go entry in `day_bars` (one session's completed 5-minute bars), or None. Needs the previous
+    session's close; the opening range must be the real 09:15-09:30 bars, as for the breakout rule."""
+    if prev_close is None or not opening_range_intact(day_bars):
+        return None
+    index = pd.DatetimeIndex(day_bars.index)
+    high, low = day_bars["High"].to_numpy(float), day_bars["Low"].to_numpy(float)
+    close, volume = day_bars["Close"].to_numpy(float), day_bars["Volume"].to_numpy(float)
+    i = first_gap_breakout(float(day_bars["Open"].iloc[0]), prev_close, high, close, (index.hour * 60 + index.minute).to_numpy())
+    if i is None:
+        return None
+    entry, range_high, range_low = float(close[i]), float(high[:RANGE_BARS].max()), float(low[:RANGE_BARS].min())
+    _, ratio = session_vwap_and_volume_ratio(high, low, close, volume)
+    return Setup(symbol, entry, range_low, entry * (1 + NO_TARGET), range_high, range_low, day_bars.index[i],
+                 volume_ratio=float(ratio[i]))
 
 
 def position_size(equity: float, entry: float, stop: float, risk_pct: float, max_position_pct: float,

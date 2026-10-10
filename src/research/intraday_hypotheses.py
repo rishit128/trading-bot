@@ -15,8 +15,8 @@ A hypothesis is a CANDIDATE only if ALL of these hold (five comparisons, so |t| 
   4. it is still positive with slippage doubled;
   5. it beats its NULL: the paired per-date difference (signal minus null) has t >= 2.6.
 
-KILL CRITERION: if no hypothesis is a candidate, the intraday engine has no rule worth running and should be retired: more
-indicators or a wider universe were tested and do not change that. A candidate is a lead for forward paper trading, never proof:
+If no hypothesis is a candidate, none of these rules is better than the live one: the engine keeps running and
+collecting sessions, and new ideas are declared and tested the same way. A candidate is a lead for forward paper trading, never proof:
 one archive is one market regime, and its length limits what any test can detect (reported as the minimum detectable edge)."""
 from dataclasses import dataclass, field
 from datetime import time as dtime
@@ -119,12 +119,8 @@ def orb_short_null(d: StockDay, rng: np.random.Generator) -> Optional[Plan]:
 
 # -- H2: gap up, then the opening range breaks upward: hold the day ---------------------------------------------------------
 def gap_and_go(d: StockDay) -> Optional[Plan]:
-    gap = _gap(d)
-    if gap is None or gap < GAP_GO:
-        return None
-    high, low = _range(d)
-    i = _first((d.c > high) & _window(d, FIRST_HOUR))      # (the first close above the range high is necessarily above VWAP)
-    return None if i is None else Plan(i, 1, low)
+    i = st.first_gap_breakout(float(d.o[0]), d.prev_close, d.h, d.c, d.minutes, GAP_GO)  # the live engine's function
+    return None if i is None else Plan(i, 1, _range(d)[1])
 
 
 def gap_and_go_null(d: StockDay, rng: np.random.Generator) -> Optional[Plan]:
@@ -312,5 +308,5 @@ def report(outcomes: List[Outcome]) -> str:
                      f"{max(o.detectable for o in outcomes):.3%} net per trade: a smaller true edge would not show.")
     passed = [o for o in outcomes if o.candidate]
     lines.append("\nCANDIDATES: " + (", ".join(o.name for o in passed) if passed else
-                                     "none -> the kill criterion applies: no rule tested is worth running intraday"))
+                                     "none -> no rule tested beats the live one; keep collecting sessions and test new ideas"))
     return "\n".join(lines)

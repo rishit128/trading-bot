@@ -6,8 +6,7 @@ import pytest
 
 from src.database import make_session_factory
 from src.engine.paper_broker import PaperBroker
-from src.engine.ports import (Broker, ChargesFees, ConfirmsFills, Fill, ListsHoldings, ListsTrades, MarketClock, PriceFeed,
-                              ProtectsPositions)
+from src.engine.ports import Broker, ChargesFees, Fill, ListsHoldings, ListsTrades, MarketClock, PriceFeed
 from tests.test_llm_and_pipeline import FakeBroker
 from tests.test_paper_broker import FakeClock, FakeFeed
 
@@ -18,14 +17,12 @@ def paper(tmp_path):
 
 def test_the_paper_broker_offers_exactly_the_capabilities_it_implements(tmp_path):
     broker = paper(tmp_path)
-    assert isinstance(broker, ProtectsPositions) and isinstance(broker, ChargesFees)
-    assert isinstance(broker, ListsHoldings) and isinstance(broker, ListsTrades)
-    assert not isinstance(broker, ConfirmsFills)  # a simulator has nothing to confirm: its fills are already final
+    assert isinstance(broker, ChargesFees) and isinstance(broker, ListsHoldings) and isinstance(broker, ListsTrades)
 
 
 def test_a_bare_broker_has_none_of_the_optional_capabilities():
     bare = FakeBroker(None)
-    for capability in (ProtectsPositions, ConfirmsFills, ChargesFees, ListsHoldings, ListsTrades):
+    for capability in (ChargesFees, ListsHoldings, ListsTrades):
         assert not isinstance(bare, capability)
 
 

@@ -4,14 +4,14 @@ Invariants pinned here so a regression that opens a position without its bracket
   * backtest: every closed trade carries the stop/target levels its bracket set off the signal-day close; a STOP exit
     always fills at or below the stop and a TARGET exit at or above the target - across a sweep of random series;
   * paper broker: every buy writes a position row whose stop level sits below the fill and whose target sits above,
-    and `unprotected_positions()` reports nothing (the working-stop invariant a real broker must restore)."""
+    so no position can exist without its stop."""
 from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from src.research.backtest import TIME_LIMITED, Result, simulate
+from src.research.backtest import ExitPolicy, Result, simulate
 from src.config import RiskLimits
 from src.database import make_session_factory
 from src.engine.paper_broker import PaperBroker
@@ -49,7 +49,7 @@ def test_every_trade_in_a_noisy_sweep_remembers_its_bracket():
     for seed in (1, 7, 99):
         bars = {"A": _walk(seed)}
         res: Result = simulate(bars, {"A": _scheduled_signals(bars["A"].index)}, LIMITS, start_equity=100_000,
-                               exits=TIME_LIMITED, fees=india_delivery_fees, slippage=0.0005)
+                               exits=ExitPolicy(max_hold_days=10), fees=india_delivery_fees, slippage=0.0005)
         for t in res.trades:
             assert t.stop is not None and t.target is not None, f"seed {seed}: {t} was opened without a bracket!"
             assert t.stop < t.target
@@ -120,4 +120,3 @@ def test_the_paper_buy_always_writes_a_position_with_its_stop_level(tmp_path):
     assert holdings[0]["stop"] == pytest.approx(92.46, abs=0.005)  # 8% below the 100.5 signal close
     assert holdings[0]["stop"] < holdings[0]["avg_price"]
     assert holdings[0]["avg_price"] < 100.5 * (1 + LIMITS.take_profit_pct)
-    assert broker.unprotected_positions() == []  # the paper broker must never report a naked position

@@ -7,19 +7,15 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import pandas as pd
 
 from src.config import RiskLimits
-from src.data.indicators import build_snapshot
 from src.engine.enums import Action
 from src.engine.risk_engine import Portfolio, RiskEngine, drawdown_pause
-from src.engine.rules import entry_filter, trend_broken
+from src.engine.rules import trend_broken
 
 START_EQUITY = 100_000.0
 
 SignalTable = Dict[str, Dict[pd.Timestamp, Tuple[str, float]]]  # symbol -> date -> (action, confidence)
 # (signal day, account state at the fill day's open) -> ordered (symbol, confidence) BUY picks, best first
 BuySource = Callable[[pd.Timestamp, Portfolio], Sequence[Tuple[str, float]]]
-# (signal day, held symbol) -> True to sell it at the next open, e.g. it dropped out of a momentum portfolio's top N
-ExitSource = Callable[[pd.Timestamp, str], bool]
-
 
 
 @dataclass(frozen=True)
@@ -37,7 +33,6 @@ class ExitPolicy:
 
 
 LIVE_EXITS = ExitPolicy(max_hold_days=None, trend_exit=True)  # what the running bot does; simulate() uses it unless told otherwise
-TIME_LIMITED = ExitPolicy(max_hold_days=10)  # the original 2%/5%/10-day bracket style, kept for comparisons against it
 
 
 @dataclass(frozen=True)
@@ -73,7 +68,7 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: SignalTable, limits: RiskLi
              start_equity: float = START_EQUITY, exits: ExitPolicy = LIVE_EXITS,
              fees: Optional[Callable[[str, float], float]] = None, slippage: float = 0.0,
              buy_source: Optional[BuySource] = None, cash_yield: float = 0.0,
-             cash_yield_from: Optional[pd.Timestamp] = None, exit_source: Optional[ExitSource] = None) -> Result:
+             cash_yield_from: Optional[pd.Timestamp] = None) -> Result:
     """Replay signals through the real risk engine: next-open fills, stop/target levels off the signal-day close.
 
     `cash_yield` is the annual rate idle cash earns (a liquid-fund sweep; 0 = cash earns nothing, the old behaviour). It
@@ -81,14 +76,11 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: SignalTable, limits: RiskLi
     `cash_yield_from` starts the accrual at that date, so a warm-up stretch (history only, no trading) earns nothing
     and cannot show up as a gain in a curve reported from the real start.
 
-    `exit_source(signal_day, symbol)` returning True sells that held position at the next open, like a SELL signal.
-    It lets a rebalanced strategy (e.g. hold the top N by momentum) be run through the same fills and costs.
-
     `slippage` is charged adversarially (buy higher, sell lower) on market fills only; stop/target exits hit at their
     exact levels. `fees` mirrors the paper broker's schedule (india_delivery_fees) for net-of-cost parity (D1/D2).
 
     `exits` defaults to the LIVE policy (no time limit, MA200 trend exit), so a simulation tests the strategy that is
-    actually running unless the caller explicitly asks for another (`TIME_LIMITED`, or their own `ExitPolicy`).
+    actually running unless the caller passes its own `ExitPolicy`.
 
     Entries come from `signals` (BUYs processed in symbol order) or, when given, from `buy_source(signal_day, portfolio)`:
     an ORDERED list of (symbol, confidence) picks, best first, decided from the account state at the fill day's open.
@@ -166,8 +158,6 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: SignalTable, limits: RiskLi
                 sig = signals.get(sym, {}).get(prev)
                 if exits.trend_exit and prev in ma200[sym].index and trend_broken(float(bars[sym].loc[prev, "Close"]), ma200[sym].loc[prev]):
                     sig = (Action.SELL, 1.0)
-                if exit_source is not None and exit_source(prev, sym):
-                    sig = (Action.SELL, 1.0)
                 if sig and sig[0] == Action.SELL and engine.evaluate(Action.SELL, sig[1], sym, 1.0, portfolio_at(day, "Open")).approved:
                     fill = float(bars[sym].loc[day, "Open"]) * (1 - slippage)
                     close_position(sym, day, fill, "SIGNAL")
@@ -204,31 +194,6 @@ def simulate(bars: Dict[str, pd.DataFrame], signals: SignalTable, limits: RiskLi
     return Result(pd.Series(curve), trades, len(positions))
 
 
-def buy_and_hold_curve(bars: Dict[str, pd.DataFrame], start_equity: float = START_EQUITY) -> pd.Series:
-    """Equity of holding every symbol equally from the first day."""
-    calendar = sorted(set.intersection(*[set(df.index) for df in bars.values()]))
-    alloc = start_equity / len(bars)
-    total = pd.Series(0.0, index=calendar)
-    for df in bars.values():
-        shares = alloc / df.loc[calendar[0], "Open"]
-        total += shares * df.loc[calendar, "Close"]
-    return total
-
-
-def rule_signals(bars: Dict[str, pd.DataFrame], dates) -> SignalTable:
-    """Trivial baseline the LLM has to beat: trend-following on the same indicators, no model involved."""
-    out: SignalTable = {}
-    for sym, df in bars.items():
-        out[sym] = {}
-        for d in dates:
-            snap = build_snapshot(sym, df.loc[:d])
-            if entry_filter(snap.price, snap.ma50, snap.ma200, snap.rsi):
-                out[sym][d] = (Action.BUY, 0.9)
-            elif trend_broken(snap.price, snap.ma200):
-                out[sym][d] = (Action.SELL, 0.9)
-    return out
-
-
 def curve_metrics(curve: pd.Series, start_equity: Optional[float] = None) -> dict:
     """total_return is measured from start_equity (default: first point), so day-one moves are not dropped."""
     start = start_equity if start_equity is not None else curve.iloc[0]
@@ -236,37 +201,3 @@ def curve_metrics(curve: pd.Series, start_equity: Optional[float] = None) -> dic
     drawdown = (curve / curve.cummax() - 1).min()
     sharpe = float(daily.mean() / daily.std() * math.sqrt(252)) if len(daily) > 1 and daily.std() > 0 else 0.0
     return {"total_return": float(curve.iloc[-1] / start - 1), "max_drawdown": float(drawdown), "sharpe": sharpe}
-
-
-def trade_metrics(trades: List[Trade]) -> dict:
-    """Trade count, win rate, average return and exits by reason."""
-    if not trades:
-        return {"trades": 0}
-    rets = [t.return_pct for t in trades]
-    wins = [r for r in rets if r > 0]
-    return {
-        "trades": len(trades),
-        "win_rate": len(wins) / len(rets),
-        "avg_trade_return": sum(rets) / len(rets),
-        "exits": {r: sum(1 for t in trades if t.reason == r) for r in ("STOP", "TARGET", "TIME", "SIGNAL")},
-    }
-
-
-def analyze_trades(trades: List[Trade]) -> dict:
-    """Where the money was actually made or lost: by exit reason, holding period, year and symbol (P&L is net of fees)."""
-    if not trades:
-        return {}
-    df = pd.DataFrame([{
-        "symbol": t.symbol, "reason": t.reason, "ret": t.return_pct, "year": t.exit_date.year,
-        "days": (t.exit_date - t.entry_date).days,
-        "pnl": (t.exit_price - t.entry_price) * t.qty - t.fees,
-    } for t in trades])
-    df["holding"] = pd.cut(df["days"], [-1, 2, 7, 14, 30, 10 ** 6], labels=["<=2d", "3-7d", "8-14d", "15-30d", ">30d"])
-    agg = dict(n=("ret", "size"), win_rate=("ret", lambda s: float((s > 0).mean())), avg_return=("ret", "mean"), pnl=("pnl", "sum"))
-    return {
-        "by_reason": df.groupby("reason").agg(**agg),
-        "by_holding": df.groupby("holding", observed=True).agg(**agg),
-        "by_year": df.groupby("year").agg(**agg),
-        "worst_symbols": df.groupby("symbol")["pnl"].sum().nsmallest(5),
-        "median_days_stopped_out": float(df.loc[df["reason"] == "STOP", "days"].median()) if (df["reason"] == "STOP").any() else None,
-    }

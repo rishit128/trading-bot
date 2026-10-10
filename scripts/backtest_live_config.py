@@ -2,6 +2,7 @@
 
     python scripts/backtest_live_config.py                 # Nifty 500, 10 years, settings from .env
     python scripts/backtest_live_config.py --years 5 --index 100
+    python scripts/backtest_live_config.py --index 0           # every NSE stock instead of an index
 
 It runs three setups on the SAME scanner rankings so the effect of each difference is visible:
   1. live            the paper account as configured now (e.g. Rs 20,000, 5 positions, 10-25% sizing)
@@ -24,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.app.wiring import screen_config  # noqa: E402
 from src.config import load_settings  # noqa: E402
 from src.data.universe import MOMENTUM_BARS  # noqa: E402
-from src.data.price_history import load_index_close, load_ohlc_universe  # noqa: E402
+from src.data.price_history import load_index_close, load_ohlc_nse, load_ohlc_universe  # noqa: E402
 from src.research.live_backtest import (DEFAULT_CONFIDENCE, delivery_average_or_none, equal_weight_basket,
                                         ranked_candidates,  # noqa: E402
                                         research_setup, run_live_config, summarize_run)
@@ -50,7 +51,7 @@ def curve_row(label, curve):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--index", type=int, choices=(50, 100, 500), default=500)
+    ap.add_argument("--index", type=int, choices=(0, 50, 100, 500), default=500, help="0 = every NSE stock")
     ap.add_argument("--years", type=int, default=10)
     ap.add_argument("--confidence", type=float, default=DEFAULT_CONFIDENCE, help="stand-in for the AI's approval confidence")
     ap.add_argument("--recent-years", type=int, default=3, help="also report this many most recent years (delivery data covers ~3)")
@@ -67,9 +68,10 @@ def main():
           f"{settings.risk.min_position_pct:.0%}-{settings.risk.max_position_pct:.0%} sizing, stop {settings.risk.stop_loss_pct:.0%}, "
           f"trend exit, candidates {live_cfg.max_candidates}, AI stand-in confidence {args.confidence}")
 
-    bars = load_ohlc_universe(args.index, args.years, refresh=args.refresh)
+    bars = (load_ohlc_universe(args.index, args.years, refresh=args.refresh) if args.index
+            else load_ohlc_nse(args.years, refresh=args.refresh))
     nifty = load_index_close("^NSEI", args.years, refresh=args.refresh)
-    print(f"Nifty {args.index}: {len(bars)} stocks with data, {nifty.index[0].date()} .. {nifty.index[-1].date()}")
+    print(f"{f'Nifty {args.index}' if args.index else 'All NSE'}: {len(bars)} stocks with data, {nifty.index[0].date()} .. {nifty.index[-1].date()}")
     close = pd.DataFrame({s: df["Close"] for s, df in bars.items()}).sort_index()
     volume = pd.DataFrame({s: df["Volume"] for s, df in bars.items()}).sort_index()
 

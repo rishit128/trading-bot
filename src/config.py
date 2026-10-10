@@ -102,7 +102,6 @@ class Settings:
     min_price: float = 100.0
     min_traded_value: float = 100_000_000.0
     max_daily_volatility: float = 0.04
-    auto_protect: bool = True  # place a protective stop on any position found without one (live orders only)
     trend_exit: bool = True  # sell a held stock when its last completed close is below its 200-day average
     # Only above the day's cross-sectional median 20-day NSE delivery %. Combined with 12-1 momentum ranking, a
     # single 3-year test added ~14%/yr over the same-window basket (STRATEGY.md, 2026-09-22) -- promising, unproven.
@@ -110,7 +109,6 @@ class Settings:
     # terms, so it only works with files saved by hand each trading day (see README, 'Files you download').
     delivery_filter: bool = False
     analysis_workers: int = 3  # stocks analysed concurrently (LLM calls are latency-bound; keep modest for free tiers)
-    llm_cache_hours: float = 12.0
     # Free OpenRouter models are reasoning models: hidden thinking eats max_tokens and leaves the answer empty or cut off.
     # Switching it off gave valid answers 3-10x faster on all three configured models (src/llm.py).
     llm_reasoning_off: bool = True
@@ -141,8 +139,8 @@ class Settings:
             raise ValueError(f"universe must be 'market' or 'watchlist', got {self.universe!r}")
         if self.max_candidates < 1 or self.min_price < 0 or self.min_traded_value < 0:
             raise ValueError("max_candidates must be >= 1 and min_price/min_traded_value must be >= 0")
-        if self.analysis_workers < 1 or self.llm_cache_hours < 0:
-            raise ValueError("analysis_workers must be >= 1 and llm_cache_hours must be >= 0")
+        if self.analysis_workers < 1:
+            raise ValueError("analysis_workers must be >= 1")
         if self.llm_min_interval < 0 or self.llm_concurrency < 0:
             raise ValueError("llm_min_interval and llm_concurrency must be >= 0 (0 concurrency = unlimited)")
         if not 0 <= self.llm_temperature <= 2:
@@ -199,9 +197,7 @@ def load_settings() -> Settings:
         max_daily_volatility=_float("MAX_DAILY_VOLATILITY", 0.04),
         trend_exit=os.getenv("TREND_EXIT", "true").strip().lower() != "false",
         delivery_filter=os.getenv("DELIVERY_FILTER", "false").strip().lower() == "true",
-        auto_protect=os.getenv("AUTO_PROTECT", "true").strip().lower() != "false",
         analysis_workers=int(_float("ANALYSIS_WORKERS", 3)),
-        llm_cache_hours=_float("LLM_CACHE_HOURS", 12.0),
         llm_reasoning_off=os.getenv("LLM_REASONING_OFF", "true").strip().lower() != "false",
         llm_min_interval=_float("LLM_MIN_INTERVAL", 3.0),
         llm_concurrency=int(_float("LLM_CONCURRENCY", 2)),

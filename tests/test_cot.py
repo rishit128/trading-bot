@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from src.agents.technical import AdvancedSignal, COT_SCHEMA, TechnicalAgent
+from src.agents.technical.prompts import cot_prompt
 from src.agents.base import ADVISOR, LEAD, AgentContext
 from src.config import RiskLimits, Settings, load_settings
 from src.data.indicators import Snapshot, build_snapshot
@@ -51,11 +52,11 @@ def test_cot_agent_fails_safe_to_hold_without_details():
 
 
 def test_cot_prompt_has_the_five_steps_and_volume_ratio():
-    p = TechnicalAgent.build_prompt(SNAP)
+    p = cot_prompt(SNAP)
     for token in ("STEP 1", "STEP 2", "STEP 3", "STEP 4", "STEP 5", "RSI(14): 60.0", "n/a"):
         assert token in p, token
     with_avg = Snapshot("AAPL", 100.0, 98.0, 95.0, 60.0, 1000, avg_volume=800)
-    assert "1.25x" in TechnicalAgent.build_prompt(with_avg)
+    assert "1.25x" in cot_prompt(with_avg)
 
 
 def test_simple_prompt_mode_used_when_cot_disabled():
@@ -78,12 +79,10 @@ def test_cot_schema_is_strict_and_complete():
     assert props["edge_confidence"]["minimum"] == 0 and props["edge_confidence"]["maximum"] == 1
 
 
-def test_structured_call_sends_the_schema_and_caches_identical_prompts():
+def test_structured_call_sends_the_schema():
     fake = FakeOpenAI({"a": COT_GOOD})
-    llm = LLMClient(["a"], client=fake, cache_ttl_seconds=3600)
-    first = llm.structured_call("p", AdvancedSignal, COT_SCHEMA)
-    second = llm.structured_call("p", AdvancedSignal, COT_SCHEMA)
-    assert first is second  # served from cache, not a second call
+    llm = LLMClient(["a"], client=fake)
+    llm.structured_call("p", AdvancedSignal, COT_SCHEMA)
     assert len(fake.calls) == 1
     schema_sent = fake.calls[0][1]["response_format"]["json_schema"]
     assert schema_sent["name"] == "trading_signal_v2" and schema_sent["strict"] is True

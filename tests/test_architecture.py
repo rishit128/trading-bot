@@ -1,5 +1,4 @@
 import sqlite3
-import threading
 from datetime import date, datetime, timezone
 
 import pandas as pd
@@ -12,8 +11,7 @@ from src.data.indicators import BarNotReadyError, StaleDataError
 from src.data.market_data import cached_per_session, fetch_snapshot
 from src.database import DecisionRecord, make_session_factory
 from src.engine.strategy import combine_signals
-from src.llm import LLMClient, LLMUnavailable, AgentSignal
-from tests.test_llm_and_pipeline import GOOD, FakeOpenAI, api_error
+from src.llm import AgentSignal
 
 UTC = timezone.utc
 
@@ -66,72 +64,6 @@ def test_unknown_role_is_treated_as_advisor_never_as_lead():
 
 def test_single_lead_buy_and_sell_pass_through_unchanged():
     assert combine_signals({"technical": sig("SELL", 0.7)}, ROLES).action == "SELL"
-
-
-# ---------------------------------------------------------------- LLM answer cache
-def cached_client(behaviours, ttl=3600.0, clock=None, **kw):
-    fake = FakeOpenAI(behaviours)
-    return LLMClient(["a"], client=fake, cache_ttl_seconds=ttl, clock=clock or (lambda: 0.0), **kw), fake
-
-
-def test_identical_prompt_is_answered_from_cache():
-    llm, fake = cached_client({"a": GOOD})
-    assert llm.signal("p").action == llm.signal("p").action == "BUY"
-    assert len(fake.calls) == 1
-
-
-def test_different_prompts_are_not_shared():
-    llm, fake = cached_client({"a": GOOD})
-    llm.signal("p1")
-    llm.signal("p2")
-    assert len(fake.calls) == 2
-
-
-def test_cache_is_off_by_default_and_when_ttl_is_zero():
-    fake = FakeOpenAI({"a": GOOD})
-    plain = LLMClient(["a"], client=fake)
-    plain.signal("p")
-    plain.signal("p")
-    assert len(fake.calls) == 2
-
-
-def test_cache_entries_expire():
-    now = [0.0]
-    llm, fake = cached_client({"a": GOOD}, ttl=100.0, clock=lambda: now[0])
-    llm.signal("p")
-    now[0] = 99.0
-    llm.signal("p")
-    assert len(fake.calls) == 1
-    now[0] = 101.0
-    llm.signal("p")
-    assert len(fake.calls) == 2
-
-
-def test_failures_are_never_cached():
-    fake = FakeOpenAI({"a": api_error()})
-    llm = LLMClient(["a"], client=fake, cache_ttl_seconds=3600.0, clock=lambda: 0.0)
-    with pytest.raises(LLMUnavailable):
-        llm.signal("p")
-    failed_calls = len(fake.calls)  # the failed call itself was retried (transient errors are), but nothing was cached
-    fake.behaviours["a"] = GOOD
-    assert llm.signal("p").action == "BUY" and len(fake.calls) == failed_calls + 1
-
-
-def test_cache_is_bounded():
-    llm, fake = cached_client({"a": GOOD}, max_cache_entries=2)
-    for prompt in ("p1", "p2", "p3"):
-        llm.signal(prompt)
-    llm.signal("p3")
-    assert len(fake.calls) == 3 and len(llm._cache) == 2
-
-
-def test_cache_is_safe_under_concurrent_use():
-    llm, fake = cached_client({"a": GOOD})
-    results = []
-    threads = [threading.Thread(target=lambda: results.append(llm.signal("p").action)) for _ in range(12)]
-    [t.start() for t in threads]
-    [t.join() for t in threads]
-    assert results == ["BUY"] * 12
 
 
 # ---------------------------------------------------------------- database migration
@@ -280,17 +212,16 @@ def test_intraday_bars_are_cached_briefly_and_refetched_after_the_ttl():
 def test_new_performance_settings(monkeypatch):
     from src.config import load_settings
 
-    for name in ("ANALYSIS_WORKERS", "LLM_CACHE_HOURS"):
+    for name in ("ANALYSIS_WORKERS",):
         monkeypatch.delenv(name, raising=False)
     s = load_settings()
-    assert s.analysis_workers == 3 and s.llm_cache_hours == 12.0
+    assert s.analysis_workers == 3
     monkeypatch.setenv("ANALYSIS_WORKERS", "6")
-    monkeypatch.setenv("LLM_CACHE_HOURS", "0")
     s = load_settings()
-    assert s.analysis_workers == 6 and s.llm_cache_hours == 0.0
+    assert s.analysis_workers == 6
 
 
-@pytest.mark.parametrize("name,value", [("ANALYSIS_WORKERS", "0"), ("LLM_CACHE_HOURS", "-1")])
+@pytest.mark.parametrize("name,value", [("ANALYSIS_WORKERS", "0")])
 def test_invalid_performance_settings_are_rejected(monkeypatch, name, value):
     from src.config import load_settings
 

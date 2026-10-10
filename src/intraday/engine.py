@@ -5,13 +5,16 @@ Every breakout it sees is recorded (table intraday_signals) with what became of 
 dear for the account, no cash), a dry-run signal, or a failed order. The universe it scanned is recorded once a day
 (intraday_universe). A position left over from an earlier day (the process was down at the square-off) is closed at the
 next session's first cycle: this account is meant to be flat every night. With an archive, each finished session's
-5-minute bars are saved after the close (see src.data.intraday_bars), so history for testing rules keeps growing."""
+5-minute bars are saved after the close (see src.data.intraday_bars), so history for testing rules keeps growing.
+
+The rule is pluggable (`find_setup`): the opening-range breakout by default, or gap-and-go (`strategy.find_gap_setup`),
+each in its own paper account and database, run side by side by `run_together`."""
 import json
 import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, time as dtime, timedelta, timezone
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
 
@@ -43,6 +46,11 @@ class IntradayEngine:
     max_daily_loss_pct: float = 0.02
     universe_source: str = ""  # where `universe` came from (recorded daily); empty = not recorded
     archive: Optional[BarArchive] = None  # save every finished session's bars here; None = do not archive
+    # (symbol, today's finished bars, previous session's close) -> a setup or None: the rule this account trades
+    find_setup: Callable[[str, pd.DataFrame, Optional[float]], Optional[st.Setup]] = st.find_setup
+    entry_until: dtime = st.ENTRY_UNTIL  # no bar starting at or after this can signal: the scan stops one bar later
+    label: str = "INTRADAY"  # prefix of its Telegram messages
+    version: str = INTRADAY_VERSION  # recorded with every signal and universe row
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     _day: Optional[str] = field(default=None, init=False)
     _done_today: Set[str] = field(default_factory=set, init=False)
@@ -52,7 +60,7 @@ class IntradayEngine:
     def _say(self, text: str) -> None:
         log.info(text)
         if self.notify:
-            self.notify("[INTRADAY] " + text)
+            self.notify(f"[{self.label}] " + text)
 
     def _new_day(self, today: str) -> None:
         """Forget yesterday; anything already traded today (e.g. before a restart) counts as done. Records the universe."""
@@ -62,7 +70,7 @@ class IntradayEngine:
                 self._done_today.add(t["symbol"])
         if self.universe_source:
             self._store(IntradayUniverseRecord(day=today, source=self.universe_source, size=len(self.universe),
-                                               symbols_json=json.dumps(self.universe), system_version=INTRADAY_VERSION))
+                                               symbols_json=json.dumps(self.universe), system_version=self.version))
 
     def _store(self, row) -> None:
         """Save an audit row. A failure here is logged and never stops trading."""
@@ -78,7 +86,7 @@ class IntradayEngine:
             day=self._day or "", symbol=setup.symbol, bar_time=setup.bar_time.isoformat(), signal_price=setup.signal_price,
             stop=setup.stop, target=setup.target, range_high=setup.range_high, range_low=setup.range_low,
             volume_ratio=setup.volume_ratio, strength=setup.strength, outcome=outcome, qty=qty, reason=reason,
-            system_version=INTRADAY_VERSION))
+            system_version=self.version))
 
     def step(self) -> str:
         """One 5-minute cycle. Returns a short status string (useful in tests and logs)."""
@@ -98,6 +106,8 @@ class IntradayEngine:
             return self._square_off(pf)
         if local.time() < st.ENTRY_FROM:
             return "waiting for the opening range"
+        if local >= datetime.combine(local.date(), self.entry_until, IST) + BAR:  # the last allowed bar has finished and been seen
+            return "entry window closed: managing open positions only"
         day_start_equity = pf.start_of_day_equity or pf.equity
         if pf.equity < day_start_equity * (1 - self.max_daily_loss_pct):
             return "daily loss limit reached: no new entries"
@@ -114,9 +124,11 @@ class IntradayEngine:
         for sym, df in bars.items():
             if len(pf.positions) + entered >= self.max_positions:
                 break
-            # today's finished bars
-            df = session_rows(df[(pd.DatetimeIndex(df.index) + BAR) <= pd.Timestamp(local)], local.date())
-            setup = st.find_setup(sym, df) if len(df) else None
+            finished = df[(pd.DatetimeIndex(df.index) + BAR) <= pd.Timestamp(local)]
+            earlier = finished[pd.DatetimeIndex(finished.index).tz_convert(IST).date < local.date()]
+            prev_close = float(earlier["Close"].iloc[-1]) if len(earlier) else None  # only when the feed returns it
+            df = session_rows(finished, local.date())
+            setup = self.find_setup(sym, df, prev_close) if len(df) else None
             if setup is None or setup.bar_time < df.index[-1] - BAR:  # a stale breakout from earlier in the day: skip
                 continue
             outcome, fill = self._enter(setup, pf.equity, cash)
@@ -136,8 +148,10 @@ class IntradayEngine:
             log.info("intraday SKIP %s at %.2f: %s", setup.symbol, setup.signal_price, why)
             self._record(setup, SignalOutcome.SKIPPED, 0, why)
             return SignalOutcome.SKIPPED, None
+        exit_plan = (f"target {setup.target:,.2f}" if setup.target < setup.signal_price * (1 + st.NO_TARGET)
+                     else "held to the 15:15 square-off")
         text = (f"BUY {setup.symbol} x{qty} breakout above {setup.range_high:,.2f}; stop {setup.stop:,.2f}, "
-                f"target {setup.target:,.2f}, volume {setup.volume_ratio:.1f}x average")
+                f"{exit_plan}, volume {setup.volume_ratio:.1f}x average")
         if not self.live:
             self._say("DRY RUN signal: " + text)
             self._record(setup, SignalOutcome.DRY_RUN, qty)
@@ -216,13 +230,20 @@ class IntradayEngine:
         return f"square-off: closed {closed}"
 
     def run_loop(self, sleep: Callable[[float], None] = time.sleep) -> None:
-        """Run a step at every 5-minute boundary (plus a few seconds for Yahoo to publish the bar), forever."""
-        while True:
+        """Run this engine alone (see `run_together`)."""
+        run_together([self], sleep)
+
+
+def run_together(engines: Sequence[IntradayEngine], sleep: Callable[[float], None] = time.sleep) -> None:
+    """Step every engine at each 5-minute boundary (plus a few seconds for Yahoo to publish the bar), forever. One engine's
+    failure never stops the others."""
+    while True:
+        for engine in engines:
             try:
-                log.info("intraday cycle: %s", self.step())
+                log.info("%s cycle: %s", engine.label.lower(), engine.step())
             except Exception:
-                log.exception("intraday cycle failed")
-            now = datetime.now(timezone.utc)
-            nxt = (now + BAR).replace(second=15, microsecond=0)
-            nxt -= timedelta(minutes=nxt.minute % 5)
-            sleep(max(30.0, (nxt - now).total_seconds()))
+                log.exception("%s cycle failed", engine.label.lower())
+        now = datetime.now(timezone.utc)
+        nxt = (now + BAR).replace(second=15, microsecond=0)
+        nxt -= timedelta(minutes=nxt.minute % 5)
+        sleep(max(30.0, (nxt - now).total_seconds()))

@@ -2,7 +2,6 @@
 import dataclasses
 import json
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Mapping, Optional, Sequence
 
@@ -15,7 +14,7 @@ from src.data.fundamentals import Fundamentals
 from src.data.market_context import MarketContext
 from src.database import DecisionRecord, EquityRecord, OrderRecord
 from src.engine.enums import NOT_A_PLACED_BUY, SILENT_STATUSES, Action, OrderStatus
-from src.engine.ports import Broker, ChargesFees, ConfirmsFills, ProtectsPositions
+from src.engine.ports import Broker, ChargesFees
 from src.engine.risk_engine import Portfolio, RiskDecision, RiskEngine, drawdown_pause
 from src.engine.strategy import Decision, combine_signals, trend_exit_decision
 from src.versions import VERSIONS
@@ -54,7 +53,7 @@ def details_columns(details: Optional[SignalDetails]) -> dict:
 
 
 class TradingPipeline:
-    """Runs the analyse, decide, execute cycle and holds the safeguards around it (cooldown, halts, alerts, protection sweep)."""
+    """Runs the analyse, decide, execute cycle and holds the safeguards around it (cooldown, halts, alerts)."""
     def __init__(
         self,
         settings: Settings,
@@ -89,9 +88,6 @@ class TradingPipeline:
         self._halt_kind: Optional[str] = None
         self._llm_down = False
         self._cycle_llm: List[bool] = []
-        self._naked_alerted: set = set()
-        self.protect_grace_seconds = 3.0  # right after a fill the stop legs may still be activating
-        self._sleep = time.sleep
         self.rebuild_graphs()
 
     def rebuild_graphs(self) -> None:
@@ -138,12 +134,11 @@ class TradingPipeline:
                             company=lambda: self.fundamentals_fn(symbol) if self.fundamentals_fn else None)
 
     def open_cycle(self) -> Portfolio:
-        """Start a cycle: read the account, record its equity, apply the drawdown pause, check halts and stop protection."""
+        """Start a cycle: read the account, record its equity, apply the drawdown pause and check halts."""
         portfolio = self.broker.portfolio()
         self._record_equity(portfolio.equity)
         portfolio = self._apply_drawdown_pause(self._with_peak(portfolio))
         self._check_halt(portfolio)
-        self._reconcile_protection()
         self._cycle_llm = []
         return portfolio
 
@@ -212,37 +207,6 @@ class TradingPipeline:
         except Exception as e:
             log.warning("no live quote for %s, using last completed close: %s", symbol, e)
             return fallback
-
-    def _reconcile_protection(self) -> None:
-        """Every long position must have a working stop. Alerts when one does not and, for live orders, places one.
-
-        Covers a SELL that fails after its stop/target legs were cancelled, or any stop lost for another reason.
-        A second look after a short pause avoids acting on legs that are still activating right after a fill."""
-        if not isinstance(self.broker, ProtectsPositions):
-            return
-        broker = self.broker
-        acting = self.settings.auto_protect and not self.settings.dry_run
-        try:
-            naked = broker.unprotected_positions()
-            if naked and acting:
-                self._sleep(self.protect_grace_seconds)
-                naked = broker.unprotected_positions()
-        except Exception as e:
-            log.exception("protection check failed")
-            self.notify(f"PROTECTION CHECK FAILED: {type(e).__name__}: {e}")
-            return
-        for symbol, qty, avg_entry in naked:
-            if symbol not in self._naked_alerted:
-                self.notify(f"UNPROTECTED POSITION: {qty} {symbol} has no working stop order.")
-            if acting:
-                stop = avg_entry * (1 - self.settings.risk.stop_loss_pct)
-                try:
-                    broker.protect(symbol, qty, stop)
-                    self.notify(f"Protective stop placed: {symbol} {qty} sh, stop {self.settings.currency}{stop:,.2f}.")
-                except Exception as e:
-                    log.exception("could not protect %s", symbol)
-                    self.notify(f"COULD NOT PROTECT {symbol}: {type(e).__name__}: {e}. Close it manually.")
-        self._naked_alerted = {s for s, _, _ in naked}
 
     def _record_equity(self, equity: float) -> None:
         with self.sessions() as s:
@@ -392,11 +356,7 @@ class TradingPipeline:
                 )
             else:
                 fill = self.broker.sell(symbol, qty)
-            if isinstance(self.broker, ConfirmsFills):
-                fill = self.broker.confirm(fill, qty)  # ask the broker what really happened instead of trusting "accepted"
             return fill.status, fill.broker_order_id, None, fill.filled_qty, fill.avg_price
         except Exception as e:
             log.exception("order submission failed for %s", symbol)
-            if action == Action.SELL:
-                self._reconcile_protection()  # a failed sell may have cancelled the stop: repair it right away
             return OrderStatus.FAILED, None, f"{type(e).__name__}: {e}", None, None

@@ -2,6 +2,10 @@
 
 Defaults chosen by the builder, NOT by the account owner: review them, then change via `.env` (see `.env.example`).
 
+The one-off research scripts named in the dated sections below were removed on 2026-10-10 once their verdicts were
+recorded here; they remain in git history at commit 8284b54. The intraday audit and hypothesis scripts are kept: they
+are meant to be re-run as the 5-minute archive grows.
+
 ## Market and universe
 - **India (default):** all NSE main-board EQ-series stocks (~2,300), scanned once per day.
 - Filters: price >= Rs 100, average daily traded value >= Rs 10 crore, >= 200 days of history, daily volatility <= 4%,
@@ -509,12 +513,12 @@ net t >= 2.6 (per-date clustered), both halves positive, still positive at doubl
 | H4 first-hour momentum | 945 | +0.032% | -0.174% | -4.4 |
 | H5 last-half-hour momentum | 2,070 | +0.003% | -0.203% | -13.6 |
 
-**No candidates. The kill criterion applies: no rule tested is worth running intraday.** Every idea earns about nothing before
+**No candidates: none of these ideas beats the live rule.** Every idea earns about nothing before
 costs (best +0.07%) and costs are ~0.2% a round trip. The harness is not blind: a test plants a 1.2% late-day continuation and it
 is flagged as a candidate, and the same market without it is not. Limits, stated plainly: 58 sessions is one market regime; with
 that many dates an edge smaller than ~0.35% net per trade would not be detectable (though any edge that small could not pay
 0.2% of costs either); H2 and H3 had too few trades (92, 157) to judge. Re-run `scripts/research_intraday.py` as the archive
-grows; if a longer archive still shows nothing, retire the intraday engine.
+grows, and test new ideas the same way.
 
 ## Live-data review and fixes (2026-10-01)
 A read of the production database (825 decisions on 50 stock-sessions, 2026-09-25..30) found three defects in how the AI's
@@ -620,3 +624,87 @@ seeding tool, the separate market-context call (now part of the one analysis), t
 harnesses and the historical AI backtest (`scripts/backtest_ai_agent.py`): an AI cannot be fairly replayed on past dates
 (the model has seen what happened, and Yahoo's company data is today's, not what was known then). The AI is therefore
 judged forward only: the weekly Telegram report compares the rule's picks the AI bought with those it passed.
+
+## Quality + momentum: pre-declared test FAILED (2026-10-10)
+Idea: buy only momentum stocks with healthy company results. No affordable, permitted source has 10 years of Indian
+quarterly results (EODHD has no NSE/BSE at all; NSE's own data may not be collected automatically), so the test used
+Yahoo's yearly results (March 2023-March 2026) over 2023-06-01..2026-09-25.
+- Known-at-the-time rule: a year's results count only 62 days after the year ends (SEBI's 60-day deadline).
+- Quality: profit > 0, return on equity > 12%, debt/equity < 1. Applied to new buys only; ranking unchanged.
+- Live account: Rs 20,000, 10 x 8%, 15% stop, trend exit, costs, 3.5% cash sweep.
+- Gate (fixed before running): higher return AND higher Sharpe AND max drawdown no more than 1 point worse, on both
+  universes.
+
+| Universe | Momentum (live) | Quality + momentum |
+|---|---|---|
+| All NSE | +120.2%, Sharpe 1.35, DD -35.8%, 93 trades | +118.2%, Sharpe 1.34, DD -25.9%, 88 trades |
+| Nifty 500 | +134.9%, Sharpe 1.46, DD -28.9%, 81 trades | +114.2%, Sharpe 1.41, DD -26.0%, 91 trades |
+
+About half of all candidate-days passed the quality rule. It lowered the worst fall (by 10 points on all NSE) but did
+not raise return or Sharpe in either universe. **Not adopted.** The drawdown effect is noted, not acted on: it was not
+the pre-declared goal, and 3 years with today's listed stocks only is a short, survivorship-biased sample.
+
+## Intraday on 2 years of data: no rule beats its costs (2026-10-10)
+A community dataset of 1-minute bars (214 F&O stocks, 2024-04-01..2026-04-30, 516 sessions; no licence file, kept local
+and uncommitted in `research_cache/`) was checked against Yahoo: every regular session complete (375 bars), daily volume
+99% of Yahoo's, closes within a median 0.14% (NSE's official close is a 30-minute average). Converted to 5-minute bars:
+109,059 stock-sessions, 19x the archive. Same pre-declared criteria as Phase 2; detectable edge about 0.15-0.21% a trade.
+
+| idea | trades | gross | net | net t | vs null t |
+|---|---|---|---|---|---|
+| control: the live ORB long | 37,390 | +0.028% | -0.178% | -13.2 | -1.5 |
+| H1 ORB short | 38,167 | +0.021% | -0.185% | -13.3 | -4.1 |
+| H2 gap-and-go | 2,648 | +0.157% | -0.049% | -2.2 | -0.1 |
+| H3 gap fade | 6,111 | -0.002% | -0.208% | -1.2 | 3.2 |
+| H4 first-hour momentum | 34,332 | +0.056% | -0.150% | -6.8 | 2.4 |
+| H5 last-half-hour momentum | 54,397 | +0.029% | -0.177% | -26.3 | 3.3 |
+| H6 ORB in 12-1 momentum leaders (new) | 6,713 | +0.078% | -0.128% | -8.7 | -0.7 |
+| H7 ORB held to the close (new) | 37,390 | +0.033% | -0.173% | -12.8 | -1.5 |
+| H8 one trade a day, strongest volume (new) | 513 | -0.027% | -0.233% | -4.2 | -4.1 |
+
+H6-H8 were declared before they were run. **No candidates.** The 3-month result holds over 2 years and both halves: the
+live rule's breakout is no better than a random entry time (null t -1.5), and every idea's gross edge (best: gap-and-go
++0.16%) is smaller than the ~0.21% a round trip costs (fees + 0.05% slippage a side). H6's better gross comes from the
+leaders drifting up, not from the breakout (it does not beat its own null). The intraday engine keeps running and
+recording; what would have to change is the cost per trade or a gross edge above it.
+
+### Machine-learning filter for the intraday ORB rule: pre-declared test FAILED (2026-10-10)
+Every live ORB long signal in the 2-year dataset (37,390) labelled with its net return under the live exits; 16 features
+known at the entry bar (range width, volume ratio, entry time, gap, breadth, breakout strength, stop distance, VWAP
+distance, day and market move so far, the stock's 1-day/5-day return, 12-1 momentum, 20-day volatility, Nifty vs its
+200-day average, weekday). One fixed model (sklearn HistGradientBoostingRegressor, never tuned on the test year), trained
+on 2024-04..2025-03, April 2025 left out, judged once on 2025-05..2026-04 (18,738 candidates). Rule: take a trade only when
+the predicted net return is > 0.
+
+Result: 2,164 trades selected, net -0.211% (all candidates -0.180%), both halves negative, paired t vs taking everything
+0.3. The predictions carry no information out of sample: rank correlation with the actual result -0.02, and the decile the
+model liked best (+0.13% predicted) made -0.20%. What it learned from the first year did not repeat in the second. **Not
+adopted.** The features that describe a breakout do not separate good breakouts from bad ones here, which matches the
+audit and the hypothesis tests.
+
+### Searching for a better intraday signal: explore on year 1, confirm on year 2 (2026-10-10)
+Pre-declared: 19 variants from five families with a stated reason (gap-and-go by gap size, leaders-only and exit; short-term
+reversal; cross-sectional intraday momentum; market intraday momentum; momentum-leader drift), explored freely on
+2024-04..2025-03; a fixed rule picked the one with the best date-clustered t among those with >= 300 trades and a positive
+net; that one alone was run once on 2025-05..2026-04 with the Phase 2 criteria.
+
+Year 1: reversal, cross-sectional momentum, market momentum and leader drift all lost more than the live rule (net -0.19% to
+-0.35%). Only gap-and-go was positive after costs, and more so for bigger gaps (gap >= 1%: -0.08%, >= 2%: +0.03%, >= 3%:
++0.16%; leaders-only higher still but on 40-114 trades). Selected: **gap up >= 2%, first close above the opening range
+in the first hour, stop at the range low, held to 15:15**.
+
+Year 2 (once): 345 trades, gross +0.297%, **net +0.091%**, both halves positive (+0.06% / +0.11%), but date-clustered t
+-0.2, -0.009% at doubled slippage, and no better than a random entry time on the same stocks (paired t -0.7). **Fails.**
+It is the first idea to stay positive after costs in both years, but on 79 trading days an edge below ~0.55% a trade cannot
+be told apart from luck, and the null test says the gain comes from big-gap stocks drifting up that day, not from the
+breakout timing. A lead to watch forward, not a rule.
+
+### Gap-and-go added as a second intraday PAPER strategy (2026-10-10, gapgo-v1)
+On the owner's decision, the near miss above runs forward in paper, never with real money: gap up >= 2% over the previous
+session's close, then the first 5-minute close above the opening range high between 09:30 and 10:30; stop at the range
+low, no target, squared off at 15:15. Its own Rs 20,000 paper account (`GAPGO_DATABASE_URL`, `gapgo.db`), the same
+universe and INTRADAY_* sizing as the breakout engine, stepped in the same process; Telegram `/gapgo`, `/gapgo_history`;
+every signal recorded with system version `gapgo-v1`. The rule is one function (`strategy.first_gap_breakout`) used by
+the live engine and the research test (re-run through it: identical trades and results). The breakout engine is unchanged.
+Judge it on its own forward record: the 2-year test had ~1.4 signals a day across 214 stocks, so on the ~100-stock live
+universe expect roughly one every one or two days; months are needed before the record means anything.

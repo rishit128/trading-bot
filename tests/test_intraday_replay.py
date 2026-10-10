@@ -186,3 +186,25 @@ def test_the_default_configuration_is_the_settings_defaults_and_from_settings_re
     tuned = ReplayConfig.from_settings(settings, capital=20_000.0)
     assert (tuned.risk_pct, tuned.max_position_pct, tuned.max_positions, tuned.capital) == (0.01, 0.25, 4, 20_000.0)
     assert ReplayConfig.from_settings(settings).capital == settings.paper_initial_cash
+
+
+def test_gap_and_go_replays_through_the_same_engine_with_the_previous_close_and_no_target():
+    flat = scripted_session(0).copy()
+    flat[["Open", "High", "Low", "Close"]] = 97.0                       # yesterday closed at 97
+    bars = {"AAA": pd.concat([flat, scripted_session(1)])}              # today opens at 100: a 3.1% gap, breakout at 10:05
+    result = replay(bars, ReplayConfig(capital=20_000.0), strategy="gapgo")
+    [trade] = result.trades.to_dict("records")
+    assert trade["entry_price"] == pytest.approx(101 * 1.0005) and trade["reason"] == "SIGNAL"   # no target: squared off
+    assert trade["exit_price"] == pytest.approx(104.5 * (1 - 0.0005))
+    [signal] = result.signals.to_dict("records")
+    assert signal["system_version"] == "gapgo-v1" and signal["outcome"] == "ENTERED"
+    orb = replay(bars, ReplayConfig(capital=20_000.0))                  # the breakout rule on the same bars takes its target
+    assert [t["reason"] for t in orb.trades.to_dict("records")] == ["TARGET"]
+    with pytest.raises(ValueError, match="strategy"):
+        replay(bars, strategy="nope")
+
+
+def test_the_recent_view_includes_the_previous_session_for_the_gap():
+    yesterday = bars_for(D1 - timedelta(days=3), [50, 51, 52])
+    feed = at(ReplayFeed({"A": pd.concat([yesterday, bars_for(D1, [100, 110, 120])])}), D1, 9, 32)
+    assert list(feed.recent(["A", "C"])["A"]["Open"]) == [50, 51, 52, 100, 110, 120]

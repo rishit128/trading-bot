@@ -5,7 +5,7 @@ them (with an n/a fallback when data is missing).
 import pandas as pd
 import pytest
 
-from src.agents.technical import TechnicalAgent
+from src.agents.technical.prompts import cot_prompt
 from src.data.indicators import (Snapshot, _bollinger, _volume_trend,
                                  build_snapshot, compute_adx, compute_atr)
 
@@ -62,13 +62,13 @@ def test_helpers_return_none_for_thin_input():
 
 def test_prompt_renders_rich_indicators_and_degrades_to_n_a():
     s = build_snapshot("X", bars([100.0 * (1 + 0.003 * i) for i in range(250)]))
-    p = TechnicalAgent.build_prompt(s)
+    p = cot_prompt(s)
     assert "MACD histogram" in p and "Bollinger range" in p
     assert "volume trend" in p and "ATR" in p and "ADX" in p
     assert "n/a" not in p
 
     plain = build_snapshot("X", ohclv_only([100.0 * (1 + 0.003 * i) for i in range(250)]))
-    p2 = TechnicalAgent.build_prompt(plain)
+    p2 = cot_prompt(plain)
     assert "ATR n/a | ADX n/a" in p2  # high/low-dependent values fall back to n/a
 
 

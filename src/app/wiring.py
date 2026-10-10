@@ -41,6 +41,11 @@ def intraday_db_url() -> str:
     return os.getenv("INTRADAY_DATABASE_URL", "sqlite:///intraday.db")
 
 
+def gapgo_db_url() -> str:
+    """The gap-and-go paper strategy's own account, separate from the breakout account and from swing."""
+    return os.getenv("GAPGO_DATABASE_URL", "sqlite:///gapgo.db")
+
+
 def open_bar_archive() -> BarArchive:
     """The archive of 5-minute bars kept in the intraday database (see src.data.intraday_bars)."""
     from src.database import make_session_factory

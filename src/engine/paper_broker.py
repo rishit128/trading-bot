@@ -160,14 +160,6 @@ class PaperBroker:
             self._close(symbol, qty, price, "SIGNAL")
             return Fill(f"paper-{uuid.uuid4().hex[:12]}", OrderStatus.FILLED, qty, price)
 
-    def unprotected_positions(self) -> List[Tuple[str, int, float]]:
-        """Always empty: every simulated position is opened with its stop level and checked against 5-minute bars."""
-        return []
-
-    def protect(self, symbol: str, qty: int, stop_price: float) -> Fill:
-        """Not applicable: simulated positions always carry their stop."""
-        raise NotImplementedError("the paper broker's positions are always protected")
-
     # ---- internals ----------------------------------------------------------------------------------
     def _actions_for(self, symbol: str) -> Optional[CorporateActions]:
         assert self.corporate_actions is not None

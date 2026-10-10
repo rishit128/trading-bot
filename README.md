@@ -6,7 +6,7 @@ a LangGraph workflow orchestrates everything. **Indian market by default** (NSE,
 > **Status: entry signal unproven. Paper trading / dry run only. Never real money.**
 > - 10-year test on Indian stocks: the bot's entry rule earned the same as simply holding the stock universe (+0.2%/yr
 >   over an equal-weight basket), before any survivorship correction. **No candidate signal showed a robust edge**
->   (`scripts/research_signals.py`). Survivorship bias alone is worth ~9 points/yr in that data.
+>   (STRATEGY.md). Survivorship bias alone is worth ~9 points/yr in that data.
 > - The original **2%/5% exits were the main problem**: stopped out after a median of 1 day, they lost money in every
 >   window tested (-20% over 9 years). A wide protective stop + a rule-based trend exit turned the same entries into
 >   +143% (both halves positive), so those are now the defaults. This fixes a defect; it does not validate the entries.
@@ -26,7 +26,7 @@ python main.py --loop 30       # repeat every 30 min while NSE is open (dry run)
 python main.py --loop 30 --live   # same, but trade in the built-in paper simulator
 python main.py --positions     # every open position (P&L, buy date), closed-trade history, overall status
 python main.py --intraday [--live]   # intraday breakout engine, own paper account (dry run without --live); backtest lost, see STRATEGY.md
-python main.py --intraday-report     # the intraday account's positions, history and status
+python main.py --intraday-report     # both intraday accounts (breakout, gap-and-go): positions, history, status
 python main.py --report        # paper account: equity, trades, win rate, fees, exits
 python main.py --graph         # print the LangGraph workflows as Mermaid diagrams
 python main.py --check         # test keys and connectivity (OpenRouter, broker, Yahoo, Telegram) and exit
@@ -105,7 +105,6 @@ In `main.py`, add it to the `agents` list in `build_pipeline`. No graph or strat
 
 | Failure | What the bot does |
 |---|---|
-| A position loses its stop (for example a SELL fails after its stop was cancelled) | Every cycle checks each long position for a working stop; alerts once, waits 3 s, re-checks, then places a protective stop (`AUTO_PROTECT=false` = alert only). A failed SELL triggers the check immediately. |
 | An order is accepted but not fully filled | The broker is asked what really filled; the filled quantity and price are stored, and a partial fill raises an alert. |
 | Stale or dead data (suspended stock, no volume) | Refused with a clear error for that stock; the scanner drops stocks whose data stops early. |
 | A network call hangs | Every Yahoo, OpenRouter and Telegram call has a timeout (30-60 s). |
@@ -240,13 +239,15 @@ dividends, sales and lots.
 
 ## Backtests
 
-- `scripts/research_signals.py` - **10-year, multi-regime signal research** (Nifty 500, Indian costs, next-day execution,
-  held-out final 3 years, pass/fail rules fixed in the file before any result, real-index survivorship check).
-  Six candidates: 12-1 momentum, low volatility, Donchian breakout, RSI(2) dips, the bot's trend rule, index timing.
-- `scripts/backtest_india_rule.py --index 50 --years 10 --lookback 2200 --exits` - exit-style comparison with first/second
-  half results and a trade-level failure analysis (by exit reason, holding period, year, symbol).
-- `scripts/run_backtest.py` (real AI calls, slow, resumable, cache auto-invalidates when the prompt changes),
-  `scripts/backtest_sensitivity.py`. The research engine (`src/research/`) is lookahead-free by construction and tested.
+- `scripts/backtest_live_config.py` - the live configuration (account size, sizing, exits, costs, scanner) on 10 years of
+  Nifty 500 history (`--index 0` = every NSE stock), next to the Nifty 50 and an equal-weight basket.
+- `scripts/backtest_intraday.py` - the live intraday engine replayed over the archived 5-minute sessions (`--strategy gapgo`
+  for gap-and-go, `--bars-file` for a saved pickle of bars);
+  `scripts/audit_intraday.py` and `scripts/research_intraday.py` re-run the intraday audit and the pre-declared ideas as
+  the archive grows.
+- The finished experiments (signal research, exit and sizing grids, cash sweep, decomposition, calibration) are
+  recorded with their results in STRATEGY.md; their one-off scripts were removed on 2026-10-10 and remain in git
+  history (commit 8284b54).
 
 ## Architecture diagrams
 
@@ -322,7 +323,6 @@ flowchart TD
 | `python main.py --check` shows FAIL for OpenRouter | The key is wrong or revoked (401). Create a new key at openrouter.ai/settings/keys. |
 | `market closed; waiting` | Normal outside NSE hours (Mon-Fri 09:15-15:30 IST, minus exchange holidays). |
 | Every stock is HOLD and you got "LLM UNAVAILABLE" | All free models failed (overloaded or withdrawn). Wait, or set `OPENROUTER_MODEL` / `OPENROUTER_FALLBACK_MODEL` to models still listed as free on openrouter.ai/models. |
-| `UNPROTECTED POSITION` alert | A position has no stop. With `AUTO_PROTECT=true` the bot places one; otherwise close or protect it manually. |
 | `RISK HALT: drawdown ...` | Equity fell 20% from its peak. Buys stay blocked for `DRAWDOWN_PAUSE_DAYS` (30) and then resume with a rebased peak; or send `/rebase` in Telegram to restart the measurement now. |
 | Telegram silent | Send `/start` to your bot from a private chat; check `TELEGRAM_CHAT_ID` is that chat's id; make sure **only one** program uses the bot token (two pollers steal each other's messages). |
 | Yahoo `429` / "Crumb" warnings | Yahoo rate-limiting; harmless, the request is retried. |
@@ -374,11 +374,6 @@ cross-module private imports. Prompt text is versioned: change a prompt and `tes
 Operational checks on the paper account (read-only):
 - `scripts/reconcile_paper.py` rebuilds the cash from the recorded fills and checks every approved decision has an order; exits non-zero on any mismatch.
 - `scripts/analyze_mistakes.py` judges every analysed stock against what then happened, including whether the AI's calls beat the plain rule's.
-- `scripts/analyze_patterns.py` shows which entry conditions the closed trades actually won on.
-
-Research on history:
-- `scripts/research_cash_sweep.py` the idle-cash sweep test behind `CASH_YIELD_PCT` (`--universe nse` for all NSE stocks).
-- `scripts/research_decomposition.py` pure momentum to the live setup one rule at a time (`--confirm`: the live-account check on both universes).
 
 ## Project layout
 
@@ -395,9 +390,10 @@ src/data/               NSE list, Yahoo data, indicators, universe scanner, mark
                         history, delivery %, retry
 src/database/           models, session (open + upgrade a file), migrations
 src/ops/                operational tools: holdout reserve, decision replay, ledger reconciliation, start-up checks
-src/research/           the simulator (backtest.py), live-configuration backtest, calibration, feature study; for the
-                        intraday rule: intraday_replay (the live engine over stored bars), intraday_audit, intraday_hypotheses
-src/intraday/           opening-range-breakout rule (one numpy core), risk-based sizing, the 5-minute engine, the universe selector
+src/research/           the simulator (backtest.py), the live-configuration backtest; for the intraday rule:
+                        intraday_replay (the live engine over stored bars), intraday_audit, intraday_hypotheses
+src/intraday/           opening-range-breakout and gap-and-go rules (shared numpy cores), risk-based sizing, the 5-minute
+                        engine (one per paper account, stepped together), the universe selector
 src/monitoring/         Telegram alerts and commands
 src/app/                wiring.py (market wiring, paper-broker factory), reports.py (--report/--positions/--screen/--graph),
                         intraday_cli.py

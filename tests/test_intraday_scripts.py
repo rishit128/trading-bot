@@ -66,7 +66,7 @@ def test_the_backtest_script_replays_the_live_engine_and_prints_a_summary(archiv
     filled(archive)
     run(backtest_intraday, monkeypatch, archive, "--capital", "20000")
     out = capsys.readouterr().out
-    assert "replaying 7 stocks with ReplayConfig(capital=20000.0" in out and "3 sessions," in out
+    assert "replaying orb on 7 stocks with ReplayConfig(capital=20000.0" in out and "3 sessions," in out
     assert "start Rs 20,000 -> end Rs" in out and "max drawdown" in out
     run(backtest_intraday, monkeypatch, archive, "--start", "2026-09-02", "--end", "2026-09-02")
     assert "1 sessions," in capsys.readouterr().out

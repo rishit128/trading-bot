@@ -5,7 +5,7 @@ misspelled method surfaced at run time, in the middle of a cycle. Now the requir
 and each OPTIONAL broker capability is its own Protocol the pipeline tests for explicitly with `isinstance`."""
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Callable, List, Optional, Protocol, Tuple, runtime_checkable
+from typing import Callable, List, Optional, Protocol, runtime_checkable
 
 import pandas as pd
 
@@ -47,19 +47,6 @@ class Broker(Protocol):
     def has_open_order(self, symbol: str) -> bool: ...
     def buy_with_bracket(self, symbol: str, qty: int, price: float, stop_pct: float, take_pct: float) -> Fill: ...
     def sell(self, symbol: str, qty: int) -> Fill: ...
-
-
-@runtime_checkable
-class ProtectsPositions(Protocol):
-    """A broker that can tell which positions have no working stop, and place one."""
-    def unprotected_positions(self) -> List[Tuple[str, int, float]]: ...
-    def protect(self, symbol: str, qty: int, stop_price: float) -> Fill: ...
-
-
-@runtime_checkable
-class ConfirmsFills(Protocol):
-    """A broker that can report what an order really did (instead of trusting "accepted")."""
-    def confirm(self, fill: Fill, qty: int) -> Fill: ...
 
 
 @runtime_checkable

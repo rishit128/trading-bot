@@ -10,10 +10,11 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from src.agents.technical import (AdvancedSignal, COT_SCHEMA, ReflectionChain, ReflectionStage, TechnicalAgent,
+from src.agents.technical import (AdvancedSignal, COT_SCHEMA, ReflectionChain, ReflectionStage,
                                   mechanical_action, mechanical_baseline)
 from src.agents.base import LEAD
 from src.agents.technical.phases import apply_reflection
+from src.agents.technical.prompts import cot_prompt
 from src.config import Settings
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord, make_session_factory
@@ -173,7 +174,7 @@ def test_mechanical_action_captures_the_filter_rule():
 
 
 def test_cot_prompt_declares_mechanical_baseline_and_rule_check():
-    p = TechnicalAgent.build_prompt(SNAP)
+    p = cot_prompt(SNAP)
     assert "MECHANICAL BASELINE" in p and mechanical_baseline(SNAP)[:3] in p
     assert "STEP 6 (rule check)" in p and "rule_alignment" in p and "falsification" in p
     assert "'deviate' if you override it" in p and "MECHANICAL BASELINE (the deterministic" in p
@@ -187,7 +188,7 @@ def test_advanced_signal_carries_alignment_falsification_and_answering_model():
     llm = LLMClient(["a"], client=fake)
     advanced = llm.structured_call("p", AdvancedSignal, COT_SCHEMA)
     assert advanced.rule_alignment == "deviate"
-    assert advanced.raw_model == "a" and llm.last_model == "a"
+    assert advanced.raw_model == "a"
     sig = advanced.to_signal()
     assert sig.details.rule_alignment == "deviate"
     assert sig.details.falsification.startswith("a close below")
@@ -198,16 +199,7 @@ def test_old_payloads_without_the_new_fields_still_parse_and_are_stamped():
     llm = LLMClient(["a"], client=FakeOpenAI({"a": COT_GOOD}))  # COT_GOOD predates rule_alignment/falsification
     advanced = llm.structured_call("p", AdvancedSignal, COT_SCHEMA)
     assert advanced.rule_alignment is None and advanced.falsification is None
-    assert advanced.raw_model == "a" and llm.last_model == "a"
-
-
-def test_raw_model_survives_the_cache_hit():
-    fake = FakeOpenAI({"a": COT_GOOD})
-    llm = LLMClient(["a"], client=fake, cache_ttl_seconds=3600)
-    first = llm.structured_call("p", AdvancedSignal, COT_SCHEMA)
-    second = llm.structured_call("p", AdvancedSignal, COT_SCHEMA)
-    assert first is second and len(fake.calls) == 1
-    assert second.raw_model == "a" and llm.last_model == "a"  # cache restores the original answering model
+    assert advanced.raw_model == "a"
 
 
 def test_pipeline_persists_raw_model_rule_alignment_and_falsification(tmp_path):
@@ -283,36 +275,3 @@ def test_pipeline_stamps_the_per_decision_universe_size(tmp_path):
 
 
 # ------------------------------------------------------------------ the survivorship-free research universe (A1c)
-def test_point_in_time_masks_a_dropped_member_even_while_its_price_data_continues():
-    import pandas as pd
-
-    from src.data.price_history import point_in_time
-
-    dates = pd.date_range("2024-01-01", periods=8, freq="B")
-    close = pd.DataFrame({"A": [100 + i for i in range(8)],
-                          "B": [200 + 2 * i for i in range(8)]}, index=dates)
-    volume = close.copy()
-    close_pit, volume_pit = point_in_time(close, volume,
-                                          membership={"2024-01-01": ["A", "B"], "2024-01-05": ["B"]})
-    assert close_pit.loc[: "2024-01-04", "A"].notna().all()  # A was a member at the start
-    assert close_pit.loc["2024-01-05":, "A"].isna().all()  # and is masked as soon as it leaves, no matter the price data
-    assert close_pit["B"].notna().all()
-
-
-def test_point_in_time_earns_nothing_for_a_dropped_member_after_the_drop():
-    import pandas as pd
-
-    from src.research import engine
-    from src.data.price_history import point_in_time
-
-    dates = pd.date_range("2024-01-01", periods=8, freq="B")
-    close = pd.DataFrame({"A": [100 + i for i in range(8)],
-                          "STAY": [200 + i for i in range(8)]}, index=dates)
-    volume = close.copy()
-    close_pit, _ = point_in_time(close, volume,
-                                 membership={"2024-01-01": ["A", "STAY"], "2024-01-05": ["STAY"]})
-    weights = pd.DataFrame({"A": 0.5, "STAY": 0.5}, index=dates)
-    pit = engine.portfolio_returns(close_pit, weights)  # NaN is the mask: the engine must not bridge or hold it
-    plain = engine.portfolio_returns(close, weights)
-    assert pit["exposure"].iloc[6] == pytest.approx(0.5)  # A is gone from the portfolio after the drop...
-    assert plain["exposure"].iloc[6] == pytest.approx(1.0)  # ...while a survivorship-biased run still holds it

@@ -17,6 +17,9 @@ STRATEGY_VERSION = "swing-v1"  # mechanical BUY filter + trend exit + 15% protec
 #           shared universe selector, opening-range integrity guard, stale positions closed at the open, and each
 #           finished session's bars archived (no change to what trades: the vectorised rule is pinned to the old one).
 INTRADAY_VERSION = "orb-v2"
+# The gap-and-go paper strategy (its own account): gap >= 2% then a close above the opening range by 10:30, stop at
+# the range low, held to the square-off.
+GAPGO_VERSION = "gapgo-v1"
 
 VERSIONS = {
     "feature": FEATURE_VERSION,

@@ -32,11 +32,6 @@ class TechnicalAgent:
     name = "technical"
     role = LEAD
 
-    # The exact prompt text for each call. Kept reachable from the agent because a stored decision rebuilds the prompt it
-    # was shown (replay) and tests fingerprint it; the wording itself lives in `prompts`.
-    build_prompt = staticmethod(prompts.cot_prompt)
-    build_reflection_prompt = staticmethod(prompts.reflection_prompt)
-
     def __init__(self, llm: LLMClient, use_cot: bool = True, use_reflect: bool = True):
         self.llm = llm
         self.use_cot = use_cot

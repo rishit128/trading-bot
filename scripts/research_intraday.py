@@ -1,6 +1,6 @@
 """Phase 2 of the intraday plan: do any pre-declared ideas beat their costs? Runs the live rule (as a control) and five
 hypotheses against random-entry / random-side nulls on the archived 5-minute bars, and applies the criteria written down in
-src/research/intraday_hypotheses.py BEFORE any result was seen. If nothing qualifies, the kill criterion applies.
+src/research/intraday_hypotheses.py BEFORE any result was seen. If nothing qualifies, the live rule stays and new ideas are tested as the archive grows.
 
 Read-only. Fill the archive first (scripts/intraday_archive.py); rerun as it grows: a longer archive can detect smaller edges.
 

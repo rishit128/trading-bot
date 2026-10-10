@@ -9,7 +9,7 @@ from src.agents.technical import TechnicalAgent
 from src.learning.jobs import DailyOutcomeLabelling, WeeklyLearningReport
 from src.app.intraday_cli import run_intraday
 from src.app.portfolio_agent import PortfolioCommand, make_explainer, run_standalone, strip_html
-from src.app.wiring import build_market_wiring, intraday_db_url, make_paper_broker
+from src.app.wiring import build_market_wiring, gapgo_db_url, intraday_db_url, make_paper_broker
 from src.app.reports import print_candidates, print_graphs, print_positions, print_report
 from src.config import load_settings
 from src.control import Control
@@ -46,10 +46,11 @@ def build_pipeline(live: bool) -> TradingPipeline:
     sessions = make_session_factory(settings.database_url)
     control = Control(sessions)
     kit = build_market_wiring(settings, sessions)
-    intraday_broker = None
+    intraday_broker = gapgo_broker = None
     try:
         intraday_broker = make_paper_broker(settings, intraday_db_url(), fees=intraday_fees)
-    except Exception as e:  # the intraday view is optional; never stop the swing bot for it
+        gapgo_broker = make_paper_broker(settings, gapgo_db_url(), fees=intraday_fees)
+    except Exception as e:  # the intraday views are optional; never stop the swing bot for them
         print(f"intraday status commands unavailable: {type(e).__name__}")
     notify = None
     token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
@@ -58,7 +59,8 @@ def build_pipeline(live: bool) -> TradingPipeline:
         # /portfolio: the read-only real-account agent. It shares this Telegram bot, so this listener hands it the OTP.
         portfolio = PortfolioCommand(notify, make_explainer(llm))
         extra = {"/portfolio": (PortfolioCommand.HELP, portfolio)}
-        CommandListener(token, chat_id, lambda text: handle_command(text, control, kit.broker, settings, intraday_broker, extra),
+        CommandListener(token, chat_id, lambda text: handle_command(text, control, kit.broker, settings, intraday_broker, extra,
+                                                                 gapgo_broker),
                         intercept=portfolio.inbox.offer).start()
     else:
         print("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID); alerts and /pause disabled")
@@ -167,8 +169,9 @@ def main() -> None:
     parser.add_argument("--check", action="store_true", help="test keys and connectivity (OpenRouter, broker, data, Telegram) and exit")
     parser.add_argument("--report", action="store_true", help="print the paper-trading account summary (India simulator)")
     parser.add_argument("--positions", action="store_true", help="every open position (P&L, buy date), closed-trade history, overall status")
-    parser.add_argument("--intraday", action="store_true", help="run the intraday breakout engine (own paper account; add --live to place paper orders)")
-    parser.add_argument("--intraday-report", action="store_true", help="positions, trade history and status of the intraday paper account")
+    parser.add_argument("--intraday", action="store_true", help="run the intraday engines: breakout and gap-and-go, each with its own paper account "
+                                                                 "(add --live to place paper orders)")
+    parser.add_argument("--intraday-report", action="store_true", help="positions, trade history and status of both intraday paper accounts")
     parser.add_argument("--live", action="store_true", help="place paper orders (default: dry run, decisions only)")
     parser.add_argument("--holdout", action="store_true",
                         help="after each cycle, mark the independent holdout reserve account (see docs/holdout.md)")
@@ -196,7 +199,12 @@ def main() -> None:
             settings = load_settings()
         except ValueError as e:
             sys.exit(f"Invalid configuration: {e}")
-        print_positions(settings, intraday_db_url())
+        for title, url in (("INTRADAY: opening-range breakout", intraday_db_url()),
+                           ("GAP-AND-GO (paper experiment)", gapgo_db_url())):
+            print("=" * 60)
+            print(title)
+            print("=" * 60)
+            print_positions(settings, url)
         return
     # Read-only reports; if more than one flag is given, the first match here wins.
     REPORT_COMMANDS = (("graph", print_graphs), ("screen", print_candidates), ("positions", print_positions),

@@ -256,7 +256,7 @@ def test_from_settings_wires_the_production_values(monkeypatch):
     settings = load_settings()
     llm = LLMClient.from_settings(settings)
     assert llm.reasoning_off is True and llm.min_interval == 3.0 and llm._slots is not None
-    assert llm.backoff_base > 0 and llm.cache_ttl == settings.llm_cache_hours * 3600
+    assert llm.backoff_base > 0
     with pytest.raises(ValueError):
         Settings(llm_min_interval=-1)
 

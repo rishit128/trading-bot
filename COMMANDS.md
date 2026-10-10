@@ -21,7 +21,7 @@ sudo docker compose -f docker-compose.aws.yml logs -f intraday-bot            # 
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --report        # paper account summary
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --positions     # open positions & history
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --check         # test all connections
-sudo docker compose -f docker-compose.aws.yml exec intraday-bot python main.py --intraday-report  # intraday account status
+sudo docker compose -f docker-compose.aws.yml exec intraday-bot python main.py --intraday-report  # both intraday accounts' status
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python scripts/paper_report.py       # full P&L history, both accounts
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio setup  # one-time: save your Integrated login
 sudo docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio check  # what's saved (masked)
@@ -36,6 +36,8 @@ sudo docker compose -f docker-compose.aws.yml down                            # 
 /positions           open positions with profit/loss
 /history              closed trades
 /pnl                  profit/loss by day and week, both accounts
+/intraday             intraday (breakout) account and open positions; /intraday_history for its closed trades
+/gapgo                gap-and-go paper account and open positions; /gapgo_history for its closed trades
 /portfolio            read your real Integrated account (read-only); it will ask for the OTP here
 /pause                stop placing new orders
 /resume               allow orders again
@@ -60,7 +62,7 @@ python main.py                    # one dry-run cycle: scan + AI + risk check, r
 python main.py --loop 30          # repeat every 30 min while NSE is open (dry run)
 python main.py --loop 30 --live   # same, but trade in the built-in paper simulator
 python main.py --intraday [--live]     # intraday breakout engine, its own paper account
-python main.py --intraday-report       # the intraday account's positions, history and status
+python main.py --intraday-report       # both intraday accounts (breakout, gap-and-go): positions, history, status
 ```
 **Don't run this at the same time as the AWS deployment** — they'd fight over the same Telegram bot. Stop one first.
 
@@ -99,12 +101,10 @@ scripts/reconcile_paper.py                 # rebuilds cash from recorded fills, 
 scripts/paper_report.py                    # full history, both accounts: every trade, P&L by day/week/total
 scripts/analyze_mistakes.py                # judges every analysed stock against what then happened
 scripts/intraday_archive.py status|refresh|import-cache   # the archive of 5-minute bars (fills itself while the engine runs)
-scripts/backtest_intraday.py               # the LIVE engine replayed over the archived sessions (Rs 20,000 account by default)
+scripts/backtest_intraday.py [--strategy gapgo] [--bars-file F]   # the LIVE engine replayed over stored sessions (Rs 20,000 by default)
 scripts/audit_intraday.py                  # does the intraday rule beat a random entry? which filters add anything?
-scripts/research_intraday.py               # Phase 2: five pre-declared intraday ideas vs a random null, with the kill criterion
-scripts/analyze_patterns.py                # which entry conditions the closed trades actually won on
-scripts/research_cash_sweep.py             # the idle-cash sweep test (--universe nse for all NSE stocks)
-scripts/research_decomposition.py          # pure momentum to the live setup, one rule at a time (--confirm for the live-account check)
+scripts/research_intraday.py               # five pre-declared intraday ideas vs a random null; re-run as the archive grows
+scripts/backtest_live_config.py [--index 0|50|100|500]   # the live swing setup on 10 years of history (0 = every NSE stock)
 ```
 Run any of these with `python scripts/<name>.py` (some accept `--help` for their options).
 

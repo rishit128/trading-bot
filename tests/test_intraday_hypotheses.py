@@ -276,7 +276,7 @@ def test_report_lists_every_hypothesis_says_why_each_failed_and_states_the_kill_
     outcomes = hyp.run(stock_days(market(edge=False)), hyp.HYPOTHESES[3:], seeds=1)
     text = hyp.report(outcomes)
     assert "H4 first-hour momentum" in text and "H5 last-half-hour momentum" in text and "fails -" in text
-    assert "kill criterion applies" in text and "smallest edge that could be detected" in text
+    assert "no rule tested beats the live one" in text and "smallest edge that could be detected" in text
     planted = hyp.run(stock_days(market(edge=True)), [hyp.HYPOTHESES[4]], seeds=3)
     assert "CANDIDATES: H5 last-half-hour momentum" in hyp.report(planted) and "<-- CANDIDATE" in hyp.report(planted)
 

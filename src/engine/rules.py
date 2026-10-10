@@ -40,24 +40,3 @@ def entry_filter(price: float, ma50: float, ma200: float, rsi: float) -> bool:
 def trend_broken(price: float, ma200: float) -> bool:
     """The last completed close is below the 200-day average: the long-term trend has failed (the exit rule)."""
     return price < ma200
-
-
-# ---- the same rules over whole tables ------------------------------------------------------------------------------
-def uptrend_mask(close, ma50, ma200):
-    """`uptrend` for pandas/numpy inputs (elementwise)."""
-    return (close > ma50) & (ma50 > ma200)
-
-
-def overbought_mask(rsi):
-    """`overbought` for pandas/numpy inputs."""
-    return rsi >= RSI_OVERBOUGHT
-
-
-def entry_filter_mask(close, ma50, ma200, rsi):
-    """`entry_filter` for pandas/numpy inputs."""
-    return uptrend_mask(close, ma50, ma200) & ~overbought_mask(rsi)
-
-
-def trend_broken_mask(close, ma200):
-    """`trend_broken` for pandas/numpy inputs."""
-    return close < ma200

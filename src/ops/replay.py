@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Dict, Mapping, Optional
 
-from src.agents.technical import TechnicalAgent
+from src.agents.technical.prompts import cot_prompt
 from src.agents.base import ADVISOR, LEAD
 from src.data.indicators import Snapshot
 from src.database import DecisionRecord
@@ -49,7 +49,7 @@ def replay(record: DecisionRecord, roles: Mapping[str, str] = DEFAULT_ROLES) -> 
         recomputed = combine_signals(signals, roles).action if signals else None
     lead = signals.get("technical")
     shown = lead.details if lead is not None and lead.details is not None else None
-    prompt = (TechnicalAgent.build_prompt(snap, shown.market_context_json if shown else None,
+    prompt = (cot_prompt(snap, shown.market_context_json if shown else None,
                                           shown.company_json if shown else None) if snap is not None else None)
     versions = None
     if record.prompt_version or record.feature_version or record.strategy_version:

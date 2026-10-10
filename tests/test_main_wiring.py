@@ -1,9 +1,18 @@
 
+import pytest
+
 import main
 from src.app import wiring as app_kit, reports
 from src.config import Settings
 from src.database import make_session_factory
 from src.engine.paper_broker import PaperBroker
+
+
+@pytest.fixture(autouse=True)
+def side_accounts_in_tmp(monkeypatch, tmp_path):
+    """build_pipeline opens the intraday and gap-and-go accounts for the Telegram views: keep their files out of the repo."""
+    monkeypatch.setenv("INTRADAY_DATABASE_URL", f"sqlite:///{tmp_path / 'intraday.db'}")
+    monkeypatch.setenv("GAPGO_DATABASE_URL", f"sqlite:///{tmp_path / 'gapgo.db'}")
 
 
 def sessions(tmp_path):
@@ -59,15 +68,6 @@ def test_india_pipeline_registers_only_the_technical_agent(monkeypatch, tmp_path
     pipeline = main.build_pipeline(live=False)
     assert list(pipeline.agents) == ["technical"] and pipeline.quote_fn is not None
     assert set(pipeline.analysis_graph.get_graph().nodes) == {"__start__", "fetch_data", "agent_technical", "collect", "__end__"}
-
-
-def test_llm_cache_ttl_comes_from_settings(monkeypatch, tmp_path):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
-    monkeypatch.setenv("UNIVERSE", "watchlist")
-    monkeypatch.setenv("LLM_CACHE_HOURS", "2")
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'c.db'}")
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
-    assert main.build_pipeline(live=False).agents["technical"].llm.cache_ttl == 2 * 3600
 
 
 def test_print_graphs_lists_the_agents(capsys):

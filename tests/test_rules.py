@@ -1,7 +1,5 @@
 """The shared strategy rules: boundary behaviour, scalar/vector agreement, and that every consumer really uses them."""
 
-import numpy as np
-import pandas as pd
 import pytest
 
 from src.engine import rules
@@ -29,21 +27,6 @@ def test_the_entry_filter_boundaries(args, expected):
 @pytest.mark.parametrize("price,ma200,expected", [(94.99, 95.0, True), (95.0, 95.0, False), (100.0, 95.0, False)])
 def test_the_trend_exit_boundary(price, ma200, expected):
     assert rules.trend_broken(price, ma200) is expected
-
-
-def test_scalar_and_vector_forms_agree_on_random_data():
-    rng = np.random.default_rng(3)
-    close, ma50, ma200 = (rng.uniform(80, 120, 5000) for _ in range(3))
-    rsi = rng.uniform(20, 90, 5000)
-    for ties in (close, ma50):  # force exact ties so the strict/non-strict edges are exercised
-        ties[::50] = ma200[::50]
-    mask = rules.entry_filter_mask(close, ma50, ma200, rsi)
-    exit_mask = rules.trend_broken_mask(close, ma200)
-    for i in range(5000):
-        assert bool(mask[i]) == rules.entry_filter(close[i], ma50[i], ma200[i], rsi[i])
-        assert bool(exit_mask[i]) == rules.trend_broken(close[i], ma200[i])
-    series = rules.entry_filter_mask(pd.Series(close), pd.Series(ma50), pd.Series(ma200), pd.Series(rsi))
-    assert list(series) == list(mask)  # pandas in, pandas out, same answers
 
 
 def test_nan_inputs_never_pass_the_entry_filter_or_trigger_the_exit():

@@ -15,7 +15,6 @@ Each failure is classified, because each needs a different response:
   PERMANENT  model gone / auth / bad request                      -> skip the model (gone models are skipped for the session)
 A model that fails several calls in a row is benched for a cool-off so healthy models answer first; if every model is
 benched the least recently benched is still tried, so the client can never wedge itself."""
-import hashlib
 import logging
 import os
 import random
@@ -23,7 +22,7 @@ import threading
 import time
 from collections import Counter
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, Optional, Tuple, Type, TypeVar, cast
+from typing import Any, Callable, Dict, Optional, Type, TypeVar, cast
 
 import openai
 from openai import OpenAI
@@ -67,8 +66,7 @@ class LLMClient:
     which is what the chain-of-thought agents use. The defaults do no waiting and no pacing so unit tests stay fast;
     `from_settings` wires the production values."""
 
-    def __init__(self, models, client=None, max_tokens: int = 3000, cache_ttl_seconds: float = 0.0,
-                 clock: Callable[[], float] = time.monotonic, max_cache_entries: int = 4096,
+    def __init__(self, models, client=None, max_tokens: int = 3000, clock: Callable[[], float] = time.monotonic,
                  reasoning_off: bool = False, max_tokens_cap: int = 8000, timeout: float = 120.0,
                  transient_retries: int = 2, format_retries: int = 1, truncation_retries: int = 2,
                  backoff_base: float = 0.0, backoff_cap: float = 60.0, call_budget_seconds: float = 180.0,
@@ -85,13 +83,8 @@ class LLMClient:
         self.min_interval, self._sleep, self._jitter = min_interval, sleep, jitter
         self.temperature = temperature  # None: the provider's default
         self.dead: set[str] = set()  # models that no longer exist; skipped for the session so we stop paying for them
-        self.last_model: Optional[str] = None  # which configured model answered the most recent live call
         self._no_reasoning_control: set[str] = set()  # models that reject the "reasoning off" switch
-        # Identical (schema, prompt) -> reuse the answer. Analyses use completed daily bars, so a stock's prompt is
-        # constant all session and this turns ~every re-analysis into a free cache hit. Failures are never cached.
-        self.cache_ttl, self.clock, self.max_cache_entries = cache_ttl_seconds, clock, max_cache_entries
-        self._cache: Dict[str, Tuple[float, BaseModel]] = {}
-        self._cache_lock = threading.Lock()
+        self.clock = clock
         self._state_lock = threading.Lock()
         self._benched_until: Dict[str, float] = {}
         self._consecutive_failures: Counter = Counter()
@@ -106,34 +99,15 @@ class LLMClient:
     @classmethod
     def from_settings(cls, settings, **overrides):
         """The production client: reasoning off, paced to the free tier's request limit, bounded concurrency, backoff."""
-        params = dict(cache_ttl_seconds=settings.llm_cache_hours * 3600, reasoning_off=settings.llm_reasoning_off,
+        params = dict(reasoning_off=settings.llm_reasoning_off,
                       min_interval=settings.llm_min_interval, max_concurrency=settings.llm_concurrency,
                       temperature=settings.llm_temperature, backoff_base=4.0)
         params.update(overrides)
         return cls(settings.models, **params)
 
-    # ------------------------------------------------------------------ cache
-    def _cached(self, key: str):
-        if self.cache_ttl <= 0:
-            return None
-        with self._cache_lock:
-            hit = self._cache.get(key)
-            if hit and self.clock() - hit[0] < self.cache_ttl:
-                return hit[1]
-            self._cache.pop(key, None)
-        return None
-
-    def _remember(self, key: str, value: BaseModel) -> None:
-        if self.cache_ttl <= 0:
-            return
-        with self._cache_lock:
-            if len(self._cache) >= self.max_cache_entries:
-                self._cache.pop(next(iter(self._cache)))
-            self._cache[key] = (self.clock(), value)
-
     # ------------------------------------------------------------------ public calls
     def signal(self, prompt: str) -> AgentSignal:
-        """Ask the models in order for a AgentSignal; identical prompts are answered from cache."""
+        """Ask the models in order for an AgentSignal."""
         return self.structured_call(prompt, AgentSignal, SIGNAL_SCHEMA,
                                     parse=lambda raw: AgentSignal.model_validate(
                                         {k: raw[k] for k in ("action", "confidence", "reasoning") if k in raw}))
@@ -143,16 +117,9 @@ class LLMClient:
                         max_tokens: Optional[int] = None) -> _T:
         """Ask the models in order for a JSON object matching `schema`, validated into model_class.
 
-        Identical (schema, prompt) pairs are served from cache. `parse` overrides how the raw JSON dict becomes an
-        instance (used by `signal` to drop model-controlled fields such as `degraded`)."""
-        key = hashlib.sha256(f"{schema['name']}\x00{prompt}".encode()).hexdigest()
-        cached = self._cached(key)
-        if cached is not None:
-            self.last_model = getattr(cached, "raw_model", None)
-            return cached
-        instance = cast(_T, self._ask(prompt, schema, parse or model_class.model_validate, max_tokens))  # `parse` builds a model_class
-        self._remember(key, instance)
-        return instance
+        `parse` overrides how the raw JSON dict becomes an instance (used by `signal` to drop model-controlled fields
+        such as `degraded`)."""
+        return cast(_T, self._ask(prompt, schema, parse or model_class.model_validate, max_tokens))  # `parse` builds a model_class
 
     # ------------------------------------------------------------------ model selection and health
     def _order(self) -> list:
@@ -233,7 +200,6 @@ class LLMClient:
             try:
                 instance = self._request(model, messages, tokens, schema, parse)
                 self._succeeded(model, self.clock() - started)
-                self.last_model = model
                 return instance
             except Failure as f:
                 self._bump(model, f.kind)

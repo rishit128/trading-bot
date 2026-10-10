@@ -30,7 +30,8 @@ from src.engine.costs import SLIPPAGE
 from src.engine.paper_broker import PaperBroker
 from src.engine.ports import BAR
 from src.intraday.engine import IntradayEngine
-from src.intraday.strategy import intraday_fees
+from src.intraday.strategy import ENTRY_UNTIL, GAP_ENTRY_UNTIL, find_gap_setup, find_setup, intraday_fees
+from src.versions import GAPGO_VERSION, INTRADAY_VERSION
 
 FIRST_CYCLE, LAST_CYCLE = dtime(9, 20, 15), dtime(15, 25, 15)  # the engine's cycles, 15 s past each 5-minute boundary
 
@@ -69,6 +70,13 @@ class ReplayFeed:
             return pd.DataFrame()
         view = self._upto(symbol)
         return view[pd.DatetimeIndex(view.index).tz_convert("UTC") > pd.Timestamp(since).tz_convert("UTC")]
+
+    def recent(self, symbols: List[str]) -> Dict[str, pd.DataFrame]:
+        """What the gap-and-go engine's 5-day download returns: the last week's bars up to now, so the previous session's
+        close is there."""
+        session_start = pd.Timestamp(self.now).tz_convert(IST).normalize().tz_convert("UTC").value
+        since = session_start - 7 * 24 * 3600 * 10 ** 9   # a week back, in nanoseconds like the bar index
+        return {s: view for s in symbols if s in self._values and len(view := self._upto(s, since_ns=since))}
 
     def today(self, symbols: List[str]) -> Dict[str, pd.DataFrame]:
         """What the engine's per-cycle download returns: today's session so far, per symbol that has bars."""
@@ -125,11 +133,17 @@ def _run_session(engine: IntradayEngine, feed: ReplayFeed, day: Date) -> None:
         t += BAR
 
 
+STRATEGIES = ("orb", "gapgo")  # the opening-range breakout (the default engine) and gap-and-go, as the launcher runs them
+
+
 def replay(bars: Dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(), universe: Optional[List[str]] = None,
            start: Optional[str] = None, end: Optional[str] = None,
-           progress: Optional[Callable[[Date], None]] = None) -> ReplayResult:
+           progress: Optional[Callable[[Date], None]] = None, strategy: str = "orb") -> ReplayResult:
     """Run the live engine over every stored session in [start, end] and return what it did. One continuous account, so
-    equity compounds and drawdowns carry across days exactly as they would live."""
+    equity compounds and drawdowns carry across days exactly as they would live. `strategy` picks the rule the same way
+    the launcher (src/app/intraday_cli.py) does: "orb" or "gapgo"."""
+    if strategy not in STRATEGIES:
+        raise ValueError(f"strategy must be one of {STRATEGIES}, got {strategy!r}")
     days = session_days(bars, start, end)
     feed, clock = ReplayFeed(bars), IndiaClock()
     symbols = sorted(bars) if universe is None else universe
@@ -139,9 +153,14 @@ def replay(bars: Dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(),
         broker = PaperBroker(sessions, feed, clock, initial_cash=config.capital, fees=intraday_fees,
                              now_fn=lambda: feed.now,
                              slippage=SLIPPAGE if config.slippage is None else config.slippage)
-        engine = IntradayEngine(broker, symbols, clock, fetch_bars=feed.today, live=True, max_positions=config.max_positions,
-                                risk_pct=config.risk_pct, max_position_pct=config.max_position_pct,
-                                max_daily_loss_pct=config.max_daily_loss_pct, universe_source="", now_fn=lambda: feed.now)
+        gap = strategy == "gapgo"
+        engine = IntradayEngine(broker, symbols, clock, fetch_bars=feed.recent if gap else feed.today, live=True,
+                                max_positions=config.max_positions, risk_pct=config.risk_pct,
+                                max_position_pct=config.max_position_pct, max_daily_loss_pct=config.max_daily_loss_pct,
+                                universe_source="", now_fn=lambda: feed.now,
+                                find_setup=find_gap_setup if gap else find_setup,
+                                entry_until=GAP_ENTRY_UNTIL if gap else ENTRY_UNTIL, label="GAP-GO" if gap else "INTRADAY",
+                                version=GAPGO_VERSION if gap else INTRADAY_VERSION)
         equity: Dict[Date, float] = {}
         for day in days:
             _run_session(engine, feed, day)

@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from src.research.backtest import TIME_LIMITED, ExitPolicy, LIVE_EXITS, buy_and_hold_curve, curve_metrics, simulate, trade_metrics
+from src.research.backtest import ExitPolicy, LIVE_EXITS, curve_metrics, simulate
 from src.config import RiskLimits
 
 LIM = RiskLimits(max_position_pct=0.05, stop_loss_pct=0.02, take_profit_pct=0.05, min_confidence=0.6)
@@ -56,7 +56,7 @@ def test_stop_wins_when_stop_and_target_both_touched_same_day():
 
 def test_time_exit_after_max_hold_days_at_close():
     bars = make_bars({10: dict(Close=101.0)})
-    [t] = simulate({"X": bars}, buy_on(0), LIM, exits=TIME_LIMITED).trades
+    [t] = simulate({"X": bars}, buy_on(0), LIM, exits=ExitPolicy(max_hold_days=10)).trades
     assert t.reason == "TIME" and t.exit_date == DAYS[10] and t.exit_price == 101.0
 
 
@@ -68,7 +68,6 @@ def test_the_default_exit_policy_is_the_live_one_so_a_backtest_tests_the_running
     assert default.trades == [] and default.open_at_end == 1  # no time limit: still holding at the end of the data
     assert simulate({"X": bars}, buy_on(0), LIM, exits=LIVE_EXITS).equity.equals(default.equity)
     assert LIVE_EXITS == ExitPolicy(max_hold_days=None, trend_exit=True)
-    assert TIME_LIMITED == ExitPolicy(max_hold_days=10, trend_exit=False)
 
 
 def test_exit_policy_rejects_a_nonsensical_hold_limit():
@@ -110,14 +109,6 @@ def test_metrics():
     curve = pd.Series([100.0, 110.0, 99.0, 121.0])
     m = curve_metrics(curve)
     assert m["total_return"] == pytest.approx(0.21) and m["max_drawdown"] == pytest.approx(-0.10)
-    assert trade_metrics([]) == {"trades": 0}
-
-
-def test_buy_and_hold_equal_weight():
-    up = make_bars({14: dict(Close=110.0)})
-    flat = make_bars()
-    curve = buy_and_hold_curve({"A": up, "B": flat}, 100_000.0)
-    assert curve.iloc[-1] == pytest.approx(105_000.0)
 
 
 def test_total_return_is_measured_from_start_equity_not_first_point():
@@ -140,34 +131,6 @@ def test_fees_never_let_cash_go_negative():
     huge_fee = lambda side, value: 100.0  # noqa: E731
     r = simulate({"X": make_bars()}, buy_on(0), LIM, start_equity=5_050.0, fees=huge_fee)
     assert (r.equity > 0).all()
-
-
-def test_trade_analysis_breaks_pnl_down_by_reason_holding_period_year_and_symbol():
-    from src.research.backtest import Trade, analyze_trades
-
-    def trade(sym, entry, exit_, ep, xp, reason, qty=10, fees=0.0):
-        return Trade(sym, pd.Timestamp(entry), ep, pd.Timestamp(exit_), xp, qty, reason, fees)
-
-    trades = [
-        trade("A", "2024-01-02", "2024-01-03", 100, 98, "STOP"),       # -2%, 1 day
-        trade("A", "2024-02-01", "2024-02-02", 100, 98, "STOP"),
-        trade("B", "2024-03-01", "2024-03-20", 100, 105, "TARGET"),    # +5%, 19 days
-        trade("C", "2025-01-01", "2025-01-05", 100, 101, "TIME", fees=2.0),
-    ]
-    a = analyze_trades(trades)
-    stop, target = a["by_reason"].loc["STOP"], a["by_reason"].loc["TARGET"]
-    assert stop["n"] == 2 and stop["win_rate"] == 0 and stop["avg_return"] == pytest.approx(-0.02) and stop["pnl"] == pytest.approx(-40)
-    assert target["pnl"] == pytest.approx(50)
-    assert a["by_reason"].loc["TIME", "pnl"] == pytest.approx(10 - 2)          # fees are deducted
-    assert a["by_holding"].loc["<=2d", "n"] == 2 and a["by_holding"].loc["15-30d", "n"] == 1
-    assert a["by_year"].loc[2024, "pnl"] == pytest.approx(10) and a["by_year"].loc[2025, "n"] == 1
-    assert list(a["worst_symbols"].index)[0] == "A" and a["median_days_stopped_out"] == 1
-
-
-def test_trade_analysis_of_no_trades_is_empty():
-    from src.research.backtest import analyze_trades
-
-    assert analyze_trades([]) == {}
 
 
 def test_trend_exit_sells_at_the_next_open_after_a_close_below_the_200_day_average():
@@ -269,21 +232,3 @@ def test_idle_cash_accrues_at_cash_yield_only_from_cash_yield_from():
     assert flat.equity.iloc[-1] == 1000.0
     assert swept.equity.loc[:start].iloc[-1] == 1000.0  # nothing earned during the warm-up
     assert swept.equity.iloc[-1] / swept.equity.loc[start] == pytest.approx(1.05 ** (365 / 365), rel=1e-9)
-
-
-def test_exit_source_sells_a_held_position_at_the_next_open():
-    """A rebalanced strategy's 'no longer in the top N' exit goes through the same next-open fill as any signal."""
-    import pandas as pd
-    from src.config import RiskLimits
-    from src.research.backtest import simulate
-
-    days = pd.bdate_range("2025-01-01", periods=300)
-    close = pd.Series(range(100, 400), index=days, dtype=float)  # a steady rise: no stop, no trend exit
-    df = pd.DataFrame({"Open": close + 1, "High": close + 2, "Low": close - 2, "Close": close, "Volume": 1e6})
-    buy_day, sell_day = days[250], days[270]
-    result = simulate({"A": df}, {}, RiskLimits(), start_equity=100_000.0,
-                      buy_source=lambda d, pf: [("A", 0.9)] if d == buy_day else [],
-                      exit_source=lambda d, sym: d == sell_day)
-    [trade] = result.trades
-    assert trade.reason == "SIGNAL" and trade.entry_date == days[251] and trade.exit_date == days[271]
-    assert trade.exit_price == df.loc[days[271], "Open"]

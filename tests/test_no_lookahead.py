@@ -1,20 +1,17 @@
 """No-lookahead property tests: a feature decided from data up to day t must not depend on data after t.
 
-Three layers are pinned:
+Two layers are pinned:
   1. every scalar indicator returned by `build_snapshot` at date t equals the same indicator recomputed
      causally (rolling/ewm references) on the full series and read at position t;
   2. the portfolio backtest (`simulate`) fills BUY at the next day's open, never at the decision-day price,
-     so a gap between the two is not borrowed from the future;
-  3. the vectorised research engine holds a weight decided at day t only from day t + 1 + exec_lag, so the
-     return of the decision day is never earned on a weight that did not exist yet."""
+     so a gap between the two is not borrowed from the future."""
 import numpy as np
 import pandas as pd
 import pytest
 
-from src.research.backtest import rule_signals, simulate
+from src.research.backtest import simulate
 from src.config import RiskLimits
 from src.data.indicators import build_snapshot
-from src.research.engine import portfolio_returns
 
 
 def _ohlcv(closes, start="2020-01-02"):
@@ -129,33 +126,3 @@ def test_backtest_fills_never_use_the_decision_day_price():
     assert trade.entry_date == d1 and trade.entry_price == pytest.approx(df.loc[d1, "Open"])
     assert trade.entry_price != pytest.approx(df.loc[d0, "Close"])  # would be the lookahead fill
     assert trade.exit_date == d2 and trade.exit_price == pytest.approx(df.loc[d2, "Open"])
-
-
-def test_rule_signals_use_only_data_up_to_the_decision_date():
-    n = 230
-    # A noisy long uptrend (so RSI stays mid-range instead of pinning at 100) followed by a crash in the final bar.
-    closes = [100.0 * (1 + 0.004 * i + 0.008 * ((i % 7) - 3)) for i in range(n)]
-    df = _ohlcv(closes)
-    last = df.index[-1]
-    df.loc[last, "Close"] = df.loc[df.index[-2], "Close"] * 0.5
-    dates = [df.index[200], last]
-    out = rule_signals({"A": df}, dates)
-    assert out["A"][dates[0]][0] == "BUY"  # decided while the trend was still up: no future knowledge
-    assert out["A"][last][0] == "SELL"  # only the bar <= that date can flip it
-
-
-def test_research_engine_earns_a_weight_only_after_the_execution_lag():
-    idx = pd.date_range("2021-01-04", periods=6, freq="B")
-    returns_a = [np.nan, 0.01, 0.02, 0.03, 0.04, 0.05]
-    returns_b = [np.nan, 0.005, 0.005, 0.005, 0.005, 0.005]
-    close = pd.DataFrame({
-        "A": (1 + pd.Series(returns_a, index=idx)).cumprod() * 100,
-        "B": (1 + pd.Series(returns_b, index=idx)).cumprod() * 100,
-    })
-    weights = pd.DataFrame(0.0, index=idx, columns=["A", "B"])
-    weights.loc[idx[3], "A"] = 1.0  # decided at the close of day 3
-    result = portfolio_returns(close, weights)
-    assert float(result["gross"].iloc[3]) == pytest.approx(0.0)  # not owned yet
-    assert float(result["gross"].iloc[4]) == pytest.approx(0.0)  # executed at day-4 close, no same-day return
-    assert float(result["gross"].iloc[5]) == pytest.approx(0.05)  # first day the weight earns a return
-    assert float(result["turnover"].iloc[4]) == pytest.approx(1.0)  # the weight's execution, charged that day

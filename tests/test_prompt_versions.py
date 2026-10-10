@@ -5,8 +5,8 @@ PROMPT_VERSION in src/versions.py and record the new fingerprint here in the sam
 import hashlib
 import json
 
-from src.agents.technical import COT_SCHEMA, REFLECT_SCHEMA, TechnicalAgent, mechanical_action, mechanical_baseline
-from src.agents.technical.prompts import simple_prompt
+from src.agents.technical import COT_SCHEMA, REFLECT_SCHEMA, mechanical_action, mechanical_baseline
+from src.agents.technical.prompts import cot_prompt, reflection_prompt, simple_prompt
 from src.data.fundamentals import Fundamentals, Quarter
 from src.data.indicators import Snapshot
 from src.data.market_context import MarketContext
@@ -32,10 +32,10 @@ def fingerprint() -> str:
                            profit_margin=0.145, revenue_growth=0.27, earnings_growth=-0.12, promoter_holding=0.66,
                            quarters=(Quarter("2026-06-30", 3.47e9, 5.66e8), Quarter("2026-03-31", 3.39e9, None)))
     out = {"schemas": {n: json.dumps(v, sort_keys=True) for n, v in (("cot", COT_SCHEMA), ("refl", REFLECT_SCHEMA))}}
-    out["prompts"] = {s.symbol: {"cot": TechnicalAgent.build_prompt(s), "simple": simple_prompt(s),
+    out["prompts"] = {s.symbol: {"cot": cot_prompt(s), "simple": simple_prompt(s),
                                  "baseline": mechanical_baseline(s), "action": str(mechanical_action(s))} for s in snaps}
-    out["prompts"]["informed"] = TechnicalAgent.build_prompt(snaps[0], market, company)
-    out["prompts"]["reflection"] = TechnicalAgent.build_reflection_prompt(base, "UP", "summary line one\nsummary line two")
+    out["prompts"]["informed"] = cot_prompt(snaps[0], market, company)
+    out["prompts"]["reflection"] = reflection_prompt(base, "UP", "summary line one\nsummary line two")
     return hashlib.sha256(json.dumps(out, sort_keys=True).encode()).hexdigest()
 
 
