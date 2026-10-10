@@ -13,17 +13,27 @@ add indexes (IF NOT EXISTS). Run it through `scripts/migrate_db.py`, never raw D
 
 from __future__ import annotations
 
+import logging
 from typing import Dict, List, Tuple
 
 from sqlalchemy import create_engine, inspect, text
 
 from src.database.models import Base
 
+log = logging.getLogger(__name__)
+
 # Extra indexes for the review-doc queries ("decisions with a strong confluence", "which model answered") are
 # created for every database, including ones that predate the columns, in `ensure_indexes`.
 EXTRA_INDEXES = {
     "ix_decisions_confluence": "CREATE INDEX IF NOT EXISTS ix_decisions_confluence ON decisions (confluence_score)",
     "ix_decisions_raw_model": "CREATE INDEX IF NOT EXISTS ix_decisions_raw_model ON decisions (raw_model)",
+}
+
+# Uniqueness the application already relies on, enforced by the database as well (the same indexes the models declare, for
+# databases that predate them): name -> (table, columns).
+UNIQUE_INDEXES = {
+    "ux_orders_decision": ("orders", ("decision_id",)),
+    "ux_intraday_signals_day_symbol": ("intraday_signals", ("day", "symbol")),
 }
 
 
@@ -49,6 +59,33 @@ def ensure_indexes(engine) -> None:
     with engine.begin() as conn:
         for statement in EXTRA_INDEXES.values():
             conn.execute(text(statement))
+
+
+def ensure_unique_indexes(engine) -> List[str]:
+    """Create the uniqueness indexes an older database lacks. A database whose rows already break a rule keeps working:
+    that index is skipped with a warning (nothing is ever deleted or rewritten) and its name is returned."""
+    skipped: List[str] = []
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for name, (table, columns) in UNIQUE_INDEXES.items():
+            if not inspector.has_table(table):
+                continue
+            cols = ", ".join(columns)
+            duplicates = conn.execute(
+                text(f"SELECT COUNT(*) FROM (SELECT 1 FROM {table} GROUP BY {cols} HAVING COUNT(*) > 1)")
+            ).scalar()
+            if duplicates:
+                log.warning(
+                    "%s: %d duplicated (%s) in %s: the unique index is NOT created; fix the data first",
+                    name,
+                    duplicates,
+                    cols,
+                    table,
+                )
+                skipped.append(name)
+            else:
+                conn.execute(text(f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON {table} ({cols})"))
+    return skipped
 
 
 def schema_status(database_url: str) -> Dict[str, Dict[str, List[str]]]:
@@ -94,6 +131,7 @@ def apply_migrations(database_url: str, dry_run: bool = False) -> dict:
     try:
         add_missing_columns(engine)  # nullable-only by contract; raises on NOT NULL additions
         ensure_indexes(engine)
+        ensure_unique_indexes(engine)
     finally:
         engine.dispose()
     added = missing

@@ -19,6 +19,7 @@ from datetime import time as dtime
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
+from sqlalchemy import select
 
 from src.data.india import IST
 from src.data.intraday_bars import BarArchive, fetch_today_bars, session_rows
@@ -73,6 +74,8 @@ class IntradayEngine:
         for t in self.broker.trade_history():
             if t["closed_at"].astimezone(IST).date().isoformat() == today:
                 self._done_today.add(t["symbol"])
+        with self.broker.sessions() as s:  # every signal already recorded today (entered, skipped, dry run): one attempt each
+            self._done_today.update(s.scalars(select(IntradaySignalRecord.symbol).where(IntradaySignalRecord.day == today)))
         if self.universe_source:
             self._store(
                 IntradayUniverseRecord(

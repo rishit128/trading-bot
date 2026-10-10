@@ -5,7 +5,7 @@ from typing import Any, Dict
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from src.database.migrations import add_missing_columns, ensure_indexes
+from src.database.migrations import add_missing_columns, ensure_indexes, ensure_unique_indexes
 from src.database.models import Base
 
 
@@ -26,4 +26,5 @@ def make_session_factory(database_url: str) -> sessionmaker[Session]:
     Base.metadata.create_all(engine)
     add_missing_columns(engine)
     ensure_indexes(engine)
+    ensure_unique_indexes(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)

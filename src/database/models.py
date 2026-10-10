@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -76,6 +76,8 @@ class OrderRecord(Base):
     """An order attempt or skip, with the broker's reported fill."""
 
     __tablename__ = "orders"
+    # One decision places (or records the skip of) at most one order: a repeated event can never double an order.
+    __table_args__ = (Index("ux_orders_decision", "decision_id", unique=True),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -207,6 +209,8 @@ class IntradaySignalRecord(Base):
     Without this a skipped signal left no trace, and the engine could not be audited or its misses counted."""
 
     __tablename__ = "intraday_signals"
+    # One attempt per stock per session (the engine's rule): a restart cannot record, or trade, the same signal twice.
+    __table_args__ = (Index("ux_intraday_signals_day_symbol", "day", "symbol", unique=True),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
