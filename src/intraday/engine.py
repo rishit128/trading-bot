@@ -27,6 +27,7 @@ from src.engine.enums import SignalOutcome
 from src.engine.paper_broker import PaperBroker
 from src.engine.ports import BAR, Fill, MarketClock
 from src.intraday import strategy as st
+from src.monitoring.heartbeat import Heartbeat
 from src.versions import INTRADAY_VERSION
 
 log = logging.getLogger(__name__)
@@ -272,15 +273,23 @@ class IntradayEngine:
         run_together([self], sleep)
 
 
-def run_together(engines: Sequence[IntradayEngine], sleep: Callable[[float], None] = time.sleep) -> None:
+def run_together(
+    engines: Sequence[IntradayEngine],
+    sleep: Callable[[float], None] = time.sleep,
+    heartbeat: Heartbeat | None = None,
+) -> None:
     """Step every engine at each 5-minute boundary (plus a few seconds for Yahoo to publish the bar), forever. One engine's
-    failure never stops the others."""
+    failure never stops the others. `heartbeat` records after each pass whether every engine's step succeeded."""
     while True:
+        failed = []
         for engine in engines:
             try:
                 log.info("%s cycle: %s", engine.label.lower(), engine.step())
             except Exception:
+                failed.append(engine.label)
                 log.exception("%s cycle failed", engine.label.lower())
+        if heartbeat:
+            heartbeat.beat(not failed, f"failed: {', '.join(failed)}" if failed else "all engines stepped")
         now = datetime.now(timezone.utc)
         nxt = (now + BAR).replace(second=15, microsecond=0)
         nxt -= timedelta(minutes=nxt.minute % 5)

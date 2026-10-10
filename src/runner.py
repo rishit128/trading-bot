@@ -4,6 +4,8 @@ import logging
 import time
 from typing import Callable, Optional
 
+from src.monitoring.heartbeat import Heartbeat
+
 log = logging.getLogger(__name__)
 
 
@@ -26,8 +28,10 @@ def run_loop(
     max_cycles: Optional[int] = None,
     after_cycle: Optional[Callable[[], None]] = None,
     out: Callable[[str], None] = print,
+    heartbeat: Optional[Heartbeat] = None,
 ) -> None:
-    """Unattended loop: a failed cycle (network, broker outage) is reported and retried, never fatal."""
+    """Unattended loop: a failed cycle (network, broker outage) is reported and retried, never fatal. `heartbeat` records
+    each cycle's outcome for the container health check."""
     cycles = 0
     while True:
         try:
@@ -35,10 +39,16 @@ def run_loop(
                 run_cycle(pipeline, out)
                 if after_cycle is not None:
                     after_cycle()
+                if heartbeat:
+                    heartbeat.beat(True, "cycle done")
             else:
                 out("market closed; waiting")
+                if heartbeat:
+                    heartbeat.beat(True, "market closed")
         except Exception as e:
             log.exception("cycle failed")
+            if heartbeat:
+                heartbeat.beat(False, f"{type(e).__name__}: {e}")
             pipeline.notify(f"CYCLE FAILED (will retry in {minutes:g} min): {type(e).__name__}: {e}")
         cycles += 1
         if max_cycles is not None and cycles >= max_cycles:

@@ -159,16 +159,31 @@ for _ in $(seq 1 40); do
 done
 $SSH "command -v docker" >/dev/null || { echo "Docker never came up on the instance; check /var/log/cloud-init-output.log over SSH."; exit 1; }
 
-echo "== Packaging this checkout (excluding venv, .git, caches, databases, local secrets) and uploading it =="
+# The instance's .env is the server's own: this script never copies a local .env over it (a deploy once could have reset the
+# live position sizing that way). Say which settings differ, by NAME only (never a value), so it is a decision, not a surprise.
+env_digest() { grep -vE '^\s*(#|$)' | while IFS= read -r line; do printf '%s %s\n' "${line%%=*}" "$(printf %s "${line#*=}" | md5sum | cut -c1-8)"; done | sort; }
+if [ -f .env ] && $SSH "test -f ~/$NAME/.env" 2>/dev/null; then
+    LOCAL_ENV=$(env_digest < .env)
+    SERVER_ENV=$($SSH "cat ~/$NAME/.env" | env_digest)
+    differ=$(join -j1 <(echo "$LOCAL_ENV") <(echo "$SERVER_ENV") | awk '$2 != $3 {print $1}' | tr '\n' ' ')
+    only_local=$(join -v1 -j1 <(echo "$LOCAL_ENV") <(echo "$SERVER_ENV") | awk '{print $1}' | tr '\n' ' ')
+    only_server=$(join -v2 -j1 <(echo "$LOCAL_ENV") <(echo "$SERVER_ENV") | awk '{print $1}' | tr '\n' ' ')
+    echo "== Settings: the server keeps its own .env (not overwritten). Differences from this PC's .env, names only =="
+    echo "   different value: ${differ:-none}"
+    echo "   only on this PC: ${only_local:-none}"
+    echo "   only on the server: ${only_server:-none}"
+fi
+
+echo "== Packaging this checkout (excluding venv, .git, caches, databases, .env) and uploading it =="
 TARBALL=$(mktemp).tar.gz
-tar --exclude-vcs --exclude=venv --exclude=__pycache__ --exclude='*.pyc' --exclude='*.db' \
+tar --exclude-vcs --exclude=venv --exclude=__pycache__ --exclude='*.pyc' --exclude='*.db' --exclude=.env \
     --exclude=backtest_cache.json --exclude=research_cache --exclude=portfolio_data --exclude=nse_files \
-    --exclude=logs --exclude=htmlcov --exclude=.pytest_cache --exclude=deploy \
+    --exclude=logs --exclude=htmlcov --exclude=.pytest_cache --exclude=deploy --exclude=.coverage \
     -czf "$TARBALL" .
 $SSH "mkdir -p ~/$NAME"
 scp -i "$KEY_FILE" -o StrictHostKeyChecking=accept-new "$TARBALL" "ubuntu@$IP:~/${NAME}.tar.gz"
 # Extracting over the old copy never deletes a file removed from the code, so a deleted module would linger and still be
-# importable on the server. Clear the code folders first (.env and the data volumes are untouched).
+# importable on the server. Clear the code folders first (the server's .env and the data volumes are untouched).
 $SSH "cd ~/$NAME && rm -rf src scripts tests docs && tar -xzf ~/${NAME}.tar.gz -C ~/$NAME && rm ~/${NAME}.tar.gz"
 rm -f "$TARBALL"
 

@@ -12,6 +12,7 @@ from src.engine.costs import intraday_fees
 from src.intraday.engine import IntradayEngine, run_together
 from src.intraday.strategy import GAP_ENTRY_UNTIL, GAP_ONLY_ENTRY_UNTIL, find_gap_only_setup, find_gap_setup
 from src.intraday.universe import select_universe
+from src.monitoring.heartbeat import Heartbeat
 from src.monitoring.telegram import Notifier
 from src.versions import GAPGO_VERSION, GAPONLY_VERSION
 
@@ -85,4 +86,4 @@ def run_intraday(live: bool) -> None:
     if notify:
         for running in engines:
             notify(f"[{running.label}] started: {mode}")
-    run_together(engines)
+    run_together(engines, heartbeat=Heartbeat.from_setting(settings.heartbeat_file))

@@ -111,7 +111,9 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     monkeypatch.setattr(
         intraday_cli,
         "run_together",
-        lambda engines: started.update(engine=engines[0], gapgo=engines[1], gaponly=engines[2], count=len(engines)),
+        lambda engines, heartbeat=None: started.update(
+            engine=engines[0], gapgo=engines[1], gaponly=engines[2], count=len(engines), heartbeat=heartbeat
+        ),
     )
     intraday_cli.run_intraday(live=True)
     engine = started["engine"]
@@ -163,3 +165,18 @@ def test_equity_risk_reports_the_worst_peak_to_trough_fall_and_the_start():
     assert equity_risk([]) is None
     r = equity_risk(zip(t, [100.0, 120.0, 90.0, 130.0, 117.0]))
     assert r["since"] == t[0] and abs(r["max_drawdown"] - (90 / 120 - 1)) < 1e-12  # -25%, not the later -10%
+
+
+def test_the_intraday_loop_gets_a_heartbeat_only_when_one_is_configured(monkeypatch):
+    seen = {}
+    broker = SimpleNamespace(clock=FakeClock(), sessions=make_session_factory("sqlite://"))
+    monkeypatch.setattr(intraday_cli, "make_paper_broker", lambda settings, url, fees=None: broker)
+    monkeypatch.setattr(intraday_cli, "select_universe", lambda explicit: (["AAA"], "a list"))
+    monkeypatch.setattr(intraday_cli, "run_together", lambda engines, heartbeat=None: seen.update(heartbeat=heartbeat))
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("HEARTBEAT_FILE", raising=False)
+    intraday_cli.run_intraday(live=True)
+    assert seen["heartbeat"] is None
+    monkeypatch.setenv("HEARTBEAT_FILE", "/data/heartbeat-intraday")
+    intraday_cli.run_intraday(live=True)
+    assert str(seen["heartbeat"].path).replace("\\", "/") == "/data/heartbeat-intraday"

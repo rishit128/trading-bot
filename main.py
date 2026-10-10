@@ -22,6 +22,7 @@ from src.engine.costs import intraday_fees
 from src.learning.jobs import DailyOutcomeLabelling, WeeklyLearningReport
 from src.llm import LLMClient
 from src.logging_setup import configure_logging
+from src.monitoring.heartbeat import Heartbeat
 from src.monitoring.telegram import CommandListener, Notifier, handle_command
 from src.ops.preflight import build_checks, critical_failures, format_results, run_checks
 from src.pipeline import TradingPipeline
@@ -306,7 +307,7 @@ def main() -> None:
 
     if args.loop:
         pipeline.notify(f"Trading bot started: {st.market.upper()} {mode}, every {args.loop} min while the market is open.")
-        run_loop(pipeline, args.loop, after_cycle=after_cycle)
+        run_loop(pipeline, args.loop, after_cycle=after_cycle, heartbeat=Heartbeat.from_setting(pipeline.settings.heartbeat_file))
     else:
         run_cycle(pipeline)
         after_cycle()

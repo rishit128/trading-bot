@@ -15,6 +15,9 @@ problem=""
 for service in trading-bot intraday-bot; do
     state=$($COMPOSE ps --format '{{.State}}' "$service" 2>/dev/null | head -1)
     [ "$state" = "running" ] || problem="$problem $service is ${state:-not running};"
+    # Docker's health check reads the bot's own heartbeat: running is not the same as working (stuck loop, every cycle failing).
+    health=$($COMPOSE ps --format '{{.Health}}' "$service" 2>/dev/null | head -1)
+    [ "$health" != "unhealthy" ] || problem="$problem $service is unhealthy (its loop is stuck or every cycle is failing: docker compose ps);"
 done
 if [ -z "$problem" ] && [ -z "$($COMPOSE logs --since 75m trading-bot 2>/dev/null | grep -v '"ts"')" ]; then
     problem=" trading-bot has printed nothing for 75 minutes (stuck?);"
