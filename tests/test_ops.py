@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 import yaml
 from sqlalchemy import select
@@ -136,6 +137,14 @@ def test_broker_and_telegram_checks_report_what_they_found():
     broker = FakeBroker(Portfolio(90_000.0, 100_000.0, {"A": 1.0}, {"A": 1}, 100_000.0))
     assert "equity 100,000.00" in broker_check(broker, "paper") and "1 positions" in broker_check(broker, "paper")
     assert telegram_check("tok", lambda url, **kw: resp(200, {"result": {"username": "my_bot"}})) == "bot @my_bot"
+
+
+def test_a_rejected_telegram_token_is_reported_without_the_token():
+    # httpx's own error text quotes the request URL, which contains the token; it once reached bot.log that way
+    def leaky(url, **kw):
+        return httpx.Response(401, request=httpx.Request("GET", url))
+    [result] = run_checks([("Telegram bot", False, lambda: telegram_check("SECRET-TOKEN-123", leaky))])
+    assert not result.ok and "401" in result.detail and "SECRET-TOKEN-123" not in result.detail
 
 
 def test_build_checks_marks_keys_and_broker_critical_and_covers_the_market():

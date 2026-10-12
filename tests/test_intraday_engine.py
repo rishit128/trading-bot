@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from src.data.india import IST
 from src.engine.paper_broker import PaperBroker
-from src.database import IntradaySignalRecord, IntradayUniverseRecord, make_session_factory
+from src.database import IntradaySignalRecord, IntradayUniverseRecord, PaperTradeRecord, make_session_factory
 from src.intraday.engine import IntradayEngine
 from tests.intraday_helpers import BREAKOUT, DAY, VOLS, make_bars
 from tests.test_paper_broker import FakeClock, FakeFeed
@@ -118,6 +118,22 @@ def test_a_stop_hit_is_reported_with_its_loss_and_the_stock_is_not_re_entered_th
     [trade] = broker.trade_history()
     assert trade["reason"] == "STOP" and trade["exit_price"] == pytest.approx(99.9) and trade["net_pnl"] < 0
     assert "entered 0" in eng.step()  # one trade per stock per day, even after a stop-out
+
+
+def test_an_exit_is_reported_from_the_newest_trade_not_an_older_one_in_the_same_stock(tmp_path):
+    # Live 2026-10-12: TRENT's stop was announced as an older day's "SIGNAL" square-off and that day's P&L
+    eng, broker, feed, now, messages, _ = session(tmp_path)
+    earlier = (DAY - timedelta(days=3)).astimezone(timezone.utc)
+    with broker.sessions() as s:
+        s.add(PaperTradeRecord(symbol="AAA", qty=1, entry_price=100.0, exit_price=200.0, opened_at=earlier,
+                               closed_at=earlier, reason="SIGNAL", fees=0.0, net_pnl=100.0))
+        s.commit()
+    eng.step()
+    tape(feed, "AAA", at(10, 30), 100.0, 100.2, 99.0, 99.2)
+    now[0] = at(10, 35).astimezone(timezone.utc)
+    eng.step()
+    [report] = [m for m in messages if "AAA:" in m and "net" in m]
+    assert report.startswith("[INTRADAY] STOP AAA") and "+100" not in report
 
 
 def test_a_target_hit_books_the_profit(tmp_path):

@@ -590,7 +590,8 @@ most recent Nifty 500 window 8% loses on return and risk. Sizing stays 10 x 5%.
 so that about Rs 15,000-16,000 of the Rs 20,000 is working (the 80% exposure cap still applies) instead of ~43%. This is a
 chosen trade of more risk for more return, not a better strategy: the table above is the expectation (drawdowns of
 -26% to -39% instead of -13% to -27%, so the 20% drawdown pause will trigger more often). Positions opened at 5% keep
-their size; a held stock the AI rates BUY again is topped up to 8%, and freed slots are filled at 8%.
+their size and are NOT topped up: a BUY on a stock already held is skipped while the position is open (orders show
+SKIPPED_OPEN_ORDER); freed slots are filled at 8%.
 
 ## The AI's job, redesigned (2026-10-09): from second-guessing the chart to reading what the chart cannot show
 **Finding (live data, 134 stock-sessions, 2026-09-25..10-08).** The rule said BUY on 116; the AI bought 39. The stocks it

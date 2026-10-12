@@ -215,7 +215,9 @@ class IntradayEngine:
         gone = [s for s in self._known if s not in pf.positions]
         if not gone:
             return
-        recent = {t["symbol"]: t for t in self.broker.trade_history(limit=20)}
+        recent: Dict[str, dict] = {}
+        for trade in self.broker.trade_history(limit=20):  # newest first: keep each symbol's latest trade, not an older one
+            recent.setdefault(trade["symbol"], trade)
         for s in gone:
             t = recent.get(s)
             if t:

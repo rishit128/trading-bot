@@ -7,7 +7,6 @@ from typing import Callable, Mapping, Optional, Tuple
 
 import httpx
 
-from src.data.retry import retry_call
 from src.engine.ports import ListsHoldings, ListsTrades
 from src.data.india import IST
 from src.engine.paper_report import group_by_day, group_by_week, merge_periods, totals
@@ -105,6 +104,37 @@ def _worth_retrying(exc: BaseException) -> bool:
     return True
 
 
+MAX_RATE_LIMIT_WAIT = 10.0  # seconds; a longer retry_after is not waited out inside a trading cycle
+
+
+def _telegram_reply(exc: BaseException) -> dict:
+    """Telegram's JSON error body ({"description": ..., "parameters": {"retry_after": n}}), or {}."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            body = exc.response.json()
+            return body if isinstance(body, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _describe(exc: BaseException) -> str:
+    """Why a send failed, without the request URL (it contains the bot token)."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        description = str(_telegram_reply(exc).get("description") or "")[:200]
+        return f"HTTP {exc.response.status_code}" + (f": {description}" if description else "")
+    return type(exc).__name__
+
+
+def _retry_wait(exc: BaseException) -> float:
+    """Seconds before the retry: what a 429 asks for (capped), else one second."""
+    retry_after = (_telegram_reply(exc).get("parameters") or {}).get("retry_after")
+    try:
+        return min(MAX_RATE_LIMIT_WAIT, max(1.0, float(retry_after))) if retry_after is not None else 1.0
+    except (TypeError, ValueError):
+        return 1.0
+
+
 class Notifier:
     """Best-effort alerts: a Telegram outage must never break trading."""
 
@@ -115,16 +145,18 @@ class Notifier:
         self._sleep = sleep
 
     def send(self, text: str) -> bool:
-        """Send an alert; never raises."""
-        def post() -> None:
-            self.http.post(f"{API}/bot{self.token}/sendMessage", json=_payload(self.chat_id, text)).raise_for_status()
-
-        try:
-            retry_call(post, attempts=2, delay=1.0, retry_if=_worth_retrying, sleep=self._sleep, what="telegram alert")
-            return True
-        except Exception as e:
-            log.warning("telegram send failed: %s", type(e).__name__)
-            return False
+        """Send an alert; never raises. One retry for a network blip, a server error or a rate limit (after the wait
+        Telegram asks for). Not `retry_call`: its log line quotes the error text, whose URL contains the token."""
+        for attempt in (1, 2):
+            try:
+                self.http.post(f"{API}/bot{self.token}/sendMessage", json=_payload(self.chat_id, text)).raise_for_status()
+                return True
+            except Exception as e:
+                if attempt == 2 or not _worth_retrying(e):
+                    log.warning("telegram send failed: %s", _describe(e))
+                    return False
+                self._sleep(_retry_wait(e))
+        return False
 
 
 def handle_command(text: str, control, broker, settings, intraday=None,

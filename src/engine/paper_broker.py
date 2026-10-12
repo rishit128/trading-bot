@@ -1,7 +1,8 @@
 """Simulated broker for markets with no broker sandbox (India).
 
 Simplifications, all optimistic and worth remembering: fills happen at the latest 5-minute close plus a fixed slippage;
-stop/target exits fill at the stop/target level (or the bar open on a gap) with no slippage; no circuit-limit modelling
+a stop fills at its level (or the bar open on a gap) less the same slippage, since it is a stop-market order; a target is
+a limit order and fills at its level (or the open on a gap) with none; no circuit-limit modelling
 (a real stock locked at its lower circuit may not let you sell at your stop). Splits, bonuses and dividends are applied
 on their ex-dates (`corporate_actions`), without which a 1:1 bonus halves the price and fires the stop as a fake loss;
 fractional entitlements are not paid out (in reality they are settled in cash).
@@ -262,6 +263,8 @@ class PaperBroker:
                     exit_price, reason = target, "TARGET"
                 if reason:
                     break
+            if reason == "STOP" and exit_price is not None:
+                exit_price *= 1 - self.slippage  # a stop is a stop-market order: it fills like any market sell
             if reason is not None and exit_price is not None:
                 log.info("paper %s hit on %s at %.2f", reason, symbol, exit_price)
                 self._close(symbol, qty, exit_price, reason)

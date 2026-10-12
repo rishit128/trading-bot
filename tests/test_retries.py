@@ -161,3 +161,21 @@ def test_a_snapshot_that_keeps_failing_is_reported_after_the_retry_is_used_up():
     services = FlakySnapshot(ConnectionError("down"), failures=9)
     [result] = run(services)
     assert result.action == "ERROR" and services.attempts == 2 and "ConnectionError" in result.error
+
+
+def telegram_error(status, body):
+    request = httpx.Request("POST", "https://api.telegram.org/botSECRET-TOKEN-123/sendMessage")
+    return httpx.Response(status, json=body, request=request)
+
+
+def test_a_rate_limited_alert_waits_as_asked_and_the_failure_is_logged_with_its_reason_not_the_token(caplog):
+    waits = []
+    limited = Http(telegram_error(429, {"description": "Too Many Requests: retry after 4", "parameters": {"retry_after": 4}}),
+                   reply(200))
+    assert Notifier("SECRET-TOKEN-123", "1", client=limited, sleep=waits.append).send("hi") is True and waits == [4.0]
+    long_wait = Http(telegram_error(429, {"parameters": {"retry_after": 300}}), reply(200))
+    Notifier("t", "1", client=long_wait, sleep=waits.append).send("hi")
+    assert waits[-1] == 10.0  # never waits out a long ban inside a trading cycle
+    rejected = Http(telegram_error(400, {"description": "Bad Request: chat not found"}))
+    assert Notifier("SECRET-TOKEN-123", "1", client=rejected, sleep=waits.append).send("hi") is False
+    assert "HTTP 400: Bad Request: chat not found" in caplog.text and "SECRET-TOKEN-123" not in caplog.text
