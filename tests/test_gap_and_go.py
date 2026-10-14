@@ -262,16 +262,30 @@ def trade(symbol, day, ret, value=4000.0, fees=5.0):
 
 
 def test_the_comparison_needs_both_per_trade_and_date_by_date_wins():
-    go = [trade("AAA", d, 0.01) for d in range(1, 11)]
-    only = [trade("AAA", d, 0.002 + 0.001 * (d % 3)) for d in range(1, 11)] + [trade("BBB", d, -0.01) for d in range(1, 11)]
+    days = range(1, 31)  # the minimum number of shared dates a verdict needs
+    go = [trade("AAA", d, 0.01) for d in days]
+    only = [trade("AAA", d, 0.002 + 0.001 * (d % 3)) for d in days] + [trade("BBB", d, -0.01) for d in days]
     c = compare(go, only, 20_000.0, 20_000.0)
-    assert c.shared_dates == 10 and c.paired_diff > 0 and c.paired_t > 2.6 and c.same_stock_days == 10
-    assert c.gapgo.trades == 10 and c.gapgo.net_per_trade == pytest.approx(0.01) and c.gapgo.win_rate == 1.0
-    assert c.gaponly.utilisation == pytest.approx(8000 / 20_000, rel=0.05) and c.gaponly.fees == pytest.approx(100.0)
+    assert c.shared_dates == 30 and c.paired_diff > 0 and c.paired_t > 2.6 and c.same_stock_days == 30
+    assert c.gapgo.trades == 30 and c.gapgo.net_per_trade == pytest.approx(0.01) and c.gapgo.win_rate == 1.0
+    assert c.gaponly.utilisation == pytest.approx(8000 / 20_000, rel=0.05) and c.gaponly.fees == pytest.approx(300.0)
     assert c.verdict.startswith("gap-and-go wins per trade AND date by date")
-    worse = compare([trade("AAA", d, -0.01) for d in range(1, 11)], only, 20_000.0, 20_000.0)
+    worse = compare([trade("AAA", d, -0.01) for d in days], only, 20_000.0, 20_000.0)
     assert worse.verdict.startswith("gap-and-go does not beat")
     assert compare([], [], 20_000.0, 20_000.0).verdict == "not enough trades yet to compare"
+
+
+def test_a_handful_of_trades_never_produces_a_verdict():
+    """The first live week had 2 and 3 trades: a paired t of -38 on two dates is an anecdote, not evidence."""
+    few = compare(
+        [trade("AAA", 1, -0.03), trade("AAA", 2, -0.03)], [trade("AAA", 1, -0.01), trade("AAA", 2, -0.02)], 20_000.0, 20_000.0
+    )
+    assert few.shared_dates == 2 and few.verdict.startswith("too early to judge: 2 of the 30 dates")
+    assert "gap-and-go wins" not in few.verdict and "does not beat" not in few.verdict
+    nearly = compare(
+        [trade("AAA", d, 0.01) for d in range(1, 30)], [trade("AAA", d, 0.0) for d in range(1, 30)], 20_000.0, 20_000.0
+    )
+    assert nearly.verdict.startswith("too early to judge: 29 of the 30")  # one date short
 
 
 def test_drawdown_comes_from_the_closed_trade_equity_curve():

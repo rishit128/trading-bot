@@ -12,6 +12,8 @@ import pandas as pd
 from src.data.india import IST
 from src.research.intraday_hypotheses import T_BAR, cluster_t
 
+MIN_SHARED_DATES = 30  # fixed in advance: a handful of trades says nothing about a difference of a fraction of a percent
+
 
 @dataclass(frozen=True)
 class AccountStats:
@@ -71,8 +73,13 @@ class Comparison:
 
     @property
     def verdict(self) -> str:
-        if self.gapgo is None or self.gaponly is None or self.shared_dates < 2:
+        if self.gapgo is None or self.gaponly is None:
             return "not enough trades yet to compare"
+        if self.shared_dates < MIN_SHARED_DATES:
+            return (
+                f"too early to judge: {self.shared_dates} of the {MIN_SHARED_DATES} dates on which both accounts "
+                "traded that a verdict needs (the numbers above are anecdotes until then)"
+            )
         per_trade = self.gapgo.net_per_trade > self.gaponly.net_per_trade
         by_date = self.paired_diff > 0 and self.paired_t >= T_BAR
         if per_trade and by_date:
