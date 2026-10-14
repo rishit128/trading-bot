@@ -46,7 +46,9 @@ def run_intraday(live: bool) -> None:
             **rule,
         )
 
-    engines = [engine(broker, archive=BarArchive(broker.sessions) if settings.intraday_archive else None)]
+    # record_capped: a breakout the 5-position limit left out is still recorded (as SKIPPED), so the forward record covers
+    # every signal of the day, not only the first five
+    engines = [engine(broker, archive=BarArchive(broker.sessions) if settings.intraday_archive else None, record_capped=True)]
     for name, db_url, rule, until, version in GAP_EXPERIMENTS:
         engines.append(
             engine(

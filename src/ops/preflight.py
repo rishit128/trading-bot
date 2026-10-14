@@ -53,7 +53,8 @@ def broker_check(broker, label: str) -> str:
 def telegram_check(token: str, get: Callable = httpx.get) -> str:
     """Confirm the Telegram bot token is valid."""
     r = get(f"https://api.telegram.org/bot{token}/getMe", timeout=15)
-    r.raise_for_status()
+    if r.status_code != 200:  # not raise_for_status: its message carries the URL, which contains the token
+        raise RuntimeError(f"Telegram rejected the bot token (HTTP {r.status_code})")
     return "bot @" + str((r.json().get("result") or {}).get("username"))
 
 

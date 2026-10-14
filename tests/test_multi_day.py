@@ -14,6 +14,7 @@ from src.agents.base import LEAD
 from src.config import RiskLimits, Settings
 from src.data.indicators import Snapshot
 from src.database import EquityRecord, OrderRecord, PaperTradeRecord, make_session_factory
+from src.engine.costs import SLIPPAGE
 from src.engine.paper_broker import PaperBroker
 from src.engine.risk_engine import Portfolio
 from src.llm import AgentSignal
@@ -107,7 +108,8 @@ def test_six_days_open_close_and_reconcile(tmp_path):
         equity_rows = len(list(s.scalars(select(EquityRecord))))
         orders = [(o.symbol, o.side, o.status) for o in s.scalars(select(OrderRecord).order_by(OrderRecord.id))]
     assert set(trades) == {"AAA", "BBB"}  # CCC is still held
-    assert trades["BBB"].reason == "STOP" and abs(trades["BBB"].exit_price - 170.0) < 1e-6  # the stop level, not the low
+    # the stop level less slippage (a stop is a stop-market order), not the low
+    assert trades["BBB"].reason == "STOP" and abs(trades["BBB"].exit_price - 170.0 * (1 - SLIPPAGE)) < 1e-6
     assert trades["AAA"].reason == "SIGNAL"  # closed by the deterministic trend exit on day 3
     assert set(broker.portfolio().positions) == {"CCC"}
     assert equity_rows == DAYS  # one equity mark per cycle

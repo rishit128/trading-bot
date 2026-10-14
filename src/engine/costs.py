@@ -7,8 +7,10 @@ A signal decided from data up to the close of day T executes at the NEXT session
 adversarial slippage (buy higher, sell lower) is charged on market orders only, and the full delivery fee
 schedule applies on every fill.
 
-Stop/target exits are NOT market orders: they are limit-like levels set off the signal close and are hit at the
-exact level (or at the bar open when a bar gaps through them), with no extra slippage.
+Stop/target levels are set off the signal close. In the paper broker a stop is a stop-market order: it triggers at
+its level (or the bar open when a bar gaps through it) and fills with the same slippage as any market sell; a target
+is a limit order and fills at its level with none. The daily backtest `simulate` still fills stops at the exact
+level (a known, small optimism on daily bars).
 
 Admitted, quantified divergence: the paper broker executes at the *current* 5-minute close, not tomorrow's open.
 When a decision is made after the close, those are the same session; the residual gap between that close and the

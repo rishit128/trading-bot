@@ -128,7 +128,8 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     assert alerts == [
         f"[{name}] started: PAPER ORDERS (separate intraday accounts)" for name in ("INTRADAY", "GAP-GO", "GAP-ONLY")
     ]
-    assert started["count"] == 3 and started["engine"].record_capped is False  # the breakout engine is unchanged
+    # breakouts past the position limit are recorded too, for all three engines
+    assert started["count"] == 3 and started["engine"].record_capped is True
     # gap-and-go: the same universe and sizing, its own rule, label, version and entry window, and no second archive
     from src.intraday.strategy import GAP_ENTRY_UNTIL, GAP_ONLY_ENTRY_UNTIL, find_gap_only_setup, find_gap_setup
     from src.versions import GAPGO_VERSION, GAPONLY_VERSION

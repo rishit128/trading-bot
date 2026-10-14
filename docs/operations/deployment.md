@@ -11,7 +11,7 @@ deploys automatically, and a CI run never touches the server.
 2. The quality gates pass on the commit you are deploying: `ruff check`, `ruff format --check`, `mypy`, `pytest`, `bandit`,
    `pip-audit` ([standards](../development/standards.md); CI runs the same).
 3. If the change touches a database table, run it against a **copy** of production first (how: below).
-4. Know the rollback commit: the commit currently running. `deploy.sh` writes it to `~/ai-trading-bot/.deployed-commit` (`ssh ... "cat ai-trading-bot/.deployed-commit"`); that file exists after the first deploy made with this script version, and until then the last known production commit is `a3e74db`.
+4. Know the rollback commit: the commit currently running. `deploy.sh` writes it to `~/ai-trading-bot/.deployed-commit` (`ssh ... "cat ai-trading-bot/.deployed-commit"`); that file exists after the first deploy made with this script version, and until then the last known production commit is `787ef3d` (verified by comparing every source file on the server on 2026-10-15).
 
 ## Deploy
 
