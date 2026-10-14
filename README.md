@@ -12,6 +12,19 @@ a LangGraph workflow orchestrates everything. **Indian market by default** (NSE,
 >   +143% (both halves positive), so those are now the defaults. This fixes a defect; it does not validate the entries.
 > - US, one year, AI agent with the old exits: ~0%, a 28% win rate that is exactly break-even. Details: `STRATEGY.md`.
 
+## Documentation
+
+| | |
+| --- | --- |
+| [Architecture overview](docs/architecture/overview.md) | what runs, the packages, one cycle end to end |
+| [Dependency map](docs/architecture/dependency-map.md) | who imports whom, and the layering rules a test enforces |
+| [Decisions](docs/architecture/decisions/) | why the code is shaped the way it is |
+| [Development standards](docs/development/standards.md), [testing](docs/development/testing.md) | the checks CI runs, code and test conventions |
+| [Deployment and rollback](docs/operations/deployment.md), [monitoring](docs/operations/monitoring.md) | AWS, health checks, alerts, what to do when one fires |
+| [Execution safety](docs/trading/execution-safety.md) | the guarantees around orders, and what enforces each |
+| [AI workflows](docs/ai/workflows.md) | where the AI is used, model fallback, how failures are contained |
+| [Strategy log](STRATEGY.md), [database](docs/database.md), [holdout reserve](docs/holdout.md), [real-portfolio agent](docs/portfolio-agent.md) | research results and the data layer |
+
 ## Quick start (Windows)
 
 ```

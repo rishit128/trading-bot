@@ -186,6 +186,10 @@ scp -i "$KEY_FILE" -o StrictHostKeyChecking=accept-new "$TARBALL" "ubuntu@$IP:~/
 # importable on the server. Clear the code folders first (the server's .env and the data volumes are untouched).
 $SSH "cd ~/$NAME && rm -rf src scripts tests docs && tar -xzf ~/${NAME}.tar.gz -C ~/$NAME && rm ~/${NAME}.tar.gz"
 rm -f "$TARBALL"
+# Record WHAT is running, so "which commit is in production?" has an answer (and so a rollback knows where to go back to).
+DEPLOYED="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)$(git diff --quiet HEAD 2>/dev/null || echo '+uncommitted-changes') $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+$SSH "echo '$DEPLOYED' > ~/$NAME/.deployed-commit"
+echo "== Deployed: $DEPLOYED =="
 
 echo "== Watchdog: every 15 minutes, a Telegram message if a bot container is down or silent (and when it is back) =="
 scp -i "$KEY_FILE" -o StrictHostKeyChecking=accept-new deploy/watchdog.sh "ubuntu@$IP:~/bot-watchdog.sh"

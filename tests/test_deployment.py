@@ -34,3 +34,9 @@ def test_each_container_is_health_checked_on_its_own_heartbeat():
 
 def test_the_watchdog_reports_an_unhealthy_container():
     assert "unhealthy" in (ROOT / "deploy" / "watchdog.sh").read_text(encoding="utf-8")
+
+
+def test_a_deploy_records_which_commit_it_put_on_the_server():
+    """So that production can be asked what it runs, and a rollback knows what to go back to."""
+    assert "git rev-parse --short HEAD" in DEPLOY and ".deployed-commit" in DEPLOY
+    assert "+uncommitted-changes" in DEPLOY  # a deploy from a dirty checkout says so
