@@ -1,0 +1,5 @@
+# Files that run on the Linux server keep Unix line endings on every machine (a Windows checkout would otherwise
+# give them CRLF, and bash cannot run a CRLF script).
+*.sh text eol=lf
+Dockerfile* text eol=lf
+docker-compose*.yml text eol=lf

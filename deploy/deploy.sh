@@ -9,6 +9,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# This script deploys a COMMIT, not whatever is lying in the working directory: production then always corresponds to a
+# commit (traceable, and a rollback knows where to go back to), nothing untracked or secret can travel with it, and the
+# files arrive with Unix line endings (a shell script with Windows line endings does not run on the server).
+if [ -n "$(git status --porcelain --untracked-files=no)" ] && [ "${DEPLOY_UNCOMMITTED:-}" != "yes" ]; then
+    echo "!! Uncommitted changes in tracked files. Commit them first: this script deploys the last commit, not the working directory."
+    echo "   To deploy the last commit anyway and leave these changes out: DEPLOY_UNCOMMITTED=yes bash deploy/deploy.sh"
+    exit 1
+fi
+
 REGION="${AWS_REGION:-ap-south-1}"                 # Mumbai: closest to NSE/the Integrated portal
 INSTANCE_TYPE="${INSTANCE_TYPE:-t3.small}"          # 2 GB RAM: comfortable for Chromium + the paper bot together
 NAME="ai-trading-bot"
@@ -174,12 +183,9 @@ if [ -f .env ] && $SSH "test -f ~/$NAME/.env" 2>/dev/null; then
     echo "   only on the server: ${only_server:-none}"
 fi
 
-echo "== Packaging this checkout (excluding venv, .git, caches, databases, .env) and uploading it =="
+echo "== Packaging commit $(git rev-parse --short HEAD) (tracked files only: no .env, databases or keys) and uploading it =="
 TARBALL=$(mktemp).tar.gz
-tar --exclude-vcs --exclude=venv --exclude=__pycache__ --exclude='*.pyc' --exclude='*.db' --exclude=.env \
-    --exclude=backtest_cache.json --exclude=research_cache --exclude=portfolio_data --exclude=nse_files \
-    --exclude=logs --exclude=htmlcov --exclude=.pytest_cache --exclude=deploy --exclude=.coverage \
-    -czf "$TARBALL" .
+git archive --format=tar.gz -o "$TARBALL" HEAD
 $SSH "mkdir -p ~/$NAME"
 scp -i "$KEY_FILE" -o StrictHostKeyChecking=accept-new "$TARBALL" "ubuntu@$IP:~/${NAME}.tar.gz"
 # Extracting over the old copy never deletes a file removed from the code, so a deleted module would linger and still be
@@ -187,12 +193,13 @@ scp -i "$KEY_FILE" -o StrictHostKeyChecking=accept-new "$TARBALL" "ubuntu@$IP:~/
 $SSH "cd ~/$NAME && rm -rf src scripts tests docs && tar -xzf ~/${NAME}.tar.gz -C ~/$NAME && rm ~/${NAME}.tar.gz"
 rm -f "$TARBALL"
 # Record WHAT is running, so "which commit is in production?" has an answer (and so a rollback knows where to go back to).
-DEPLOYED="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)$(git diff --quiet HEAD 2>/dev/null || echo '+uncommitted-changes') $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+DEPLOYED="$(git rev-parse --short HEAD) $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+[ -z "$(git status --porcelain --untracked-files=no)" ] || DEPLOYED="$DEPLOYED (uncommitted changes were NOT deployed)"
 $SSH "echo '$DEPLOYED' > ~/$NAME/.deployed-commit"
 echo "== Deployed: $DEPLOYED =="
 
 echo "== Watchdog: every 15 minutes, a Telegram message if a bot container is down or silent (and when it is back) =="
-scp -i "$KEY_FILE" -o StrictHostKeyChecking=accept-new deploy/watchdog.sh "ubuntu@$IP:~/bot-watchdog.sh"
+git show HEAD:deploy/watchdog.sh | $SSH "cat > ~/bot-watchdog.sh"  # the committed file: LF, whatever this PC does to line endings
 $SSH "chmod +x ~/bot-watchdog.sh && (crontab -l 2>/dev/null | grep -v bot-watchdog; echo '*/15 * * * * \$HOME/bot-watchdog.sh') | crontab -"
 
 if ! $SSH "test -f ~/$NAME/.env"; then
