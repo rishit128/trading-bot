@@ -19,7 +19,12 @@ for service in trading-bot intraday-bot; do
     health=$($COMPOSE ps --format '{{.Health}}' "$service" 2>/dev/null | head -1)
     [ "$health" != "unhealthy" ] || problem="$problem $service is unhealthy (its loop is stuck or every cycle is failing: docker compose ps);"
 done
-if [ -z "$problem" ] && [ -z "$($COMPOSE logs --since 75m trading-bot 2>/dev/null | grep -v '"ts"')" ]; then
+# A container that has only just (re)started has not printed anything yet: give it five minutes before calling it silent
+# (a deploy right before a cron run once raised a false alarm).
+swing_id=$($COMPOSE ps -q trading-bot 2>/dev/null | head -1)
+started=$(date -d "$(sudo docker inspect -f '{{.State.StartedAt}}' "$swing_id" 2>/dev/null)" +%s 2>/dev/null || echo 0)
+if [ -z "$problem" ] && [ $(( $(date +%s) - started )) -gt 300 ] \
+    && [ -z "$($COMPOSE logs --since 75m trading-bot 2>/dev/null | grep -v '"ts"')" ]; then
     problem=" trading-bot has printed nothing for 75 minutes (stuck?);"
 fi
 

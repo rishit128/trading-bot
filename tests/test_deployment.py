@@ -94,3 +94,9 @@ def test_the_watchdog_reports_an_unhealthy_container():
 def test_a_deploy_records_which_commit_it_put_on_the_server():
     """So that production can be asked what it runs, and a rollback knows what to go back to."""
     assert "git rev-parse --short HEAD" in DEPLOY and ".deployed-commit" in DEPLOY
+
+
+def test_the_watchdog_gives_a_just_restarted_container_time_before_calling_it_silent():
+    """A deploy right before a cron run raised a false 'printed nothing for 75 minutes' alert once."""
+    text = (ROOT / "deploy" / "watchdog.sh").read_text(encoding="utf-8")
+    assert "StartedAt" in text and "-gt 300" in text and text.index("-gt 300") < text.index("printed nothing for 75 minutes")
