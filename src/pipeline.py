@@ -19,6 +19,7 @@ from src.engine.agent_signal import AgentSignal, SignalDetails
 from src.engine.enums import NOT_A_PLACED_BUY, SILENT_STATUSES, Action, OrderStatus
 from src.engine.ports import Broker, ChargesFees
 from src.engine.risk_engine import Portfolio, RiskDecision, RiskEngine, drawdown_pause
+from src.engine.rules import rule_verdict
 from src.engine.strategy import Decision, combine_signals, trend_exit_decision
 from src.results import SymbolResult, Verdict
 from src.versions import VERSIONS
@@ -347,6 +348,7 @@ class TradingPipeline:
                 risk_reason=risk.reason,
                 signals_json=json.dumps({n: sig.to_json_dict() if sig else None for n, sig in signals.items()}),
                 snapshot_json=json.dumps(dataclasses.asdict(snap)),
+                rule_action=rule_verdict(snap.price, snap.ma50, snap.ma200, snap.rsi),
                 **details_columns(tech.details if tech is not None else None),
                 prompt_version=VERSIONS["prompt"],
                 feature_version=VERSIONS["feature"],

@@ -5,8 +5,9 @@ average") used to be written out separately in the live scanner, the AI's mechan
 tool and the research signals. When one copy changed the others silently disagreed, and a backtest could test a different
 strategy than the one running. Every consumer now imports from here.
 
-Scalar functions take floats (the live path, one stock at a time); the `_mask` functions take pandas Series or numpy
-arrays (the research path, whole tables at once). tests/test_rules.py proves the two forms agree."""
+The functions take floats, one stock at a time."""
+
+from src.engine.enums import Action
 
 RSI_OVERBOUGHT = 70.0  # RSI(14) at or above this is "overbought": no new entry
 
@@ -35,6 +36,13 @@ def overbought(rsi: float) -> bool:
 def entry_filter(price: float, ma50: float, ma200: float, rsi: float) -> bool:
     """The mechanical entry filter: an uptrend that is not overbought."""
     return uptrend(price, ma50, ma200) and not overbought(rsi)
+
+
+def rule_verdict(price: float, ma50: float, ma200: float, rsi: float) -> Action:
+    """What the mechanical entry rule says about a stock: BUY when `entry_filter` passes, else HOLD (it never says SELL:
+    exits belong to the trend exit and the stop). Recorded on every decision as `rule_action`, the yardstick the AI is
+    scored against, and shown to the AI as its baseline."""
+    return Action.BUY if entry_filter(price, ma50, ma200, rsi) else Action.HOLD
 
 
 def trend_broken(price: float, ma200: float) -> bool:

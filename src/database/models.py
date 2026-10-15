@@ -57,6 +57,10 @@ class DecisionRecord(Base):
     # deterministic mechanical filter - the inputs to the rubber-stamp / approval-rate measurement.
     raw_model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     rule_alignment: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)  # agree / deviate / None
+    # The mechanical entry rule's own verdict on this snapshot (BUY/HOLD), computed in code. Unlike `rule_alignment`
+    # (the analyst's answer against the rule, before the critic) it does not move when the critic vetoes the call.
+    # NULL on rows recorded before 2026-10-16: readers recompute it from `snapshot_json`.
+    rule_action: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     falsification: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # the concrete thing that proves it wrong
     # Version stamps (src/versions.py), so a change of prompt, indicators or rules can be attributed per decision.
     prompt_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)

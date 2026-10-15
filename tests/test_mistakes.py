@@ -18,10 +18,16 @@ def test_a_group_below_the_minimum_is_not_judged():
     assert not g.sufficient and g.mean_net is None and g.n == 4
 
 
+def on(day, ret, symbol, stop=False, action="BUY"):
+    return Judged(symbol, f"2025-01-{day:02d}", action, 0.75, "agents", "why", ret, stop)
+
+
 def test_mean_interval_win_and_stop_rates():
-    g = group_stats("g", [j(0.10), j(-0.10, stop=True), j(0.10), j(-0.10)], 4)
+    rows = [on(6, 0.10, "A"), on(7, -0.10, "B", stop=True), on(8, 0.10, "C"), on(9, -0.10, "D")]
+    g = group_stats("g", rows, 4)
     assert g.mean_net == pytest.approx(0.0) and g.win_rate == 0.5 and g.stop_rate == 0.25
-    assert g.ci95 == pytest.approx(1.96 * (0.04 / 3) ** 0.5 / 2)  # sample sd of four +-10% results
+    assert g.ci95 == pytest.approx(1.96 * (0.04 / 3) ** 0.5 / 2)  # four dates, one +-10% result each
+    assert (g.used, g.dates) == (4, 4)
 
 
 def test_breakdown_groups_by_key_and_confidence_buckets_have_the_right_edges():
@@ -115,16 +121,91 @@ def test_a_veto_is_recognised_from_the_reasoning_and_model_fields_are_loaded(tmp
     assert row.model == "m1" and row.rule_alignment == "agree"
 
 
-def test_ai_vs_rule_recovers_the_mechanical_call_from_alignment():
+def test_ai_vs_rule_classifies_by_the_rules_own_verdict():
     from src.learning.mistakes import Judged, ai_vs_rule
 
-    def j(action, alignment, source="agents"):
-        return Judged("X", "2026-09-01", action, 0.7, source, "r", 0.0, False, rule_alignment=alignment)
+    def j(action, rule, source="agents"):
+        return Judged("X", "2026-09-01", action, 0.7, source, "r", 0.0, False, rule_action=rule)
 
-    assert ai_vs_rule(j("BUY", "agree")) == "rule BUY, AI bought"
-    assert ai_vs_rule(j("HOLD", "deviate")) == "rule BUY, AI passed"
-    assert ai_vs_rule(j("SELL", "deviate")) == "rule BUY, AI passed"
-    assert ai_vs_rule(j("BUY", "deviate")) == "rule passed, AI bought"
-    assert ai_vs_rule(j("HOLD", "agree")) == "both passed"
-    assert ai_vs_rule(j("SELL", "agree", source="trend_exit")) == "n/a"  # a rule-based exit is not an AI call
-    assert ai_vs_rule(j("HOLD", None)) == "n/a"  # no alignment recorded (fail-safe HOLD, older rows)
+    assert ai_vs_rule(j("BUY", "BUY")) == "rule BUY, AI bought"
+    assert ai_vs_rule(j("HOLD", "BUY")) == "rule BUY, AI passed"
+    assert ai_vs_rule(j("SELL", "BUY")) == "rule BUY, AI passed"
+    assert ai_vs_rule(j("BUY", "HOLD")) == "rule passed, AI bought"
+    assert ai_vs_rule(j("HOLD", "HOLD")) == "both passed"
+    assert ai_vs_rule(j("SELL", "HOLD", source="trend_exit")) == "n/a"  # a rule-based exit is not an AI call
+    assert ai_vs_rule(j("HOLD", None)) == "n/a"  # the rule's verdict is unknown (no snapshot)
+
+
+def test_a_critic_vetoed_rule_buy_is_a_pass_on_a_rule_buy_not_both_passed():
+    """The bug: the analyst agreed with the rule's BUY, the critic turned it into a HOLD, and the old classification (from
+    the analyst's pre-critic alignment) filed it as 'both passed'."""
+    from src.learning.mistakes import Judged, ai_vs_rule, rule_buy_passes
+
+    vetoed = Judged("X", "2026-09-01", "HOLD", 0.3, "agents", "BUY [reflection vetoed to HOLD: risk]", 0.0, False,
+                    rule_alignment="agree", rule_action="BUY")  # fmt: skip
+    analyst = Judged(
+        "Y", "2026-09-01", "HOLD", 0.6, "agents", "no catalyst", 0.0, False, rule_alignment="deviate", rule_action="BUY"
+    )
+    assert ai_vs_rule(vetoed) == "rule BUY, AI passed" and rule_buy_passes(vetoed) == "critic vetoed the BUY"
+    assert ai_vs_rule(analyst) == "rule BUY, AI passed" and rule_buy_passes(analyst) == "analyst passed"
+
+
+def test_older_rows_get_the_rules_verdict_from_their_snapshot():
+    from src.learning.mistakes import rule_action_from_snapshot
+
+    up = {"price": 110.0, "ma50": 100.0, "ma200": 90.0, "rsi": 55.0}
+    assert rule_action_from_snapshot(json.dumps(up)) == "BUY"
+    assert rule_action_from_snapshot(json.dumps({**up, "rsi": 75.0})) == "HOLD"  # overbought
+    assert rule_action_from_snapshot(json.dumps({**up, "price": 95.0})) == "HOLD"  # below MA50
+    assert rule_action_from_snapshot(json.dumps({"price": 1.0})) is None and rule_action_from_snapshot(None) is None
+
+
+def test_the_backfill_agrees_with_the_recorded_alignment_on_every_call_the_critic_left_alone():
+    """Acceptance check for the backfill: where the critic did not veto, the analyst's alignment and its action pin down the
+    rule's verdict, and the snapshot recomputation must give the same answer."""
+    from src.learning.mistakes import rule_action_from_snapshot
+
+    cases = [  # (snapshot, final action, recorded alignment)
+        ({"price": 110.0, "ma50": 100.0, "ma200": 90.0, "rsi": 55.0}, "BUY", "agree"),
+        ({"price": 110.0, "ma50": 100.0, "ma200": 90.0, "rsi": 55.0}, "HOLD", "deviate"),
+        ({"price": 95.0, "ma50": 100.0, "ma200": 90.0, "rsi": 55.0}, "HOLD", "agree"),
+        ({"price": 95.0, "ma50": 100.0, "ma200": 90.0, "rsi": 55.0}, "BUY", "deviate"),
+    ]
+    for snapshot, action, alignment in cases:
+        implied = action if alignment == "agree" else ("HOLD" if action == "BUY" else "BUY")
+        assert rule_action_from_snapshot(json.dumps(snapshot)) == implied
+
+
+def test_overlapping_outcomes_of_one_stock_count_once_per_horizon_block():
+    from src.learning.mistakes import independent_sample
+
+    days = [f"2025-02-{d:02d}" for d in range(1, 26)]  # 25 sessions
+    rows = [Judged("AAA", d, "BUY", 0.7, "agents", "r", 0.01, False) for d in days]
+    rows += [Judged("BBB", d, "BUY", 0.7, "agents", "r", 0.02, False) for d in days[:3]]
+    kept = independent_sample(rows, horizon=20)
+    assert [(k.symbol, k.bar_date) for k in kept] == [("AAA", days[0]), ("BBB", days[0]), ("AAA", days[20])]
+    g = group_stats("g", rows, 2, horizon=20)
+    assert (g.n, g.used, g.dates) == (28, 3, 2)  # 28 rows were 3 independent observations on 2 dates
+
+
+def test_the_report_line_states_the_dates_behind_each_interval():
+    from src.learning.mistakes import fmt
+
+    rows = [on(6, 0.10, "A"), on(7, -0.10, "B"), on(8, 0.10, "C"), on(9, -0.10, "D")]
+    assert "4 independent observations on 4 dates" in fmt(group_stats("g", rows, 4))
+    assert "insufficient data (1 independent observations on 1 dates)" in fmt(group_stats("g", [on(6, 0.1, "A")] * 3, 2))
+
+
+def test_every_decision_records_the_rules_own_verdict(tmp_path):
+    """Written by the pipeline at decision time, so the report never has to infer it from the analyst's answer."""
+    from sqlalchemy import select
+
+    from tests.test_llm_and_pipeline import make_pipeline
+
+    pipe, _, sessions = make_pipeline(tmp_path, technical_action="HOLD")
+    pipe.run_once()
+    with sessions() as s:
+        rows = s.execute(select(DecisionRecord.rule_action, DecisionRecord.snapshot_json)).all()
+    from src.learning.mistakes import rule_action_from_snapshot
+
+    assert rows and all(rule in ("BUY", "HOLD") and rule == rule_action_from_snapshot(snap) for rule, snap in rows)

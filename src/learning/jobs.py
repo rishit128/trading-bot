@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 
 from src.control import Control
 from src.database import DecisionRecord, HoldoutMark, OutcomeRecord
-from src.learning.mistakes import ai_vs_rule, breakdown, fmt, load_judged
+from src.learning.mistakes import ai_vs_rule, breakdown, fmt, load_judged, rule_buy_passes
 from src.learning.outcomes import HORIZONS, LabelSummary, label_outcomes
 
 log = logging.getLogger(__name__)
@@ -76,8 +76,13 @@ def learning_report(sessions, horizon: int = 20, min_samples: int = 30) -> str:
         "Outcomes labelled: " + ", ".join(f"{h} sessions {labelled.get(h, 0)}" for h in HORIZONS),
         f"AI vs the plain entry rule ({horizon}-session outcome, net of costs):",
     ]
-    groups = [g for g in breakdown(load_judged(sessions, horizon), ai_vs_rule, min_samples) if g.label != "n/a"]
+    judged = load_judged(sessions, horizon)
+    groups = [g for g in breakdown(judged, ai_vs_rule, min_samples, horizon) if g.label != "n/a"]
     lines += [f"  {fmt(g)}" for g in groups] or ["  nothing matured yet"]
+    passes = [j for j in judged if ai_vs_rule(j) == "rule BUY, AI passed"]
+    if passes:
+        lines.append("  Of the rule BUYs it passed on:")
+        lines += [f"    {fmt(g)}" for g in breakdown(passes, rule_buy_passes, min_samples, horizon)]
     lines.append("  The AI adds value only if 'rule BUY, AI bought' beats 'rule BUY, AI passed'.")
     if mark is not None:
         lines.append(
