@@ -4,6 +4,7 @@
 pytest==8.3.3
 keyring==25.7.0  # the real-portfolio agent's unit tests (its browser tests skip without playwright)
 pytest-cov==5.0.0
+boto3==1.43.103  # the same tests' AWS secrets backend (kept in step with requirements-portfolio.txt)
 mypy==1.13.0
 pandas-stubs==3.0.5.260914
 

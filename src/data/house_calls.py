@@ -313,7 +313,9 @@ def call_for(
     return None
 
 
-def recently_stopped(calls: Iterable[HouseCall], symbol: str, now: datetime, within: timedelta = timedelta(days=1)) -> Optional[HouseCall]:
+def recently_stopped(
+    calls: Iterable[HouseCall], symbol: str, now: datetime, within: timedelta = timedelta(days=1)
+) -> Optional[HouseCall]:
     """The house's call on this stock that hit its stop-loss in the last day, if any (a warning for a stock we hold)."""
     for c in calls:
         if c.symbol == symbol and not c.is_open and c.exit_at is not None and now - c.exit_at <= within:

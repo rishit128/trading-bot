@@ -138,6 +138,7 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     assert gap.universe == engine.universe and (gap.risk_pct, gap.max_position_pct, gap.max_positions) == (0.01, 0.25, 4)
     assert gap.find_setup is find_gap_setup and gap.entry_until == GAP_ENTRY_UNTIL and gap.label == "GAP-GO"
     assert gap.version == GAPGO_VERSION and gap.archive is None and gap.live is True and "gap-and-go" in out
+    assert engine.fetch_bars is gap.fetch_bars is started["gaponly"].fetch_bars  # all three engines share one download per cycle
     assert gap.record_capped is True
     only = started["gaponly"]  # the control: the same everything except the rule, its window, label, version and account
     assert only.universe == engine.universe and (only.risk_pct, only.max_position_pct, only.max_positions) == (0.01, 0.25, 4)

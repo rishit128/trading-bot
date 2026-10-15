@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from src.data.india import IST
-from src.data.intraday_bars import BarArchive, fetch_5m_bars, fetch_today_bars
+from src.data.intraday_bars import BarArchive, fetch_5m_bars, fetch_today_bars, shared_download
 from src.database import make_session_factory
 
 
@@ -108,3 +108,70 @@ def test_a_session_is_keyed_by_its_ist_date_not_its_utc_date(archive):
     late = frame((2026, 9, 22), n=1, start=(0, 30))
     archive.save({"AAA": late})
     assert archive.days() == ["2026-09-22"]
+
+
+# -- one download shared by the engines of a cycle -----------------------------------------------------------------------------
+def counting_fetch(missing=()):
+    """A fake download that records each call's symbols and returns a distinguishable frame per call."""
+    calls = []
+
+    def fetch(symbols):
+        calls.append(list(symbols))
+        return {s: frame((2026, 9, 21), base=100.0 * len(calls)) for s in symbols if s not in missing}
+
+    return fetch, calls
+
+
+def test_engines_in_the_same_cycle_share_one_download_and_a_new_cycle_downloads_again():
+    fetch, calls = counting_fetch()
+    now = [0.0]
+    download = shared_download(fetch, ttl_seconds=90, clock=lambda: now[0])
+    first = download(["A", "B", "C"])
+    now[0] = 12.0  # the next engine of the same cycle, seconds later
+    assert download(["A", "B", "C"])["A"] is first["A"] and calls == [["A", "B", "C"]]
+    now[0] = 300.0  # the next cycle, five minutes later
+    assert download(["A", "B", "C"])["A"] is not first["A"] and len(calls) == 2
+
+
+def test_a_second_engine_with_other_candidates_downloads_only_what_the_first_did_not():
+    fetch, calls = counting_fetch()
+    download = shared_download(fetch, clock=lambda: 0.0)
+    download(["A", "B", "C"])
+    out = download(["B", "C", "D"])  # e.g. this engine already holds A
+    assert calls == [["A", "B", "C"], ["D"]] and set(out) == {"B", "C", "D"}
+
+
+def test_results_keep_the_callers_symbol_order_not_the_download_order():
+    fetch, _ = counting_fetch()
+    download = shared_download(fetch, clock=lambda: 0.0)
+    download(["C", "A"])
+    assert list(download(["A", "B", "C"])) == ["A", "B", "C"]  # which signals win a limited number of slots depends on this
+
+
+def test_a_symbol_the_download_no_longer_returns_is_dropped_not_served_from_an_old_copy():
+    now = [0.0]
+    answers = [{"A": frame((2026, 9, 21))}, {}]  # the second download comes back without A
+    download = shared_download(lambda symbols: answers.pop(0), ttl_seconds=90, clock=lambda: now[0])
+    assert "A" in download(["A"])
+    now[0] = 100.0  # past the ttl
+    assert download(["A"]) == {}
+
+
+def test_symbols_without_data_are_omitted_and_asked_for_again():
+    fetch, calls = counting_fetch(missing={"B"})
+    download = shared_download(fetch, clock=lambda: 0.0)
+    assert set(download(["A", "B"])) == {"A"} and set(download(["A", "B"])) == {"A"}
+    assert calls == [["A", "B"], ["B"]]  # A is reused; B is retried
+
+
+def test_a_copy_exactly_as_old_as_the_ttl_is_replaced_one_second_younger_is_kept():
+    fetch, calls = counting_fetch()
+    now = [0.0]
+    download = shared_download(fetch, ttl_seconds=90, clock=lambda: now[0])
+    download(["A"])
+    now[0] = 89.0
+    download(["A"])
+    assert len(calls) == 1
+    now[0] = 90.0
+    download(["A"])
+    assert len(calls) == 2

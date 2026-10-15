@@ -91,7 +91,9 @@ def test_the_prompt_line_quotes_the_portal_numbers_only():
 
 
 def test_which_calls_feed_which_strategy():
-    calls = parse_calls([body(CAMS, RBL, ABC, DMART_SELL, BSE_STOPPED, {**CAMS, "ScripCode": "OLD", "PublishedDtm": "14 Oct 2026 09:30 AM"})])
+    calls = parse_calls(
+        [body(CAMS, RBL, ABC, DMART_SELL, BSE_STOPPED, {**CAMS, "ScripCode": "OLD", "PublishedDtm": "14 Oct 2026 09:30 AM"})]
+    )
     assert swing_buys(calls) == ["RBLBANK", "ABCAPITAL"]  # open Swing / Stellar buys; never intraday, sells or closed
     assert intraday_buys(calls, date(2026, 10, 15)) == ["CAMS"]  # today's only: yesterday's intraday call is history
     assert list(open_sells(calls)) == ["DMART"]
@@ -128,10 +130,10 @@ def test_the_sink_stores_each_read_and_announces_only_new_calls(tmp_path):
     store = HouseCallStore(make_session_factory(f"sqlite:///{tmp_path / 'h.db'}"), now_fn=lambda: NOW)
     told = []
     sink = make_research_sink(store, told.append)
-    assert sink(["{\"other\": 1}", body(CAMS, RBL)]) == 2 and told == []  # the first read announces nothing
+    assert sink(['{"other": 1}', body(CAMS, RBL)]) == 2 and told == []  # the first read announces nothing
     assert sink([body(CAMS, RBL, ABC)]) == 3
     assert len(told) == 1 and "ABCAPITAL" in told[0] and "Stellar Pick BUY" in told[0]
-    assert sink(["{\"other\": 1}"]) == 0  # no call list in this read: the snapshot is left alone (and goes stale)
+    assert sink(['{"other": 1}']) == 0  # no call list in this read: the snapshot is left alone (and goes stale)
     assert {c.symbol for c in store.current()} == {"CAMS", "RBLBANK", "ABCAPITAL"}
 
 
@@ -334,3 +336,149 @@ def test_snapshot_times_are_handled_in_utc_and_ist(tmp_path):
     store.replace(parse_calls([body(CAMS)]))
     [c] = store.current()
     assert c.published == datetime(2026, 10, 15, 9, 36, tzinfo=IST)
+
+
+# ---------------------------------------------------------------- the browser read, the run and the command (no browser)
+class FakeResponse:
+    def __init__(self, text, fails=False):
+        self._text, self.fails = text, fails
+
+    def text(self):
+        if self.fails:
+            raise RuntimeError("aborted by the guard")
+        return self._text
+
+
+class FakeRequest:
+    def __init__(self, url, text="[]", kind="xhr", response=True, fails=False):
+        self.url, self.resource_type = url, kind
+        self._response = FakeResponse(text, fails) if response else None
+
+    def response(self):
+        return self._response
+
+
+class FakePage:
+    """Just enough of a Playwright page: goto fires the given requests, then the page sits at `lands_on`."""
+
+    def __init__(self, requests, lands_on="https://p.in/nv1/Dashboard/ResearchViewMore.html", idle_fails=False):
+        self.requests, self.url, self.lands_on, self.idle_fails = requests, "", lands_on, idle_fails
+        self.listeners, self.visited = [], []
+
+    def on(self, event, fn):
+        self.listeners.append(fn)
+
+    def remove_listener(self, event, fn):
+        self.listeners.remove(fn)
+
+    def goto(self, url, wait_until=None):
+        self.visited.append(url)
+        self.url = self.lands_on
+        for r in self.requests:
+            for fn in list(self.listeners):
+                fn(r)
+
+    def wait_for_load_state(self, state, timeout=None):
+        if self.idle_fails:
+            raise TimeoutError("never idle")
+
+
+def test_one_read_returns_the_portals_own_data_responses_only():
+    from src.portfolio.research_watch import read_research_once
+
+    page = FakePage(
+        [
+            FakeRequest("https://p.in/SMDService/api/v1/SMD/ClaimV3", body(CAMS)),
+            FakeRequest("https://other.site/track", "{}"),  # another site
+            FakeRequest("https://p.in/CIAMS/api/v1/UserManagement/isvalidsession", "{}"),  # a login call
+            FakeRequest("https://p.in/nv1/app.js", "code", kind="script"),
+            FakeRequest("https://p.in/SMDService/api/v1/SMD/ClaimV3", response=False),
+            FakeRequest("https://p.in/SMDService/api/v1/SMD/ClaimV3", fails=True),
+        ],
+        idle_fails=True,
+    )
+    assert read_research_once(page, "https://p.in/nv1/") == [body(CAMS)]
+    assert page.visited == ["https://p.in/nv1/Dashboard/ResearchViewMore.html"] and page.listeners == []
+    assert read_research_once(FakePage([], lands_on="https://p.in/nv1/login/login.html"), "https://p.in/nv1/") is None
+
+
+class FakeRun:
+    """Stands in for PortalRun: entering it is the login (or its failure), leaving it the logout."""
+
+    fail = None
+
+    def __init__(self, *args, **kwargs):
+        self.base, self.blocked, self.logged_out = "https://p.in/nv1/", [], None
+
+    def __enter__(self):
+        if FakeRun.fail is not None:
+            raise FakeRun.fail
+        return "page"
+
+    def __exit__(self, *exc):
+        self.logged_out = True
+
+
+@pytest.fixture
+def portal_run(monkeypatch, tmp_path):
+    import src.portfolio.runs as runs
+
+    monkeypatch.setattr(runs, "PortalRun", FakeRun)
+    monkeypatch.setattr(runs, "watch_research", lambda page, base, on_bodies, stop, **kw: f"day over ({on_bodies([body(CAMS)])})")
+    FakeRun.fail = None
+    yield runs, runs.RunStore(tmp_path / "pd")
+    FakeRun.fail = None
+
+
+def test_the_watch_run_logs_in_once_and_out_and_reports_how_it_ended(portal_run):
+    runs, store = portal_run
+    result = runs.watch_portfolio_research(None, lambda: "1234", store, len, threading.Event())
+    assert result["ended"] == "day over (1)" and result["logged_out"] is True and not store.lock_file.exists()
+
+
+def test_the_watch_run_keeps_the_portfolio_runs_safety_stops(portal_run):
+    from src.portfolio.session import LoginFailed
+    from src.portfolio.telegram_otp import OtpTimeout
+
+    runs, store = portal_run
+    FakeRun.fail = OtpTimeout("no OTP within 180s")
+    assert "no OTP" in runs.watch_portfolio_research(None, lambda: "", store, len, threading.Event())["error"]
+    FakeRun.fail = RuntimeError("boom")
+    assert "unexpected RuntimeError" in runs.watch_portfolio_research(None, lambda: "", store, len, threading.Event())["error"]
+    FakeRun.fail = LoginFailed("mpin", "Invalid MPIN")
+    assert "login stopped at mpin" in runs.watch_portfolio_research(None, lambda: "", store, len, threading.Event())["error"]
+    assert "MPIN step failed" in runs.watch_portfolio_research(None, lambda: "", store, len, threading.Event())["error"]
+    store.clear_mpin_block()
+    with store.lock():  # another run in progress
+        assert "in progress" in runs.watch_portfolio_research(None, lambda: "", store, len, threading.Event())["error"]
+    store.touch_lock()  # no lock file: harmless
+
+
+def test_the_research_command_reports_the_end_of_the_day_or_why_it_could_not_run(monkeypatch):
+    import src.app.portfolio_agent as agent
+
+    told = []
+    monkeypatch.setattr(agent.vault, "load", lambda: "creds")
+    monkeypatch.setattr(agent, "watch_portfolio_research", lambda *a, **k: {"ended": "day over (15:35 IST)"})
+    agent.run_research_watch(lambda: "", told.append, len, threading.Event())
+    monkeypatch.setattr(agent, "watch_portfolio_research", lambda *a, **k: {"error": "no OTP: timeout"})
+    agent.run_research_watch(lambda: "", told.append, len, threading.Event())
+
+    def missing():
+        raise agent.vault.MissingCredentials("no login saved")
+
+    monkeypatch.setattr(agent.vault, "load", missing)
+    assert agent.run_research_watch(lambda: "", told.append, len, threading.Event()) == {"error": "no login saved"}
+    assert "ended: day over" in told[0] and "did not run: no OTP" in told[1] and "no login saved" in told[2]
+
+
+def test_a_crashing_watch_is_reported_not_raised():
+    told = []
+
+    def runner(*args):
+        raise RuntimeError("boom")
+
+    cmd = PortfolioCommand(told.append, research_sink=len, research_runner=runner)
+    cmd.research_start()
+    cmd._thread.join(2)
+    assert told and "Research watch failed: RuntimeError" in told[-1]

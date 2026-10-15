@@ -412,3 +412,20 @@ def test_a_bar_still_forming_is_never_acted_on_only_a_finished_one(tmp_path):
     assert "entered 0" in eng.step() and broker.holdings() == []
     now[0] = at(9, 40).astimezone(timezone.utc)
     assert "entered 1" in eng.step()  # 09:40:20: the bar has finished
+
+
+def test_the_breakout_engine_trades_the_same_whether_or_not_earlier_sessions_are_in_the_downloaded_frame(tmp_path):
+    """The three engines now share one 5-day download, so ORB receives earlier sessions it used to be spared. Its decision must
+    depend on today's finished bars only."""
+    today = make_bars(BREAKOUT, volumes=VOLS)
+    earlier = make_bars([90, 95, 80, 99, 120, 70], volumes=[5000] * 6)  # a wild previous session
+    earlier.index = earlier.index - timedelta(days=1)
+    alone, broker_a, *_ = engine(tmp_path, {"AAA": today}, at(9, 45), db="alone.db")
+    shared, broker_b, *_ = engine(tmp_path, {"AAA": pd.concat([earlier, today])}, at(9, 45), db="shared.db")
+    assert alone.step() == shared.step() == "scanned 1 stocks, entered 1"
+    assert [(h["symbol"], h["qty"], h["stop"]) for h in broker_a.holdings()] == [
+        (h["symbol"], h["qty"], h["stop"]) for h in broker_b.holdings()
+    ]
+    assert [(r.bar_time, r.signal_price, r.outcome) for r in signals(broker_a)] == [
+        (r.bar_time, r.signal_price, r.outcome) for r in signals(broker_b)
+    ]

@@ -6,8 +6,9 @@ history grows by one session a day and a rule can eventually be tested on months
 restart, a backfill from Yahoo's window or an import of an older cache never duplicates a bar."""
 
 import logging
+import time
 from datetime import date
-from typing import Callable, Dict, Iterable, List, Optional, Set
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import pandas as pd
 from sqlalchemy import insert, select
@@ -57,6 +58,27 @@ def session_rows(df: pd.DataFrame, day: date) -> pd.DataFrame:
 def fetch_today_bars(symbols: List[str], download: Optional[Callable] = None) -> Dict[str, pd.DataFrame]:
     """The latest session's 5-minute bars per symbol, in one bulk call."""
     return fetch_5m_bars(symbols, "1d", download)
+
+
+def shared_download(
+    fetch: Callable[[List[str]], Dict[str, pd.DataFrame]], ttl_seconds: float = 90.0, clock: Callable[[], float] = time.monotonic
+) -> Callable[[List[str]], Dict[str, pd.DataFrame]]:
+    """Let engines stepped one after another in the same cycle share one download: a symbol fetched within `ttl_seconds` is
+    reused and only the rest is downloaded. Cycles are five minutes apart, so every new cycle downloads afresh. Results come
+    back in the caller's symbol order (which signals win a limited number of slots can depend on it)."""
+    stored: Dict[str, Tuple[float, pd.DataFrame]] = {}
+
+    def download(symbols: List[str]) -> Dict[str, pd.DataFrame]:
+        now = clock()
+        stale = [s for s in symbols if s not in stored or now - stored[s][0] >= ttl_seconds]
+        for symbol in stale:
+            stored.pop(symbol, None)  # a symbol the download no longer returns must not be served from an old copy
+        if stale:
+            for symbol, frame in fetch(stale).items():
+                stored[symbol] = (now, frame)
+        return {s: stored[s][1] for s in symbols if s in stored}
+
+    return download
 
 
 class BarArchive:

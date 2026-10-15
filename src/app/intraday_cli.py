@@ -12,7 +12,7 @@ from src.app.wiring import (
     make_paper_broker,
     open_house_calls,
 )
-from src.data.intraday_bars import BarArchive, fetch_5m_bars
+from src.data.intraday_bars import BarArchive, fetch_5m_bars, shared_download
 from src.engine.costs import intraday_fees
 from src.intraday.engine import IntradayEngine, run_together
 from src.intraday.strategy import GAP_ENTRY_UNTIL, GAP_ONLY_ENTRY_UNTIL, find_gap_only_setup, find_gap_setup
@@ -53,14 +53,17 @@ def run_intraday(live: bool) -> None:
             **rule,
         )
 
-    # record_capped: a breakout the 5-position limit left out is still recorded (as SKIPPED), so the forward record covers
-    # every signal of the day, not only the first five
+    # One download per cycle for all three engines (5 days: the gap rules need the previous close; the breakout rule uses
+    # only today's rows). record_capped: a signal the 5-position limit left out is still recorded (as SKIPPED), so the
+    # forward record covers every signal of the day, not only the first five.
+    bars = shared_download(lambda symbols: fetch_5m_bars(symbols, "5d"))
     # The breakout engine also reads the broker's research calls (today's Intraday buys join its scan; an open SELL call
     # blocks a buy). The gap engines do not: they are a matched pair, and an input on one side would spoil the comparison.
     house_calls = open_house_calls()
     engines = [
         engine(
             broker,
+            fetch_bars=bars,
             archive=BarArchive(broker.sessions) if settings.intraday_archive else None,
             record_capped=True,
             house_calls_fn=house_calls.current,
@@ -70,7 +73,7 @@ def run_intraday(live: bool) -> None:
         engines.append(
             engine(
                 make_paper_broker(settings, db_url(), fees=intraday_fees),
-                fetch_bars=lambda symbols: fetch_5m_bars(symbols, "5d"),
+                fetch_bars=bars,
                 find_setup=rule,
                 entry_until=until,
                 label=name,

@@ -9,7 +9,8 @@ soon as the portal shows its login page (the session ended: never logged in agai
 import logging
 import re
 import threading
-from datetime import datetime, time as dtime, timezone
+from datetime import datetime, timezone
+from datetime import time as dtime
 from typing import Any, Callable, List, Optional
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
@@ -27,8 +28,6 @@ MAX_BODY = 2_000_000  # characters; the research list is ~30 KB
 def read_research_once(page, base: str, settle_ms: int = 20_000) -> Optional[List[Any]]:
     """Open the Research page and return the portal's data responses (parsed JSON where possible), or None if the portal
     sent us to its login page instead (the session has ended)."""
-    from playwright.sync_api import TimeoutError as PlaywrightTimeout
-
     host = (urlsplit(base).hostname or "").lower()
     finished: list = []
 
@@ -40,8 +39,8 @@ def read_research_once(page, base: str, settle_ms: int = 20_000) -> Optional[Lis
         page.goto(base + RESEARCH_PAGE, wait_until="domcontentloaded")
         try:
             page.wait_for_load_state("networkidle", timeout=settle_ms)
-        except PlaywrightTimeout:
-            pass  # a page with a live price stream never goes idle: take what has loaded
+        except Exception:  # Playwright's timeout: a page with a live price stream never goes idle, take what has loaded
+            pass  # (any other failure shows up just below, as a page that is not the Research page or has no data)
     finally:
         page.remove_listener("requestfinished", collect)
     if LOGIN_PAGE.search(urlsplit(page.url).path):
