@@ -77,6 +77,7 @@ class TradingPipeline:
         fundamentals_fn: Optional[Callable[[str], Optional[Fundamentals]]] = None,
         broker_label: str = "",
         house_calls_fn: Optional[Callable[[], List[HouseCall]]] = None,
+        screen_verdict_fn: Optional[Callable[[str, float], str]] = None,
     ):
         names = [a.name for a in agents]
         if len(set(names)) != len(names):
@@ -94,8 +95,10 @@ class TradingPipeline:
         self.market_context_fn = market_context_fn
         self.fundamentals_fn = fundamentals_fn
         self.house_calls_fn = house_calls_fn  # the broker's research calls (src.data.house_calls); None = not wired
+        self.screen_verdict_fn = screen_verdict_fn  # the screener's verdict on one stock (recorded for research-only ones)
         self._calls: List[HouseCall] = []  # read once per cycle, so every stock in a cycle sees the same snapshot
         self._sources: Dict[str, str] = {}  # why each stock of this cycle is analysed (recorded with its decision)
+        self._screened: Dict[str, str] = {}  # the screener's verdict on this cycle's research-only stocks
         self._warned: set = set()  # house warnings already sent about held stocks
         self._notify = notify
         self._halt_kind: Optional[str] = None
@@ -257,8 +260,9 @@ class TradingPipeline:
 
     def _symbols(self, portfolio: Portfolio) -> Sequence[str]:
         """Held positions are always analysed (so exits work) even if the market scan fails. The stocks of open broker
-        Swing/Momentum/Stellar Pick buy calls are added after the scan's own list: they go through the same filter, AI and
-        risk engine as every other candidate."""
+        Swing/Momentum/Stellar Pick buy calls are added after the scan's own list. They skip the screener's filters but
+        go through the same AI and risk engine; what the screener and the mechanical rule would have said is recorded with
+        each decision (`screen_verdict`, `rule_action`), not acted on."""
         scanned = self._scanned(portfolio)
         research = swing_buys(self._calls)
         self._sources = {}
@@ -267,7 +271,18 @@ class TradingPipeline:
             self._sources[s] = "held" if s in portfolio.positions else (f"{found}+research" if s in research else found)
         for s in research:
             self._sources.setdefault(s, "research")
+        self._screened = {s: v for s in research if self._sources[s] == "research" and (v := self._screen(s, portfolio))}
         return list(self._sources)
+
+    def _screen(self, symbol: str, portfolio: Portfolio) -> Optional[str]:
+        """The screener's verdict on a research-only stock, or None (no screener, or it failed: this is a record only)."""
+        if self.screen_verdict_fn is None:
+            return None
+        try:
+            return self.screen_verdict_fn(symbol, portfolio.equity)
+        except Exception as e:
+            log.warning("no screen verdict for %s: %s: %s", symbol, type(e).__name__, e)
+            return None
 
     def _scanned(self, portfolio: Portfolio) -> List[str]:
         if self.universe_fn is None:
@@ -357,6 +372,7 @@ class TradingPipeline:
                 bar_date=snap.bar_date,
                 universe_size=universe_size,
                 candidate_source=self._sources.get(symbol),
+                screen_verdict=self._screened.get(symbol),
                 house_call_json=call.to_json() if (call := self.house_call(symbol)) is not None else None,
             )
             s.add(record)

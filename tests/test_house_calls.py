@@ -301,6 +301,43 @@ def test_open_swing_buy_calls_join_the_candidates_and_each_decision_records_why(
     assert HouseCall.from_dict(json.loads(rbl.house_call_json)) == agent.shown["RBLBANK"]
 
 
+def test_a_research_only_stock_skips_the_filters_and_what_they_would_say_is_recorded_not_acted_on(tmp_path):
+    """Record-only (C2): RBLBANK is below its 50-day average, so the rule says HOLD and the screener filtered it out; the
+    AI's BUY still stands. ABCAPITAL's screen check fails: recorded as unknown, and the cycle carries on."""
+    calls = [parse_calls([body(RBL, ABC, {**RBL, "ScripCode": "TCS"})])]
+    pipe, _, sessions, _ = swing(tmp_path, calls)
+    below_ma50 = {"RBLBANK": Snapshot("RBLBANK", 90.0, 98.0, 95.0, 60.0, 1000, bar_date="2026-10-14")}
+    pipe.snapshot_fn = lambda sym: below_ma50.get(sym) or Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000, bar_date="2026-10-14")
+    asked = []
+
+    def screen(symbol, equity):
+        asked.append((symbol, equity))
+        if symbol == "ABCAPITAL":
+            raise ValueError("scan failed")
+        return "filtered out"
+
+    pipe.screen_verdict_fn = screen
+    pipe.run_once()
+    rows = {d.symbol: (d.final_action, d.rule_action, d.screen_verdict) for d in decisions(sessions)}
+    assert rows == {"TCS": ("BUY", "BUY", None), "RBLBANK": ("BUY", "HOLD", "filtered out"), "ABCAPITAL": ("BUY", "BUY", None)}
+    assert sorted(asked) == [("ABCAPITAL", 100_000.0), ("RBLBANK", 100_000.0)]  # only research-only stocks are checked
+
+    from src.learning.jobs import research_gate_line
+
+    line = research_gate_line(sessions)
+    assert "2 stock-sessions, 2 AI BUYs" in line and "turned 1 of those BUYs into HOLDs" in line and "filtered out 1" in line
+
+
+def test_the_screeners_verdict_on_one_stock():
+    from src.data.universe import Candidate, ScreenConfig, UniverseScreener
+
+    day = date(2026, 10, 16)
+    screener = UniverseScreener(list, lambda s: None, ScreenConfig(max_candidates=1, affordable_pct=0.1), today=lambda: day)
+    screener._day, screener._ranked = day, [Candidate("A", 50.0, 0.1, 60, 1e8, 0.01), Candidate("B", 50.0, 0.1, 60, 1e8, 0.01), Candidate("C", 5_000.0, 0.1, 60, 1e8, 0.01)]  # fmt: skip
+    verdicts = {s: screener.verdict(s, equity=10_000.0) for s in ("A", "B", "C", "D")}
+    assert verdicts == {"A": "candidate", "B": "below the top 1", "C": "unaffordable", "D": "filtered out"}
+
+
 def test_without_calls_the_pipeline_runs_exactly_as_before(tmp_path):
     pipe, agent, sessions, told = swing(tmp_path, [[]])
     assert [r.symbol for r in pipe.run_once()] == ["TCS"]

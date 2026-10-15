@@ -219,6 +219,21 @@ class UniverseScreener:
         """Today's top candidates; with `equity`, only stocks the account can afford one share of (cfg.affordable_pct)."""
         return select_candidates(self.ranked(), self.cfg.max_candidates, equity, self.cfg.affordable_pct)
 
+    def verdict(self, symbol: str, equity: Optional[float] = None) -> str:
+        """What today's scan made of one stock, for a stock that reached the analysis some other way (a broker research
+        call): "candidate" (it would have been picked anyway), "below the top N" (passed every filter but ranked lower),
+        "unaffordable" (passed, but one share does not fit `affordable_pct` of equity) or "filtered out" (failed a filter:
+        price, liquidity, volatility, trend, RSI, stale data or delivery). Uses the day's cached scan."""
+        ranked = self.ranked()
+        if symbol in {c.symbol for c in self.candidates(equity)}:
+            return "candidate"
+        hit = next((c for c in ranked if c.symbol == symbol), None)
+        if hit is None:
+            return "filtered out"
+        if equity is not None and self.cfg.affordable_pct is not None and hit.price > equity * self.cfg.affordable_pct:
+            return "unaffordable"
+        return f"below the top {self.cfg.max_candidates}"
+
     def _fetch_with_retry(self, symbols: List[str], attempts: int = 3) -> pd.DataFrame:
         for attempt in range(1, attempts + 1):
             try:

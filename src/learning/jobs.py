@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 
 from src.control import Control
 from src.database import DecisionRecord, HoldoutMark, OutcomeRecord
-from src.learning.mistakes import ai_vs_rule, breakdown, fmt, load_judged, rule_buy_passes
+from src.learning.mistakes import ai_vs_rule, breakdown, fmt, load_judged, rule_action_from_snapshot, rule_buy_passes
 from src.learning.outcomes import HORIZONS, LabelSummary, label_outcomes
 
 log = logging.getLogger(__name__)
@@ -84,12 +84,35 @@ def learning_report(sessions, horizon: int = 20, min_samples: int = 30) -> str:
         lines.append("  Of the rule BUYs it passed on:")
         lines += [f"    {fmt(g)}" for g in breakdown(passes, rule_buy_passes, min_samples, horizon)]
     lines.append("  The AI adds value only if 'rule BUY, AI bought' beats 'rule BUY, AI passed'.")
+    lines.append(research_gate_line(sessions))
     if mark is not None:
         lines.append(
             f"Holdout reserve (the recorded decisions replayed on their own): equity {mark.equity:,.0f} "
             f"({mark.return_pct:+.2%}), {mark.decisions} decisions, {mark.closed_trades} closed trades"
         )
     return "\n".join(lines)
+
+
+def research_gate_line(sessions) -> str:
+    """What a gate on research-only candidates would have changed (record only: nothing is blocked). Counted on the
+    latest decision per stock-session whose stock only a broker research call put on the list."""
+    latest = (
+        select(func.max(DecisionRecord.id))
+        .where(DecisionRecord.bar_date.isnot(None))
+        .group_by(DecisionRecord.symbol, DecisionRecord.bar_date)
+    )
+    with sessions() as s:
+        rows = s.execute(
+            select(DecisionRecord.final_action, DecisionRecord.rule_action, DecisionRecord.snapshot_json, DecisionRecord.screen_verdict)
+            .where(DecisionRecord.id.in_(latest), DecisionRecord.candidate_source == "research")
+        ).all()  # fmt: skip
+    buys = [(rule or rule_action_from_snapshot(snap), screen) for action, rule, snap, screen in rows if action == "BUY"]
+    rule_hold = sum(rule == "HOLD" for rule, _ in buys)
+    filtered = sum(screen == "filtered out" for _, screen in buys)
+    return (
+        f"Research-only candidates (recorded, nothing blocked): {len(rows)} stock-sessions, {len(buys)} AI BUYs; a rule "
+        f"gate would have turned {rule_hold} of those BUYs into HOLDs, and the screener had filtered out {filtered}"
+    )
 
 
 class WeeklyLearningReport:

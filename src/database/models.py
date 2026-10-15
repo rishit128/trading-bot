@@ -77,6 +77,10 @@ class DecisionRecord(Base):
     # Why the stock was analysed: "held", "screener", "research" (an open broker research call put it on the list) or
     # "screener+research". None on rows written before the research integration.
     candidate_source: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    # For a stock only a research call put on the list: what the screener's own filters made of it (UniverseScreener.
+    # verdict: candidate / below the top N / unaffordable / filtered out). Recorded only; nothing is blocked on it. None
+    # for other stocks, without a screener, or on rows written before 2026-10-16.
+    screen_verdict: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
     # The broker research call the AI was shown for this stock (src.data.house_calls.HouseCall as JSON); None = none shown.
     house_call_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
