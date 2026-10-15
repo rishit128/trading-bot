@@ -295,3 +295,29 @@ class HouseCallRecord(Base):
     is_open: Mapped[bool] = mapped_column(Boolean)
     exit_comment: Mapped[str] = mapped_column(String(64), default="")  # e.g. "Target Hit", "Stoploss Hit", "Exit"
     exit_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)  # None while open
+
+
+class HouseCallEvent(Base):
+    """The history of the broker's research calls (src.data.house_calls), beside the one-snapshot `house_calls` table the
+    trading code reads. One row per distinct state of a call, keyed by (symbol, kind, side, published): a call read again
+    unchanged only moves its row's `last_seen`; any change (closed, stop or target revised) appends a row. Rows are never
+    deleted, so how each call began, changed and ended can be scored later."""
+
+    __tablename__ = "house_call_events"
+    __table_args__ = (Index("ix_house_call_events_call", "symbol", "kind", "side", "published"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(32))
+    side: Mapped[str] = mapped_column(String(8))
+    published: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # UTC
+    entry_low: Mapped[float] = mapped_column(Float)
+    entry_high: Mapped[float] = mapped_column(Float)
+    stop: Mapped[float] = mapped_column(Float)
+    target: Mapped[float] = mapped_column(Float)
+    valid_to: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    is_open: Mapped[bool] = mapped_column(Boolean)
+    exit_comment: Mapped[str] = mapped_column(String(64), default="")
+    exit_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)  # UTC
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # the read that first showed this state
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # the latest read that still showed it

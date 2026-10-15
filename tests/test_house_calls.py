@@ -108,7 +108,7 @@ def test_the_store_keeps_one_snapshot_and_ignores_a_stale_one(tmp_path):
     store = HouseCallStore(make_session_factory(f"sqlite:///{tmp_path / 'h.db'}"), now_fn=lambda: now[0])
     assert store.current() == []
     store.replace(parse_calls([body(CAMS, RBL)]))
-    store.replace(parse_calls([body(ABC, BSE_STOPPED)]))  # replaces, never appends: no history is kept
+    store.replace(parse_calls([body(ABC, BSE_STOPPED)]))  # the snapshot is replaced, never appended to
     with store.sessions() as s:
         assert sorted(s.scalars(select(HouseCallRecord.symbol))) == ["ABCAPITAL", "BSE"]
     assert {c.symbol for c in store.current()} == {"ABCAPITAL", "BSE"}
@@ -116,6 +116,48 @@ def test_the_store_keeps_one_snapshot_and_ignores_a_stale_one(tmp_path):
     assert next(c for c in store.current() if c.symbol == "BSE").exit_at == datetime(2026, 10, 15, 11, 20, tzinfo=IST)
     now[0] = NOW + MAX_AGE + timedelta(seconds=1)  # the watch stopped: the calls are no longer trusted
     assert store.current() == []
+
+
+def events(store):
+    from src.database import HouseCallEvent
+
+    with store.sessions() as s:
+        return [(e.symbol, e.is_open, e.exit_comment, e.stop, e.first_seen, e.last_seen) for e in s.scalars(select(HouseCallEvent).order_by(HouseCallEvent.id))]  # fmt: skip
+
+
+def test_the_history_adds_a_row_only_when_a_call_changes(tmp_path):
+    store = HouseCallStore(make_session_factory(f"sqlite:///{tmp_path / 'h.db'}"), now_fn=lambda: NOW)
+    t1, t2, t3, t4 = (NOW + timedelta(minutes=10 * i) for i in range(4))
+    store.replace(parse_calls([body(CAMS, RBL)]), fetched_at=t1)
+    store.replace(parse_calls([body(CAMS, RBL)]), fetched_at=t2)  # the same calls read again: nothing added
+    rows = events(store)
+    assert [r[0] for r in rows] == ["CAMS", "RBLBANK"]
+    utc = lambda t: t.astimezone(timezone.utc).replace(tzinfo=None)  # noqa: E731 - SQLite hands times back naive
+    assert all(r[4] == utc(t1) and r[5] == utc(t2) for r in rows)  # first seen at the first read, last seen at the second
+    closed = {**CAMS, "CallMode": "Closed", "ExitComment": "Target Hit", "ExitDtm": "2026-10-15T12:25:00"}
+    store.replace(parse_calls([body(closed, RBL)]), fetched_at=t3)  # CAMS hit its target: one row
+    store.replace(parse_calls([body(closed, {**RBL, "StopLoss": "380.00"})]), fetched_at=t4)  # RBL's stop raised: one row
+    rows = events(store)
+    assert [(r[0], r[1], r[2], r[3]) for r in rows] == [
+        ("CAMS", True, "", 698.0),
+        ("RBLBANK", True, "", 376.5),
+        ("CAMS", False, "Target Hit", 698.0),
+        ("RBLBANK", True, "", 380.0),
+    ]
+    assert rows[0][5] == utc(t2) and rows[2][4] == utc(t3) and rows[2][5] == utc(t4)  # the old state is kept as it ended
+    store.replace([], fetched_at=t4 + timedelta(minutes=10))  # a call gone from the list is not a change: nothing added
+    assert len(events(store)) == 4 and store.current() == []
+
+
+def test_a_failing_history_never_costs_the_snapshot(tmp_path, monkeypatch):
+    store = HouseCallStore(make_session_factory(f"sqlite:///{tmp_path / 'h.db'}"), now_fn=lambda: NOW)
+
+    def broken(*a):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store, "record_history", broken)
+    store.replace(parse_calls([body(CAMS)]))
+    assert [c.symbol for c in store.current()] == ["CAMS"] and events(store) == []
 
 
 def test_a_broken_store_means_no_calls_not_a_crash(tmp_path):
