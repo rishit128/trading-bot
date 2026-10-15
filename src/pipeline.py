@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from src.agents.base import Agent, AgentContext
 from src.config import Settings
 from src.data.fundamentals import Fundamentals
+from src.data.house_calls import HouseCall, call_for, open_sells, recently_stopped, swing_buys
 from src.data.indicators import Snapshot
 from src.data.market_context import MarketContext
 from src.database import DecisionRecord, EquityRecord, OrderRecord
@@ -74,6 +75,7 @@ class TradingPipeline:
         market_context_fn: Optional[Callable[[Snapshot], Optional[MarketContext]]] = None,
         fundamentals_fn: Optional[Callable[[str], Optional[Fundamentals]]] = None,
         broker_label: str = "",
+        house_calls_fn: Optional[Callable[[], List[HouseCall]]] = None,
     ):
         names = [a.name for a in agents]
         if len(set(names)) != len(names):
@@ -90,6 +92,10 @@ class TradingPipeline:
         self.quote_fn = quote_fn
         self.market_context_fn = market_context_fn
         self.fundamentals_fn = fundamentals_fn
+        self.house_calls_fn = house_calls_fn  # the broker's research calls (src.data.house_calls); None = not wired
+        self._calls: List[HouseCall] = []  # read once per cycle, so every stock in a cycle sees the same snapshot
+        self._sources: Dict[str, str] = {}  # why each stock of this cycle is analysed (recorded with its decision)
+        self._warned: set = set()  # house warnings already sent about held stocks
         self._notify = notify
         self._halt_kind: Optional[str] = None
         self._llm_down = False
@@ -124,6 +130,7 @@ class TradingPipeline:
                     DecisionRecord.prompt_version == VERSIONS["prompt"],
                     DecisionRecord.feature_version == VERSIONS["feature"],
                     DecisionRecord.signals_json.isnot(None),
+                    self._house_matches(symbol),
                 )
                 .order_by(DecisionRecord.id.desc())
                 .limit(1)
@@ -146,7 +153,18 @@ class TradingPipeline:
             snapshot,
             market=lambda: self.market_context_fn(snapshot) if self.market_context_fn else None,
             company=lambda: self.fundamentals_fn(symbol) if self.fundamentals_fn else None,
+            house=lambda: self.house_call(symbol),
         )
+
+    def house_call(self, symbol: str) -> Optional[HouseCall]:
+        """The broker research call the AI is shown for this stock this cycle (see house_calls.call_for), or None."""
+        return call_for(self._calls, symbol, datetime.now(timezone.utc)) if self._calls else None
+
+    def _house_matches(self, symbol: str):
+        """A remembered answer is reused only if it was given with the same research call (or with none): a call
+        published mid-session makes the stock be asked again, once."""
+        call = self.house_call(symbol)
+        return DecisionRecord.house_call_json.is_(None) if call is None else DecisionRecord.house_call_json == call.to_json()
 
     def open_cycle(self) -> Portfolio:
         """Start a cycle: read the account, record its equity, apply the drawdown pause and check halts."""
@@ -155,7 +173,34 @@ class TradingPipeline:
         portfolio = self._apply_drawdown_pause(self._with_peak(portfolio))
         self._check_halt(portfolio)
         self._cycle_llm = []
+        self._calls = self._read_house_calls()
+        self._warn_on_held(portfolio)
         return portfolio
+
+    def _read_house_calls(self) -> List[HouseCall]:
+        if self.house_calls_fn is None:
+            return []
+        try:
+            return list(self.house_calls_fn())
+        except Exception:
+            log.exception("could not read the house research calls; this cycle runs without them")
+            return []
+
+    def _warn_on_held(self, portfolio: Portfolio) -> None:
+        """Tell the user, once per call, when the house turns against a stock the bot holds (an open SELL call, or its
+        call on the stock hit its stop-loss). The bot's own stop is unchanged; the stock is analysed every cycle anyway,
+        now with that call in its prompt."""
+        if not self._calls:
+            return
+        now, sells = datetime.now(timezone.utc), open_sells(self._calls)
+        for symbol in sorted(portfolio.positions):
+            call = sells.get(symbol) or recently_stopped(self._calls, symbol, now)
+            if call is None or (symbol, call.published, call.is_open) in self._warned:
+                continue
+            self._warned.add((symbol, call.published, call.is_open))
+            what = "an open SELL call" if call.is_open else f"its {call.kind} call ended: {call.exit_comment}"
+            self.notify(f"HOUSE WARNING on held {symbol}: the broker's research desk has {what}. The AI sees this in this "
+                        "cycle's analysis; the bot's own stop is unchanged.")  # fmt: skip
 
     def select_symbols(self, portfolio: Portfolio) -> List[str]:
         """Which stocks this cycle analyses (held positions always, so exits keep working)."""
@@ -210,9 +255,22 @@ class TradingPipeline:
         return state["results"]
 
     def _symbols(self, portfolio: Portfolio) -> Sequence[str]:
-        """Held positions are always analysed (so exits work) even if the market scan fails."""
+        """Held positions are always analysed (so exits work) even if the market scan fails. The stocks of open broker
+        Swing/Momentum/Stellar Pick buy calls are added after the scan's own list: they go through the same filter, AI and
+        risk engine as every other candidate."""
+        scanned = self._scanned(portfolio)
+        research = swing_buys(self._calls)
+        self._sources = {}
+        found = "screener" if self.universe_fn is not None else "watchlist"
+        for s in scanned:
+            self._sources[s] = "held" if s in portfolio.positions else (f"{found}+research" if s in research else found)
+        for s in research:
+            self._sources.setdefault(s, "research")
+        return list(self._sources)
+
+    def _scanned(self, portfolio: Portfolio) -> List[str]:
         if self.universe_fn is None:
-            return self.settings.watchlist
+            return list(self.settings.watchlist)
         try:
             return list(self.universe_fn(portfolio))
         except Exception as e:
@@ -296,6 +354,8 @@ class TradingPipeline:
                 decision_source=decision.source,
                 bar_date=snap.bar_date,
                 universe_size=universe_size,
+                candidate_source=self._sources.get(symbol),
+                house_call_json=call.to_json() if (call := self.house_call(symbol)) is not None else None,
             )
             s.add(record)
             s.commit()

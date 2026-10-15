@@ -38,7 +38,7 @@ def tag(sig: AgentSignal, key: str, value) -> AgentSignal:
     )
 
 
-def stamp_base(sig: AgentSignal, market=None, company=None) -> AgentSignal:
+def stamp_base(sig: AgentSignal, market=None, company=None, house=None) -> AgentSignal:
     """Record the untouched base confidence and the market/company data the model was shown (so the prompt can be
     rebuilt on replay). Signals without details (the compact tier) are left alone."""
     if sig.details is None:
@@ -47,7 +47,11 @@ def stamp_base(sig: AgentSignal, market=None, company=None) -> AgentSignal:
     def plain(data):  # JSON-shaped (tuples become lists) so the stored record equals what was used
         return json.loads(json.dumps(dataclasses.asdict(data))) if data is not None else None
 
-    update: dict = {"market_context_json": plain(market), "company_json": plain(company)}
+    update: dict = {
+        "market_context_json": plain(market),
+        "company_json": plain(company),
+        "house_call_json": json.loads(house.to_json()) if house is not None else None,
+    }
     if sig.details.base_confidence is None:
         update["base_confidence"] = sig.confidence
     return AgentSignal(

@@ -4,13 +4,15 @@ output in its own folder under portfolio_data/ (git-ignored: the account's data 
 import json
 import logging
 import os
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterator, Optional
+from typing import Any, Callable, Iterator, List, Optional
 
 from src.portfolio.guard import describe
+from src.portfolio.research_watch import watch_research
 from src.portfolio.session import PORTAL, LoginFailed, PortalRun, blocked_report, read_pages
 from src.portfolio.telegram_otp import OtpCancelled, OtpTimeout, TelegramError
 from src.portfolio.vault import Credentials
@@ -69,6 +71,13 @@ class RunStore:
         finally:
             self.lock_file.unlink(missing_ok=True)
 
+    def touch_lock(self) -> None:
+        """Mark the lock as still in use: a run that lasts all day (the research watch) must not look stale."""
+        try:
+            os.utime(self.lock_file)
+        except OSError:
+            pass
+
     def new_run_dir(self) -> Path:
         return self.runs / datetime.now().strftime("%Y-%m-%d_%H%M%S")
 
@@ -121,4 +130,46 @@ def fetch_portfolio(
         seconds=round(time.monotonic() - started, 1),
         blocked_list=[describe(b) for b in run.blocked],
     )
+    return result
+
+
+def watch_portfolio_research(
+    creds: Credentials,
+    get_otp: Callable[[], str],
+    store: RunStore,
+    on_bodies: Callable[[List[Any]], int],
+    stop: threading.Event,
+    every_s: float = 600,
+    headless: bool = True,
+    base: str = PORTAL,
+    progress: Optional[Callable[[str], object]] = None,
+) -> dict:
+    """Log in once, re-read the Research list every `every_s` seconds until the day is over (or /research_stop, or the
+    portal ends the session), then log out. The same safety stops as `fetch_portfolio`: one run at a time, one login
+    attempt, no login after a failed MPIN step. Never raises: failures come back as {'error': ...}."""
+    blocked_since = store.mpin_blocked()
+    if blocked_since:
+        return {"error": f"not logging in: the MPIN step failed on {blocked_since}", "logged_out": None}
+    run_dir = store.new_run_dir()
+    result: dict = {}
+    run = PortalRun(creds, get_otp, store.profile, run_dir, base=base, headless=headless, progress=progress)
+    try:
+        with store.lock():
+            try:
+                with run as page:
+                    result["ended"] = watch_research(
+                        page, run.base, on_bodies, stop, every_s=every_s, keep_alive=store.touch_lock, progress=progress
+                    )
+            except LoginFailed as e:
+                result["error"] = f"login stopped at {e}"
+                if e.stage == "mpin":
+                    store.block_mpin()
+            except (OtpTimeout, OtpCancelled, TelegramError) as e:
+                result["error"] = f"no OTP: {e}"
+            except Exception as e:
+                log.exception("research watch failed")
+                result["error"] = f"stopped by an unexpected {type(e).__name__}"
+    except RunBusy as e:
+        result["error"] = str(e)
+    result.update(blocked=len(run.blocked), logged_out=run.logged_out, blocked_list=[describe(b) for b in run.blocked])
     return result

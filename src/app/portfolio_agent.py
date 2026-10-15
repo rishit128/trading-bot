@@ -4,20 +4,27 @@ OTP and the report, and the free OpenRouter models for the optional plain-Englis
 Two ways to run it:
 * `/portfolio` to the running trading bot: `PortfolioCommand` starts the graph in the background, and the bot's command
   listener passes the OTP reply to it through an `OtpInbox` (one Telegram bot, one reader of its messages);
-* `python main.py --portfolio` when the trading bot is not running: `run_standalone` polls the same bot itself."""
+* `python main.py --portfolio` when the trading bot is not running: `run_standalone` polls the same bot itself.
+
+The same login also serves the research watch (`/research_start`): the session stays open through the trading day and
+the Research list is re-read every 10 minutes into the house-call snapshot (src.data.house_calls) that the swing bot and
+the breakout engine read. This module is the only place the two meet: the portfolio package hands over raw responses,
+the parsing and the snapshot belong to the data layer."""
 
 import json
 import logging
 import threading
-from typing import Callable, Optional
+from html import escape as esc
+from typing import Any, Callable, List, Optional
 
 from pydantic import BaseModel
 
+from src.data.house_calls import HouseCall, HouseCallStore, looks_like_calls, parse_calls
 from src.monitoring.telegram import Html
 from src.portfolio import vault
 from src.portfolio.graph import build_portfolio_graph, usable_note
 from src.portfolio.report import strip_tags
-from src.portfolio.runs import RunStore, fetch_portfolio
+from src.portfolio.runs import RunStore, fetch_portfolio, watch_portfolio_research
 from src.portfolio.telegram_otp import OtpInbox, TelegramOtp
 
 log = logging.getLogger(__name__)
@@ -132,6 +139,69 @@ def run_standalone(
     return run_portfolio(get_otp, notify, explain, headless=headless)
 
 
+RESEARCH_EVERY_S = 600  # the Research list is re-read every 10 minutes
+
+
+def call_line(call: HouseCall) -> str:
+    entry = f"{call.entry_low:,.2f}" if call.entry_low == call.entry_high else f"{call.entry_low:,.2f}-{call.entry_high:,.2f}"
+    return (
+        f"🏦 New house call: <b>{esc(call.symbol)}</b> {esc(call.kind)} {call.side.upper()} "
+        f"(published {call.published.strftime('%H:%M')}): entry {entry}, stop {call.stop:,.2f}, target {call.target:,.2f}"
+    )
+
+
+def make_research_sink(store: HouseCallStore, notify: Callable[[str], object]) -> Callable[[List[Any]], int]:
+    """What each research read does: find the call list among the page's responses, replace the snapshot with it, and
+    tell the user about calls not seen before (none on the first read: those were already published). Returns how many
+    calls were read; 0 when no response held a call list (the snapshot is then left to go stale, never emptied)."""
+    seen: set = set()
+    first = [True]
+
+    def sink(bodies: List[Any]) -> int:
+        lists = [b for b in bodies if looks_like_calls(b)]
+        if not lists:
+            return 0
+        calls = parse_calls(lists)
+        store.replace(calls)
+        keys = {(c.symbol, c.kind_key, c.side, c.published) for c in calls}
+        if not first[0]:
+            for c in calls:
+                if c.is_open and (c.symbol, c.kind_key, c.side, c.published) not in seen:
+                    notify(call_line(c))
+        seen.update(keys)
+        first[0] = False
+        return len(calls)
+
+    return sink
+
+
+def run_research_watch(
+    get_otp: Callable[[], str],
+    notify: Callable[[str], object],
+    sink: Callable[[List[Any]], int],
+    stop: threading.Event,
+    store: Optional[RunStore] = None,
+) -> dict:
+    """/research_start: log in (OTP on Telegram), keep the session through the trading day reading the Research list,
+    log out at 15:35 IST (or on /research_stop). Never raises for an expected failure."""
+    notify = to_html(notify)
+    try:
+        creds = vault.load()
+    except (vault.MissingCredentials, vault.InsecureStore) as e:
+        notify(f"Research watch: {e}")
+        return {"error": str(e)}
+    except ImportError:
+        notify("Research watch: not available here; install requirements-portfolio.txt")
+        return {"error": "portfolio requirements missing"}
+    result = watch_portfolio_research(creds, get_otp, store or RunStore(), sink, stop, every_s=RESEARCH_EVERY_S, progress=notify)
+    if result.get("error"):
+        notify(f"📡 Research watch did not run: {esc(result['error'])}")
+    else:
+        notify(f"📡 Research watch ended: {esc(result['ended'])}. The bot trades without house calls until the next "
+               "/research_start.")  # fmt: skip
+    return result
+
+
 class PortfolioCommand:
     """The trading bot's /portfolio command: one background run at a time. Plug `inbox.offer` into the listener."""
 
@@ -142,10 +212,14 @@ class PortfolioCommand:
         notify: Callable[[str], object],
         explain: Optional[Callable[[dict], str]] = None,
         runner: Callable[..., dict] = run_portfolio,
+        research_sink: Optional[Callable[[List[Any]], int]] = None,
+        research_runner: Callable[..., dict] = run_research_watch,
     ):
         self.inbox = OtpInbox()
         self.notify, self.explain, self.runner = to_html(notify), explain, runner
+        self.research_sink, self.research_runner = research_sink, research_runner
         self._thread: Optional[threading.Thread] = None
+        self._research_stop = threading.Event()
 
     def __call__(self) -> str:
         if self._thread is not None and self._thread.is_alive():
@@ -160,3 +234,30 @@ class PortfolioCommand:
         except Exception as e:
             log.exception("portfolio run failed")
             self.notify(f"Portfolio run failed: {type(e).__name__}")
+
+    RESEARCH_START_HELP = "log in once and read the broker's research calls every 10 min until 15:35 (asks for the OTP)"
+    RESEARCH_STOP_HELP = "end the research watch now (logs out)"
+
+    def research_start(self) -> str:
+        """/research_start: the all-day research watch, sharing this command's OTP inbox and one-run-at-a-time rule."""
+        if self.research_sink is None:
+            return "The research watch is not set up in this process."
+        if self._thread is not None and self._thread.is_alive():
+            return "A portfolio run or research watch is already in progress."
+        self._research_stop.clear()
+        self._thread = threading.Thread(target=self._watch, daemon=True, name="research-watch")
+        self._thread.start()
+        return "Research watch starting (read-only). I will ask for the OTP here in a moment."
+
+    def research_stop(self) -> str:
+        if self._thread is None or not self._thread.is_alive():
+            return "No research watch is running."
+        self._research_stop.set()
+        return "Stopping the research watch: it logs out within a minute."
+
+    def _watch(self) -> None:
+        try:
+            self.research_runner(lambda: self.inbox.wait(self.notify), self.notify, self.research_sink, self._research_stop)
+        except Exception as e:
+            log.exception("research watch failed")
+            self.notify(f"Research watch failed: {type(e).__name__}")

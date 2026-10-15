@@ -8,7 +8,12 @@ next session's first cycle: this account is meant to be flat every night. With a
 5-minute bars are saved after the close (see src.data.intraday_bars), so history for testing rules keeps growing.
 
 The rule is pluggable (`find_setup`): the opening-range breakout by default, or gap-and-go (`strategy.find_gap_setup`),
-each in its own paper account and database, run side by side by `run_together`."""
+each in its own paper account and database, run side by side by `run_together`.
+
+Broker research calls (`house_calls_fn`, the breakout engine only): the stocks of today's open Intraday BUY calls are added
+to the scan, where they must pass the same breakout rule, and a stock the broker has an open SELL call on is not bought
+(recorded as SKIPPED). Each recorded signal notes the open call on its stock, if any (`house_call`). Without a fresh
+snapshot of calls (no portal session that day) the engine runs exactly as before."""
 
 import json
 import logging
@@ -21,6 +26,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 import pandas as pd
 from sqlalchemy import select
 
+from src.data.house_calls import HouseCall, intraday_buys, open_sells
 from src.data.india import IST
 from src.data.intraday_bars import BarArchive, fetch_today_bars, session_rows
 from src.database import IntradaySignalRecord, IntradayUniverseRecord
@@ -58,7 +64,9 @@ class IntradayEngine:
     version: str = INTRADAY_VERSION  # recorded with every signal and universe row
     record_capped: bool = False  # also record (as SKIPPED) the signals the position limit left out: the gap experiments
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+    house_calls_fn: Optional[Callable[[], List[HouseCall]]] = None  # broker research calls; None = not used
     _day: Optional[str] = field(default=None, init=False)
+    _calls: List[HouseCall] = field(default_factory=list, init=False)  # this cycle's snapshot of house calls
     _done_today: Set[str] = field(default_factory=set, init=False)
     _known: Dict[str, int] = field(default_factory=dict, init=False)
     _archived: Optional[str] = field(default=None, init=False)  # the session date whose bars were last archived
@@ -113,8 +121,26 @@ class IntradayEngine:
                 qty=qty,
                 reason=reason,
                 system_version=self.version,
+                house_call=self._house_tag(setup.symbol),
             )
         )
+
+    def _house_tag(self, symbol: str) -> Optional[str]:
+        """The newest open house call on this stock, as "Intraday buy" etc., or None."""
+        mine = [c for c in self._calls if c.symbol == symbol and c.is_open]
+        if not mine:
+            return None
+        call = max(mine, key=lambda c: c.published)
+        return f"{call.kind} {call.side}"[:32]
+
+    def _read_house_calls(self) -> List[HouseCall]:
+        if self.house_calls_fn is None:
+            return []
+        try:
+            return list(self.house_calls_fn())
+        except Exception:
+            log.exception("could not read the house research calls; scanning without them")
+            return []
 
     def step(self) -> str:
         """One 5-minute cycle. Returns a short status string (useful in tests and logs)."""
@@ -147,7 +173,10 @@ class IntradayEngine:
 
     def _scan(self, pf, local: datetime) -> str:
         """Look for a fresh breakout in every stock not already held or traded today, and try to buy each one found."""
-        candidates = [s for s in self.universe if s not in pf.positions and s not in self._done_today]
+        self._calls = self._read_house_calls()
+        added = [s for s in intraday_buys(self._calls, local.date()) if s not in self.universe]
+        sells = open_sells(self._calls)
+        candidates = [s for s in self.universe + added if s not in pf.positions and s not in self._done_today]
         bars = self.fetch_bars(candidates)
         entered = skipped = 0
         cash = pf.cash
@@ -161,6 +190,11 @@ class IntradayEngine:
             df = session_rows(finished, local.date())
             setup = self.find_setup(sym, df, prev_close) if len(df) else None
             if setup is None or setup.bar_time < df.index[-1] - BAR:  # a stale breakout from earlier in the day: skip
+                continue
+            if setup.symbol in sells:  # the house says sell this stock: a long breakout against that call is not taken
+                self._done_today.add(setup.symbol)
+                self._record(setup, SignalOutcome.SKIPPED, 0, f"the broker has an open {sells[setup.symbol].kind} SELL call")
+                skipped += 1
                 continue
             if full:  # only with record_capped: the signal is real, the account had no free position
                 self._done_today.add(setup.symbol)

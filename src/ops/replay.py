@@ -54,7 +54,12 @@ def replay(record: DecisionRecord, roles: Mapping[str, str] = DEFAULT_ROLES) -> 
     lead = signals.get("technical")
     shown = lead.details if lead is not None and lead.details is not None else None
     prompt = (
-        cot_prompt(snap, shown.market_context_json if shown else None, shown.company_json if shown else None)
+        cot_prompt(
+            snap,
+            shown.market_context_json if shown else None,
+            shown.company_json if shown else None,
+            shown.house_call_json if shown else None,
+        )
         if snap is not None
         else None
     )

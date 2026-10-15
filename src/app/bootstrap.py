@@ -5,9 +5,17 @@ import dataclasses
 import logging
 import os
 import sys
+from typing import Callable, Dict, Tuple
 
 from src.agents.technical import TechnicalAgent
-from src.app.portfolio_agent import PortfolioCommand, make_explainer, run_standalone, strip_html
+from src.app.portfolio_agent import (
+    PortfolioCommand,
+    make_explainer,
+    make_research_sink,
+    run_standalone,
+    strip_html,
+    to_html,
+)
 from src.app.reports import print_positions
 from src.app.wiring import (
     build_market_wiring,
@@ -16,6 +24,7 @@ from src.app.wiring import (
     intraday_db_url,
     load_settings_or_exit,
     make_paper_broker,
+    open_house_calls,
 )
 from src.config import Settings
 from src.control import Control
@@ -50,6 +59,7 @@ def build_pipeline(live: bool) -> TradingPipeline:
     sessions = make_session_factory(settings.database_url)
     control = Control(sessions)
     kit = build_market_wiring(settings, sessions)
+    house_calls = open_house_calls()
     intraday_broker = gapgo_broker = gaponly_broker = None
     try:
         intraday_broker = make_paper_broker(settings, intraday_db_url(), fees=intraday_fees)
@@ -62,8 +72,13 @@ def build_pipeline(live: bool) -> TradingPipeline:
     if token and chat_id:
         notify = Notifier(token, chat_id).send
         # /portfolio: the read-only real-account agent. It shares this Telegram bot, so this listener hands it the OTP.
-        portfolio = PortfolioCommand(notify, make_explainer(llm))
-        extra = {"/portfolio": (PortfolioCommand.HELP, portfolio)}
+        # /research_start keeps the same login open through the day and feeds the house-call snapshot.
+        portfolio = PortfolioCommand(notify, make_explainer(llm), research_sink=make_research_sink(house_calls, to_html(notify)))
+        extra: Dict[str, Tuple[str, Callable[[], str]]] = {
+            "/portfolio": (PortfolioCommand.HELP, portfolio),
+            "/research_start": (PortfolioCommand.RESEARCH_START_HELP, portfolio.research_start),
+            "/research_stop": (PortfolioCommand.RESEARCH_STOP_HELP, portfolio.research_stop),
+        }
         CommandListener(
             token,
             chat_id,
@@ -98,6 +113,7 @@ def build_pipeline(live: bool) -> TradingPipeline:
         market_context_fn=market_context,
         fundamentals_fn=FundamentalsProvider(),
         broker_label=kit.broker_label,
+        house_calls_fn=house_calls.current,
     )
     return pipeline
 

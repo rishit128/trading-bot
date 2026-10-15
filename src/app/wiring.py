@@ -64,6 +64,20 @@ def gaponly_db_url() -> str:
     return os.getenv("GAPONLY_DATABASE_URL", "sqlite:///gaponly.db")
 
 
+def house_calls_db_url() -> str:
+    """The latest snapshot of the broker's research calls: written by the research watch (swing container), read by the
+    swing pipeline and the breakout engine (intraday container), so it lives in the volume both share."""
+    return os.getenv("HOUSE_CALLS_DATABASE_URL", "sqlite:///house_calls.db")
+
+
+def open_house_calls():
+    """The house-call snapshot store (src.data.house_calls)."""
+    from src.data.house_calls import HouseCallStore
+    from src.database import make_session_factory
+
+    return HouseCallStore(make_session_factory(house_calls_db_url()))
+
+
 def open_bar_archive() -> BarArchive:
     """The archive of 5-minute bars kept in the intraday database (see src.data.intraday_bars)."""
     from src.database import make_session_factory

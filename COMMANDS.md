@@ -40,6 +40,9 @@ sudo docker compose -f docker-compose.aws.yml down                            # 
 /gapgo                gap-and-go paper account and open positions; /gapgo_history for its closed trades
 /gaponly              gap-only control account (gap-and-go without the breakout); /gaponly_history
 /portfolio            read your real Integrated account (read-only); it will ask for the OTP here
+/research_start       each morning (~9:00): log in once (OTP here); the broker's research calls are read every 10 min until 15:35
+                      and used by the swing bot (extra candidates + a line in the AI prompt) and the breakout engine
+/research_stop        end the research watch early (logs out)
 /pause                stop placing new orders
 /resume               allow orders again
 ```

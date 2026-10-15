@@ -47,14 +47,16 @@ class TechnicalAgent:
             log.warning("%s data failed for %s: %s", what, symbol, e)
             return None
 
-    def _base(self, ctx: AgentContext, market, company) -> AgentSignal:
+    def _base(self, ctx: AgentContext, market, company, house=None) -> AgentSignal:
         """The first call, with a fallback ladder for unreliable free models: the full analysis; if every model fails at
         that, the compact one-sentence prompt (recorded as tier "compact"); only when that fails too does the caller
         stand down with a HOLD."""
         if not self.use_cot:
             return self.llm.signal(prompts.simple_prompt(ctx.snapshot))
         try:
-            advanced = self.llm.structured_call(prompts.cot_prompt(ctx.snapshot, market, company), AdvancedSignal, COT_SCHEMA)
+            advanced = self.llm.structured_call(
+                prompts.cot_prompt(ctx.snapshot, market, company, house), AdvancedSignal, COT_SCHEMA
+            )
         except LLMUnavailable as e:
             log.warning("full analysis failed for %s (%s); trying the compact prompt", ctx.symbol, str(e)[:200])
             compact = self.llm.signal(prompts.simple_prompt(ctx.snapshot))
@@ -96,8 +98,9 @@ class TechnicalAgent:
         """Return the AI's signal, or a fail-safe HOLD flagged as degraded if every model fails on the FIRST call."""
         market = self._lazy(ctx.market, "market", ctx.symbol) if self.use_cot else None
         company = self._lazy(ctx.company, "company", ctx.symbol) if self.use_cot else None
+        house = self._lazy(ctx.house, "house research", ctx.symbol) if self.use_cot else None
         try:
-            current = phases.stamp_base(self._base(ctx, market, company), market, company)
+            current = phases.stamp_base(self._base(ctx, market, company, house), market, company, house)
         except LLMUnavailable as e:
             return fail_safe_hold(f"LLM unavailable: {e}")
         if self.use_reflect and not current.degraded and current.action != Action.HOLD:

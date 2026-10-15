@@ -62,6 +62,7 @@ class SignalDetails(BaseModel):
     base_confidence: Optional[float] = None  # the confidence before the reflection phase could change it
     market_context_json: Optional[dict] = None  # the market situation the model was shown (rebuilds the prompt on replay)
     company_json: Optional[dict] = None  # the company data the model was shown (same purpose)
+    house_call_json: Optional[dict] = None  # the broker research call the model was shown, if any (same purpose)
     adjusted_signal_confidence: Optional[float] = None
     adjustment_reason: Optional[str] = None
     reflection: Optional[ReflectionDetails] = None

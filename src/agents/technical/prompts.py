@@ -5,6 +5,7 @@ sent (`scripts/replay_decision.py`) and a wording change is a one-file diff. Cha
 
 from typing import Optional
 
+from src.data.house_calls import HouseCall, prompt_line
 from src.engine.enums import Action
 from src.engine.rules import RSI_OVERBOUGHT, above_ma50, entry_filter, ma_stack_bullish, overbought
 
@@ -91,7 +92,21 @@ def market_text(m) -> str:
     )
 
 
-def cot_prompt(s, market=None, company=None) -> str:
+def house_section(h) -> str:
+    """The broker research call as the prompt shows it (`h` is a HouseCall, or its stored dict), or nothing at all when
+    there is none: a stock without a call gets exactly the prompt it got before research calls were wired in."""
+    if h is None:
+        return ""
+    call = h if isinstance(h, HouseCall) else HouseCall.from_dict(h)
+    return (
+        f"HOUSE RESEARCH: {prompt_line(call)}. This is a second opinion from the broker's analysts, whose track record "
+        "is not proven: it may raise or lower your confidence, but it is not on its own a reason to "
+        "buy a stock the MECHANICAL BASELINE did not select. A house SELL call, or a call that hit its stop-loss, is a "
+        "risk to name in step5_risks.\n"
+    )
+
+
+def cot_prompt(s, market=None, company=None, house=None) -> str:
     """The exact prompt sent to the model (also used to replay and fingerprint decisions)."""
     above, stacked = above_ma50(s.price, s.ma50), ma_stack_bullish(s.ma50, s.ma200)
     avg = s.avg_volume
@@ -120,6 +135,7 @@ def cot_prompt(s, market=None, company=None) -> str:
         f"MECHANICAL BASELINE (the deterministic filter): {mechanical_baseline(s)}\n"
         f"COMPANY: {company_text(company)}\n"
         f"MARKET: {market_text(market)}\n"
+        f"{house_section(house)}"
         "STEP 1 (trend): is price above MA50 ("
         + ("yes" if above else "no")
         + ") and MA50 above MA200 ("

@@ -32,6 +32,8 @@ class AgentContext:
     market: Callable[[], Optional[object]] = lambda: None
     # Lazy company fundamentals (recent quarters' sales and profit, ratios); None when unavailable or not wired up.
     company: Callable[[], Optional[object]] = lambda: None
+    # The broker's research call on this stock (src.data.house_calls.HouseCall); None when there is none or no session.
+    house: Callable[[], Optional[object]] = lambda: None
 
 
 class Agent(Protocol):

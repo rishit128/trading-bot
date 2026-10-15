@@ -4,7 +4,14 @@ minutes: the opening-range breakout, gap-and-go, and gap-only (gap-and-go's cont
 import os
 from typing import Any
 
-from src.app.wiring import gapgo_db_url, gaponly_db_url, intraday_db_url, load_settings_or_exit, make_paper_broker
+from src.app.wiring import (
+    gapgo_db_url,
+    gaponly_db_url,
+    intraday_db_url,
+    load_settings_or_exit,
+    make_paper_broker,
+    open_house_calls,
+)
 from src.data.intraday_bars import BarArchive, fetch_5m_bars
 from src.engine.costs import intraday_fees
 from src.intraday.engine import IntradayEngine, run_together
@@ -48,7 +55,17 @@ def run_intraday(live: bool) -> None:
 
     # record_capped: a breakout the 5-position limit left out is still recorded (as SKIPPED), so the forward record covers
     # every signal of the day, not only the first five
-    engines = [engine(broker, archive=BarArchive(broker.sessions) if settings.intraday_archive else None, record_capped=True)]
+    # The breakout engine also reads the broker's research calls (today's Intraday buys join its scan; an open SELL call
+    # blocks a buy). The gap engines do not: they are a matched pair, and an input on one side would spoil the comparison.
+    house_calls = open_house_calls()
+    engines = [
+        engine(
+            broker,
+            archive=BarArchive(broker.sessions) if settings.intraday_archive else None,
+            record_capped=True,
+            house_calls_fn=house_calls.current,
+        )
+    ]
     for name, db_url, rule, until, version in GAP_EXPERIMENTS:
         engines.append(
             engine(

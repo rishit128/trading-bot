@@ -5,21 +5,39 @@ PROMPT_VERSION in src/versions.py and record the new fingerprint here in the sam
 
 import hashlib
 import json
+from datetime import date, datetime
 
 from src.agents.technical import COT_SCHEMA, REFLECT_SCHEMA, mechanical_action, mechanical_baseline
 from src.agents.technical.prompts import cot_prompt, reflection_prompt, simple_prompt
 from src.data.fundamentals import Fundamentals, Quarter
+from src.data.house_calls import HouseCall
+from src.data.india import IST
 from src.data.indicators import Snapshot
 from src.data.market_context import MarketContext
 from src.engine.agent_signal import AgentSignal
 from src.versions import PROMPT_VERSION
 
 FINGERPRINTS = {
-    "technical-v10": "2b025ee232b16e3f959e75a3c53a1d44dfce2c9991b626d275d8840b1098d06e"
+    "technical-v10": "2b025ee232b16e3f959e75a3c53a1d44dfce2c9991b626d275d8840b1098d06e",
+    "technical-v11": "be59a29a6f2a4ec570e8043432657ec9a5ec2f38e3b6aa4ef06b8de025d37ab5",
 }  # earlier versions' texts live in git history
 
 
-def fingerprint() -> str:
+HOUSE = HouseCall(
+    symbol="UP",
+    kind="Swing Trade",
+    side="buy",
+    entry_low=248.0,
+    entry_high=249.5,
+    stop=240.0,
+    target=262.0,
+    published=datetime(2026, 10, 15, 14, 49, tzinfo=IST),
+    valid_to=date(2026, 10, 28),
+    is_open=True,
+)
+
+
+def fingerprint(with_house: bool = True) -> str:
     snaps = [
         Snapshot(
             "UP",
@@ -80,6 +98,9 @@ def fingerprint() -> str:
     }
     out["prompts"]["informed"] = cot_prompt(snaps[0], market, company)
     out["prompts"]["reflection"] = reflection_prompt(base, "UP", "summary line one\nsummary line two")
+    if with_house:
+        out["prompts"]["house"] = cot_prompt(snaps[0], market, company, HOUSE)
+        out["prompts"]["house_stored"] = cot_prompt(snaps[0], market, company, json.loads(HOUSE.to_json()))
     return hashlib.sha256(json.dumps(out, sort_keys=True).encode()).hexdigest()
 
 
@@ -88,4 +109,15 @@ def test_the_prompt_text_matches_the_recorded_version():
     assert fingerprint() == FINGERPRINTS[PROMPT_VERSION], (
         "a prompt or schema changed but PROMPT_VERSION did not: bump src/versions.py PROMPT_VERSION and add the new "
         f"fingerprint ({fingerprint()}) to FINGERPRINTS"
+    )
+
+
+def test_a_stock_without_a_house_call_gets_exactly_the_v10_prompt():
+    """v11 only ADDS the research line when there is a call: every other prompt is byte-for-byte what v10 sent."""
+    assert fingerprint(with_house=False) == FINGERPRINTS["technical-v10"]
+
+
+def test_a_stored_house_call_rebuilds_the_same_prompt_on_replay():
+    assert cot_prompt(Snapshot("UP", 250.0, 240.0, 220.0, 58.0, 1000), house=HOUSE) == cot_prompt(
+        Snapshot("UP", 250.0, 240.0, 220.0, 58.0, 1000), house=json.loads(HOUSE.to_json())
     )

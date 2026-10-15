@@ -70,6 +70,11 @@ class DecisionRecord(Base):
     bar_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, index=True)
     # Per-decision universe snapshot: how many symbols were in the scanned universe when this call was made.
     universe_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Why the stock was analysed: "held", "screener", "research" (an open broker research call put it on the list) or
+    # "screener+research". None on rows written before the research integration.
+    candidate_source: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    # The broker research call the AI was shown for this stock (src.data.house_calls.HouseCall as JSON); None = none shown.
+    house_call_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class OrderRecord(Base):
@@ -228,6 +233,9 @@ class IntradaySignalRecord(Base):
     qty: Mapped[int] = mapped_column(Integer, default=0)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # why it was skipped or failed
     system_version: Mapped[str] = mapped_column(String(16), default="")  # src.versions.INTRADAY_VERSION
+    # The open broker research call on this stock when the signal fired ("Intraday buy", ...); None = none. A stock that is
+    # not in the day's recorded universe (intraday_universe) was added to the scan by that call.
+    house_call: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
 
 class IntradayUniverseRecord(Base):
@@ -260,3 +268,26 @@ class IntradayBarRecord(Base):
     low: Mapped[float] = mapped_column(Float)
     close: Mapped[float] = mapped_column(Float)
     volume: Mapped[float] = mapped_column(Float)
+
+
+class HouseCallRecord(Base):
+    """The broker's research calls as last read from the Integrated portal (src.data.house_calls): ONE snapshot, replaced
+    whole on every read, never a history. The trading code reads it; a snapshot older than a few polls is ignored, so a
+    day without the portal session trades exactly as before."""
+
+    __tablename__ = "house_calls"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # when the portal was read
+    symbol: Mapped[str] = mapped_column(String(32), index=True)  # the NSE symbol (ScripCode)
+    kind: Mapped[str] = mapped_column(String(32))  # Intraday | BTST | Swing Trade | Momentum | Stellar Pick | ...
+    side: Mapped[str] = mapped_column(String(8))  # buy | sell
+    entry_low: Mapped[float] = mapped_column(Float)
+    entry_high: Mapped[float] = mapped_column(Float)
+    stop: Mapped[float] = mapped_column(Float)
+    target: Mapped[float] = mapped_column(Float)
+    published: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    valid_to: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # YYYY-MM-DD; None = not given
+    is_open: Mapped[bool] = mapped_column(Boolean)
+    exit_comment: Mapped[str] = mapped_column(String(64), default="")  # e.g. "Target Hit", "Stoploss Hit", "Exit"
+    exit_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)  # None while open
