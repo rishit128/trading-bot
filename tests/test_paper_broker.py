@@ -500,3 +500,26 @@ def test_an_unreachable_corporate_action_source_never_breaks_the_account(tmp_pat
     broker.corporate_actions = lambda symbol: (_ for _ in ()).throw(ConnectionError("yahoo down"))
     broker.buy_with_bracket("AAA", 10, 100.0, 0.15, 1.0)
     assert broker.portfolio().position_qty == {"AAA": 10}
+
+
+def test_each_fill_records_the_bar_its_price_came_from():
+    t0 = datetime(2026, 9, 21, 4, 15, tzinfo=timezone.utc)  # 09:45 IST
+
+    class QuotingFeed(FakeFeed):
+        def last_quote(self, symbol):
+            return self.last_price(symbol), t0
+
+    feed, clock = QuotingFeed({"AAA": 100.0}), FakeClock()
+    now = [t0 + timedelta(minutes=3)]
+    broker = PaperBroker(make_session_factory("sqlite://"), feed, clock, fees=no_fees, slippage=0.0, now_fn=lambda: now[0])
+    broker.buy_with_bracket("AAA", 10, 100.0, 0.02, 0.05)
+    hit = t0 + timedelta(minutes=10)
+    feed.bars["AAA"] = pd.DataFrame(
+        {"Open": [99.5], "High": [99.6], "Low": [97.0], "Close": [97.5]}, index=pd.DatetimeIndex([hit])
+    )
+    now[0] = hit + timedelta(minutes=6)
+    broker.portfolio()  # settles the stop
+    with broker.sessions() as s:
+        [trade] = s.scalars(select(PaperTradeRecord))
+    assert trade.reason == "STOP" and trade.entry_price_bar.replace(tzinfo=timezone.utc) == t0
+    assert trade.exit_price_bar.replace(tzinfo=timezone.utc) == hit

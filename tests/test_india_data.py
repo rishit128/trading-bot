@@ -221,6 +221,11 @@ def test_intraday_feed_last_price_and_bars_since():
     assert feed.last_price("RELIANCE") == 103.5
     since = datetime(2026, 9, 18, 3, 47, tzinfo=UTC)  # 09:17 IST -> bars starting 09:20 and later
     assert len(feed.bars_since("RELIANCE", since)) == 3
+    assert feed.last_quote("RELIANCE") == (103.5, datetime(2026, 9, 18, 4, 0, tzinfo=UTC))  # the 09:30 IST bar
+    naive = five_min_bars().tz_localize(None)  # a frame without a zone is read as IST
+    assert IntradayFeed(download=lambda ticker, **kw: naive).last_quote("X")[1] == datetime(2026, 9, 18, 4, 0, tzinfo=UTC)
+    with pytest.raises(ValueError, match="no price data"):
+        IntradayFeed(download=lambda ticker, **kw: pd.DataFrame()).last_quote("TCS")
 
 
 def test_intraday_feed_requests_ns_ticker_5m_and_errors_when_empty():

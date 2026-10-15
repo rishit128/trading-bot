@@ -154,6 +154,9 @@ class PaperPositionRecord(Base):
     target: Mapped[float] = mapped_column(Float)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_checked: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Start of the 5-minute bar whose latest close was the fill price (it may still have been forming); None when the
+    # feed does not say, or on rows recorded before 2026-10-16.
+    entry_price_bar: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     # Latest split/bonus/dividend ex-date already applied (YYYY-MM-DD); None = none since the position opened.
     actions_through: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
 
@@ -173,6 +176,9 @@ class PaperTradeRecord(Base):
     reason: Mapped[str] = mapped_column(String(16))
     fees: Mapped[float] = mapped_column(Float)
     net_pnl: Mapped[float] = mapped_column(Float)
+    # Start of the 5-minute bar each price came from (see PaperPositionRecord.entry_price_bar); None when unknown.
+    entry_price_bar: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    exit_price_bar: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class HoldoutMark(Base):
@@ -244,6 +250,14 @@ class IntradaySignalRecord(Base):
     # The open broker research call on this stock when the signal fired ("Intraday buy", ...); None = none. A stock that is
     # not in the day's recorded universe (intraday_universe) was added to the scan by that call.
     house_call: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # Data quality (all None on rows recorded before 2026-10-16). What the engine saw: when its cycle started and the
+    # signal bar's volume (the close it saw is `signal_price`). What the final bars, downloaded after the close, say about
+    # the same bar, and whether the rule run on them still signals at that bar (IntradayEngine._verify_signals).
+    step_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    seen_volume: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    final_close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    final_volume: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    final_signal: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
 
 class IntradayUniverseRecord(Base):

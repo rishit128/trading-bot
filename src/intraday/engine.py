@@ -70,6 +70,9 @@ class IntradayEngine:
     _done_today: Set[str] = field(default_factory=set, init=False)
     _known: Dict[str, int] = field(default_factory=dict, init=False)
     _archived: Optional[str] = field(default=None, init=False)  # the session date whose bars were last archived
+    _verified: Optional[str] = field(default=None, init=False)  # the session date whose signals were last verified
+    _step_at: Optional[datetime] = field(default=None, init=False)  # when the current cycle started
+    _seen_volume: Dict[str, float] = field(default_factory=dict, init=False)  # signal bar volume as this cycle saw it
 
     def _say(self, text: str) -> None:
         log.info(text)
@@ -122,6 +125,8 @@ class IntradayEngine:
                 reason=reason,
                 system_version=self.version,
                 house_call=self._house_tag(setup.symbol),
+                step_at=self._step_at,
+                seen_volume=self._seen_volume.get(setup.symbol),
             )
         )
 
@@ -145,8 +150,10 @@ class IntradayEngine:
     def step(self) -> str:
         """One 5-minute cycle. Returns a short status string (useful in tests and logs)."""
         now = self.now_fn()
+        self._step_at = now
         if not self.clock.is_open(now):
             self._archive_session(now)
+            self._verify_signals(now)
             return "closed"
         local = now.astimezone(IST)
         today = local.date().isoformat()
@@ -191,6 +198,8 @@ class IntradayEngine:
             setup = self.find_setup(sym, df, prev_close) if len(df) else None
             if setup is None or setup.bar_time < df.index[-1] - BAR:  # a stale breakout from earlier in the day: skip
                 continue
+            if setup.bar_time in df.index:
+                self._seen_volume[setup.symbol] = float(df["Volume"][setup.bar_time])
             if setup.symbol in sells:  # the house says sell this stock: a long breakout against that call is not taken
                 self._done_today.add(setup.symbol)
                 self._record(setup, SignalOutcome.SKIPPED, 0, f"the broker has an open {sells[setup.symbol].kind} SELL call")
@@ -261,6 +270,48 @@ class IntradayEngine:
         added = self.archive.save(today_bars)
         self._archived = today
         log.info("archived %d bars for %d stocks (%s)", added, len(today_bars), today)
+
+    def _verify_signals(self, now: datetime) -> None:
+        """Once a session has finished, compare each of its recorded signals with the final bars: the close and volume of
+        the signal bar, and whether the rule run on the final bars up to that bar still signals there. Yahoo revises the
+        bars it served during the day; this measures by how much, and whether it changed what was traded. Once a day;
+        a failed download is retried next cycle; a stock the download does not return is left unverified."""
+        local = now.astimezone(IST)
+        today = local.date().isoformat()
+        if self._verified == today or local.weekday() >= 5 or local.time() < ARCHIVE_FROM:
+            return
+        try:
+            with self.broker.sessions() as s:
+                rows = list(
+                    s.scalars(
+                        select(IntradaySignalRecord).where(
+                            IntradaySignalRecord.day == today, IntradaySignalRecord.final_close.is_(None)
+                        )
+                    )
+                )
+                fetched = self.fetch_bars(sorted({r.symbol for r in rows})) if rows else {}
+                for r in rows:
+                    self._check_signal(r, fetched.get(r.symbol), local)
+                s.commit()
+        except Exception:
+            log.exception("could not verify the session's signals against the final bars; will retry")
+            return
+        self._verified = today
+        if rows:
+            log.info("verified %d signals against the final bars (%s)", len(rows), today)
+
+    def _check_signal(self, row: IntradaySignalRecord, bars: Optional[pd.DataFrame], local: datetime) -> None:
+        if bars is None or bars.empty:
+            return
+        day = session_rows(bars, local.date())
+        earlier = bars[pd.DatetimeIndex(bars.index).tz_convert(IST).date < local.date()]
+        prev_close = float(earlier["Close"].iloc[-1]) if len(earlier) else None
+        at = pd.Timestamp(row.bar_time)
+        if at not in day.index:
+            return
+        row.final_close, row.final_volume = float(day["Close"][at]), float(day["Volume"][at])
+        setup = self.find_setup(row.symbol, day[day.index <= at], prev_close)
+        row.final_signal = setup is not None and setup.bar_time == at
 
     def _close_stale(self, today: str) -> bool:
         """Sell any position bought on an earlier day (the square-off was missed): this account must be flat overnight."""

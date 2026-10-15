@@ -19,7 +19,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, cast
 
 import pandas as pd
 from sqlalchemy import func, select
@@ -135,7 +135,8 @@ class PaperBroker:
     def buy_with_bracket(self, symbol: str, qty: int, price: float, stop_pct: float, take_pct: float) -> Fill:
         """Simulated market buy with slippage and Indian costs; records the stop and target levels."""
         with self._lock:
-            fill_price = self.feed.last_price(symbol) * (1 + self.slippage)
+            quote, quote_bar = self._quote(symbol)
+            fill_price = quote * (1 + self.slippage)
             value = qty * fill_price
             cost = value + self.fees(Action.BUY, value)
             now = self.now_fn()
@@ -156,6 +157,7 @@ class PaperBroker:
                         target=round(price * (1 + take_pct), 2),
                         opened_at=now,
                         last_checked=now,
+                        entry_price_bar=quote_bar,
                     )
                 )
                 s.commit()
@@ -168,8 +170,9 @@ class PaperBroker:
                 pos = s.get(PaperPositionRecord, symbol)
                 if pos is None or qty > pos.qty:
                     raise ValueError(f"{symbol}: cannot sell {qty}, holding {pos.qty if pos else 0}")
-            price = self.feed.last_price(symbol) * (1 - self.slippage)
-            self._close(symbol, qty, price, "SIGNAL")
+            quote, quote_bar = self._quote(symbol)
+            price = quote * (1 - self.slippage)
+            self._close(symbol, qty, price, "SIGNAL", quote_bar)
             return Fill(f"paper-{uuid.uuid4().hex[:12]}", OrderStatus.FILLED, qty, price)
 
     # ---- internals ----------------------------------------------------------------------------------
@@ -238,7 +241,15 @@ class PaperBroker:
                 pos.actions_through = max([*splits, *dividends]).isoformat()
                 s.commit()
 
-    def _close(self, symbol: str, qty: int, price: float, reason: str) -> None:
+    def _quote(self, symbol: str) -> Tuple[float, Optional[datetime]]:
+        """The latest price and the start (UTC) of the bar it came from, when the feed says (`last_quote`); else None."""
+        last_quote = getattr(self.feed, "last_quote", None)
+        if last_quote is None:
+            return self.feed.last_price(symbol), None
+        price, bar = last_quote(symbol)
+        return float(price), bar
+
+    def _close(self, symbol: str, qty: int, price: float, reason: str, price_bar: Optional[datetime] = None) -> None:
         now = self.now_fn()
         with self.sessions() as s:
             pos = s.get(PaperPositionRecord, symbol)
@@ -259,6 +270,8 @@ class PaperBroker:
                     reason=reason,
                     fees=fees + entry_fees,
                     net_pnl=(price - pos.avg_price) * qty - fees - entry_fees,
+                    entry_price_bar=pos.entry_price_bar,
+                    exit_price_bar=price_bar,
                 )
             )
             if qty >= pos.qty:
@@ -284,7 +297,8 @@ class PaperBroker:
                 continue
             exit_price: Optional[float] = None
             reason: Optional[str] = None
-            for _, bar in bars.iterrows():
+            exit_bar: Optional[datetime] = None
+            for start, bar in bars.iterrows():
                 if bar["Open"] <= stop:
                     exit_price, reason = float(bar["Open"]), "STOP"
                 elif bar["Open"] >= target:
@@ -294,12 +308,13 @@ class PaperBroker:
                 elif bar["High"] >= target:
                     exit_price, reason = target, "TARGET"
                 if reason:
+                    exit_bar = _utc(pd.Timestamp(cast(datetime, start)).to_pydatetime()).astimezone(timezone.utc)
                     break
             if reason == "STOP" and exit_price is not None:
                 exit_price *= 1 - self.slippage  # a stop is a stop-market order: it fills like any market sell
             if reason is not None and exit_price is not None:
                 log.info("paper %s hit on %s at %.2f", reason, symbol, exit_price)
-                self._close(symbol, qty, exit_price, reason)
+                self._close(symbol, qty, exit_price, reason, exit_bar)
             else:
                 finished = _newest_finished(bars, now)  # the bar still forming is looked at again next time
                 if finished is not None:
