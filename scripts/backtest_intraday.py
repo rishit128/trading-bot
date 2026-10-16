@@ -6,7 +6,7 @@ src/research/intraday_replay.py for the few things a replay must assume). One co
 
 Fill the archive first (scripts/intraday_archive.py refresh); it grows by itself while the engine runs.
 
-    python scripts/backtest_intraday.py [--start 2026-08-01] [--end 2026-09-25] [--capital 20000] [--strategy gapgo]
+    python scripts/backtest_intraday.py [--start 2026-08-01] [--end 2026-09-25] [--capital 25000] [--strategy gapgo]
     python scripts/backtest_intraday.py --bars-file research_cache/intraday_5m_2y.pkl   # a pickle of {symbol: 5-minute bars}"""
 
 import argparse

@@ -109,7 +109,7 @@ scripts/analyze_mistakes.py                # judges every analysed stock against
 scripts/intraday_archive.py status|refresh|import-cache   # the archive of 5-minute bars (fills itself while the engine runs)
 scripts/compare_gap.py                     # gap-and-go vs its gap-only control: per trade, date by date, costs, drawdown
 scripts/intraday_data_quality.py           # the intraday engines' live data vs the final bars (verdict after 10 sessions)
-scripts/backtest_intraday.py [--strategy gapgo|gaponly] [--bars-file F]   # the LIVE engine replayed over stored sessions (Rs 20,000 by default)
+scripts/backtest_intraday.py [--strategy gapgo|gaponly] [--bars-file F]   # the LIVE engine replayed over stored sessions (PAPER_INITIAL_CASH by default: Rs 25,000 on the server)
 scripts/audit_intraday.py                  # does the intraday rule beat a random entry? which filters add anything?
 scripts/research_intraday.py               # five pre-declared intraday ideas vs a random null; re-run as the archive grows
 scripts/backtest_live_config.py [--index 0|50|100|500]   # the live swing setup on 10 years of history (0 = every NSE stock)

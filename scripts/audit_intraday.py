@@ -6,7 +6,7 @@ scripts/intraday_archive.py first). Read-only: it reports and changes nothing.
   3. how different are the results if only each bar's open is examined (the paper broker's old behaviour)?
   4. slices by entry time, volume surge, opening gap and market breadth, and what an account of this size can even trade
 
-    python scripts/audit_intraday.py [--capital 20000] [--seeds 5]"""
+    python scripts/audit_intraday.py [--capital 25000] [--seeds 5]"""
 
 import argparse
 import sys

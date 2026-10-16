@@ -139,6 +139,25 @@ def looks_like_calls(body: Any) -> bool:
     return rows is not None and all(k in rows[0] for k in REQUIRED)
 
 
+def why_skipped(row: Dict[str, Any]) -> str:
+    """Why `parse_call` gives nothing for this row, in plain words (for the log: no prices or other values)."""
+    if str(row.get("RecomType", "Equity")).strip().lower() != "equity":
+        return f"type {row.get('RecomType')}"
+    bad = [
+        name
+        for name, ok in (
+            ("ScripCode", bool(str(row.get("ScripCode") or "").strip())),
+            ("CallType", str(row.get("CallType") or row.get("AppCallType") or "").strip().lower() in ("buy", "sell")),
+            ("CMPFrom", _price(row.get("CMPFrom")) is not None),
+            ("StopLoss", _price(row.get("StopLoss")) is not None),
+            ("TargetPrice", _price(row.get("TargetPrice")) is not None),
+            ("PublishedDtm", _published(row.get("PublishedDtm")) is not None),
+        )
+        if not ok
+    ]
+    return "unusable " + "/".join(bad) if bad else "duplicate"
+
+
 def parse_call(row: Dict[str, Any]) -> Optional[HouseCall]:
     """One portal row as a HouseCall; None for anything that is not an equity call with usable prices. The entry range is
     given low-high, high-low, or as one price with "0.00" in CMPTo: all three become (low, high)."""
@@ -176,6 +195,7 @@ def parse_calls(bodies: Iterable[Any]) -> List[HouseCall]:
         for row in _rows(body) or ():
             call = parse_call(row)
             if call is None:
+                log.info("research row skipped: %s %s (%s)", row.get("ScripCode"), row.get("RecomSubType"), why_skipped(row))
                 continue
             key = (call.symbol, call.kind_key, call.side, call.published)
             if key not in seen:

@@ -753,3 +753,11 @@ and fee model as gap-and-go. Both gap accounts record the signals a full positio
 engine and the swing bot are unchanged. Judged by `scripts/compare_gap.py`: gap-and-go is credited with a timing edge
 only if it beats gap-only per trade AND date by date (paired t >= 2.6); the report also shows the same stock on the same
 day, fees, daily return, drawdown and how much of each account was used.
+
+## Paper budget raised from Rs 20,000 to Rs 25,000 (2026-10-16, at the owner's request)
+Not a strategy change: the four paper accounts (swing, ORB, gap-and-go, gap-only) each received Rs 5,000 of cash and
+their starting balance became Rs 25,000, so returns still measure against what was put in. The server's `.env` now has
+`PAPER_INITIAL_CASH=25000`, `MIN_POSITION_PCT=MAX_POSITION_PCT=0.088` (was 0.08) and `MAX_PORTFOLIO_EXPOSURE_PCT=0.90`
+(was the 0.80 default), so 10 positions can hold up to about Rs 22,000 (88%). `MAX_OPEN_POSITIONS` (10), the stop and
+the intraday limits (0.5% risk, 20% cap, 5 positions) are unchanged; intraday sizing is by stop distance, so it scales
+with equity without a setting. Results before this date were measured on Rs 20,000 and are not directly comparable.
