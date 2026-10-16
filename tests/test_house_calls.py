@@ -378,6 +378,9 @@ class FakePage:
             for fn in list(self.listeners):
                 fn(r)
 
+    def wait_for_timeout(self, ms):
+        pass
+
     def wait_for_load_state(self, state, timeout=None):
         if self.idle_fails:
             raise TimeoutError("never idle")
@@ -482,3 +485,7 @@ def test_a_crashing_watch_is_reported_not_raised():
     cmd.research_start()
     cmd._thread.join(2)
     assert told and "Research watch failed: RuntimeError" in told[-1]
+
+
+def test_a_response_that_is_a_json_string_inside_a_json_string_is_still_read():
+    assert looks_like_calls(json.dumps(body(CAMS)))

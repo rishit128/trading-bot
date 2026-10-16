@@ -25,7 +25,7 @@ LOGIN_PAGE = re.compile(r"/login/", re.I)
 MAX_BODY = 2_000_000  # characters; the research list is ~30 KB
 
 
-def read_research_once(page, base: str, settle_ms: int = 20_000) -> Optional[List[Any]]:
+def read_research_once(page, base: str, settle_ms: int = 20_000, extra_s: float = 5) -> Optional[List[Any]]:
     """Open the Research page and return the portal's data responses (parsed JSON where possible), or None if the portal
     sent us to its login page instead (the session has ended)."""
     host = (urlsplit(base).hostname or "").lower()
@@ -41,11 +41,13 @@ def read_research_once(page, base: str, settle_ms: int = 20_000) -> Optional[Lis
             page.wait_for_load_state("networkidle", timeout=settle_ms)
         except Exception:  # Playwright's timeout: a page with a live price stream never goes idle, take what has loaded
             pass  # (any other failure shows up just below, as a page that is not the Research page or has no data)
+        page.wait_for_timeout(extra_s * 1000)  # the list can arrive just after the network has gone quiet
     finally:
         page.remove_listener("requestfinished", collect)
     if LOGIN_PAGE.search(urlsplit(page.url).path):
         return None
     bodies: List[Any] = []
+    seen: List[str] = []
     for req in finished:
         parts = urlsplit(req.url)
         if req.resource_type not in ("xhr", "fetch") or (parts.hostname or "").lower() != host:
@@ -61,6 +63,8 @@ def read_research_once(page, base: str, settle_ms: int = 20_000) -> Optional[Lis
             continue  # aborted by the guard, or the page moved on
         if len(text) <= MAX_BODY:
             bodies.append(text)
+            seen.append(f"{parts.path.rsplit('/', 1)[-1]}:{len(text)}")
+    log.info("research read: %d data responses [%s] at %s", len(bodies), ", ".join(seen), urlsplit(page.url).path)
     return bodies
 
 

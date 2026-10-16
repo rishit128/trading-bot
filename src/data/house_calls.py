@@ -118,7 +118,9 @@ def _exit_at(text: Any) -> Optional[datetime]:
 
 def _rows(body: Any) -> Optional[list]:
     """The list of call dicts in a response body (the portal sends it as a JSON string), or None if it is not one."""
-    if isinstance(body, str):
+    for _ in range(2):  # the portal sends a JSON string; some responses are a JSON string inside a JSON string
+        if not isinstance(body, str):
+            break
         try:
             body = json.loads(body)
         except ValueError:
