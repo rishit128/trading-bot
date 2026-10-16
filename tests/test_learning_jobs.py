@@ -131,13 +131,15 @@ def test_the_report_says_plainly_when_nothing_has_matured(tmp_path):
 def test_the_report_compares_the_ais_calls_with_the_rules_once_enough_have_matured(tmp_path):
     from src.learning.jobs import learning_report
 
-    sessions = seed(tmp_path, [(f"S{i}", "2025-01-06", {}, 0.05, "2025-02-03") for i in range(30)])
+    days = ("2025-01-06", "2025-01-07", "2025-01-08")  # an interval is computed over dates, so it needs more than one
+    sessions = seed(tmp_path, [(f"S{i}", days[i % 3], {}, 0.05 + 0.01 * (i % 3), "2025-02-03") for i in range(30)])
     with sessions() as s:
         for d in s.scalars(select(DecisionRecord)):
-            d.decision_source, d.rule_alignment = "agents", "agree"  # rule said BUY and the AI bought
+            d.decision_source, d.final_action, d.rule_action = "agents", "BUY", "BUY"  # the rule said BUY and the AI bought
         s.commit()
     text = learning_report(sessions, horizon=20, min_samples=30)
-    assert "rule BUY, AI bought" in text and "n=30" in text and "insufficient" not in text.split("rule BUY, AI bought")[1][:40]
+    line = text.split("rule BUY, AI bought")[1].splitlines()[0]
+    assert "n=30" in line and "insufficient" not in line and "30 independent observations on 3 dates" in line
 
 
 def test_a_failing_report_never_reaches_the_trading_loop_and_is_retried(tmp_path):

@@ -7,14 +7,14 @@ from typing import Optional
 
 from src.data.house_calls import HouseCall, prompt_line
 from src.engine.enums import Action
-from src.engine.rules import RSI_OVERBOUGHT, above_ma50, entry_filter, ma_stack_bullish, overbought
+from src.engine.rules import RSI_OVERBOUGHT, above_ma50, entry_filter, ma_stack_bullish, overbought, rule_verdict
 
 
 def mechanical_action(s) -> Action:
     """The deterministic long-only filter that produced the candidate: BUY only when price is above MA50, MAs are
     stacked (MA50 > MA200) and RSI(14) is below 70; otherwise HOLD. This is the baseline the AI agrees with or overrides,
     and the yardstick the weekly report scores the AI against."""
-    return Action.BUY if entry_filter(s.price, s.ma50, s.ma200, s.rsi) else Action.HOLD
+    return rule_verdict(s.price, s.ma50, s.ma200, s.rsi)
 
 
 def mechanical_baseline(s) -> str:

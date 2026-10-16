@@ -343,6 +343,15 @@ class IntradayFeed:
             raise ValueError(f"{symbol}: no price data available")
         return float(bars["Close"].iloc[-1])
 
+    def last_quote(self, symbol: str) -> Tuple[float, datetime]:
+        """`last_price` and the start (UTC) of the bar it is the close of: that bar may still have been forming."""
+        bars = self._bars(symbol)
+        if bars.empty:
+            raise ValueError(f"{symbol}: no price data available")
+        start = pd.Timestamp(bars.index[-1])
+        start = start.tz_localize(IST) if start.tzinfo is None else start
+        return float(bars["Close"].iloc[-1]), start.tz_convert("UTC").to_pydatetime()
+
     def bars_since(self, symbol: str, since: datetime) -> pd.DataFrame:
         """5-minute bars after a point in time (used to replay stops and targets)."""
         bars = self._bars(symbol)

@@ -12,8 +12,10 @@ How they are used (nothing here trades):
   * the opening-range breakout engine adds the stocks of today's open Intraday buy calls to its scan, and does not buy a
     stock the house has an open SELL call on.
 
-Only the latest read is kept (`HouseCallStore.replace`): this is an input, not an archive. A snapshot older than
-`MAX_AGE` is treated as no snapshot at all, so a day without the portal session trades exactly as before."""
+Trading reads only the latest read (`HouseCallStore.replace` swaps it whole); a snapshot older than `MAX_AGE` is treated
+as no snapshot at all, so a day without the portal session trades exactly as before. Each read is also added to an
+append-only history (`house_call_events`: one row per state of a call, with when it was first and last seen), so the
+calls themselves can be scored later. Trading never reads the history."""
 
 import json
 import logging
@@ -24,7 +26,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 from sqlalchemy import delete, func, select
 
 from src.data.india import IST
-from src.database import HouseCallRecord
+from src.database import HouseCallEvent, HouseCallRecord
 
 log = logging.getLogger(__name__)
 
@@ -196,6 +198,40 @@ def prompt_line(call: Optional[HouseCall]) -> str:
     )
 
 
+def _columns(c: HouseCall) -> Dict[str, Any]:
+    """A call as stored (in `house_calls` and `house_call_events`): times in UTC, the validity date as text."""
+    return dict(
+        symbol=c.symbol,
+        kind=c.kind,
+        side=c.side,
+        entry_low=c.entry_low,
+        entry_high=c.entry_high,
+        stop=c.stop,
+        target=c.target,
+        published=c.published.astimezone(timezone.utc),
+        valid_to=c.valid_to.isoformat() if c.valid_to else None,
+        is_open=c.is_open,
+        exit_comment=c.exit_comment,
+        exit_at=c.exit_at.astimezone(timezone.utc) if c.exit_at else None,
+    )
+
+
+STATE = ("entry_low", "entry_high", "stop", "target", "valid_to", "is_open", "exit_comment", "exit_at")
+
+
+def _naive_utc(at: Optional[datetime]) -> Optional[datetime]:
+    """A UTC time without its zone: SQLite hands stored times back naive, so stored and fresh values compare this way."""
+    return at.astimezone(timezone.utc).replace(tzinfo=None) if at is not None and at.tzinfo else at
+
+
+def _state_of(cols: Dict[str, Any]) -> tuple:
+    return tuple(_naive_utc(cols[k]) if k == "exit_at" else cols[k] for k in STATE)
+
+
+def _state(e: HouseCallEvent) -> tuple:
+    return _state_of({k: getattr(e, k) for k in STATE})
+
+
 def _aware(at: Optional[datetime]) -> Optional[datetime]:
     """A stored time back in IST (SQLite hands timezone-aware columns back naive, in UTC)."""
     if at is None:
@@ -212,30 +248,42 @@ class HouseCallStore:
         self.now_fn = now_fn
 
     def replace(self, calls: List[HouseCall], fetched_at: Optional[datetime] = None) -> None:
-        """Swap the stored snapshot for this one, in one transaction (a reader never sees half of each). Times are stored
-        in UTC: SQLite keeps no timezone, and `_aware` reads them back as UTC."""
+        """Swap the stored snapshot for this one, in one transaction (a reader never sees half of each), then add the read
+        to the call history (`record_history`). Times are stored in UTC: SQLite keeps no timezone, and `_aware` reads
+        them back as UTC."""
         at = (fetched_at or self.now_fn()).astimezone(timezone.utc)
         with self.sessions() as s:
             s.execute(delete(HouseCallRecord))
-            s.add_all(
-                HouseCallRecord(
-                    fetched_at=at,
-                    symbol=c.symbol,
-                    kind=c.kind,
-                    side=c.side,
-                    entry_low=c.entry_low,
-                    entry_high=c.entry_high,
-                    stop=c.stop,
-                    target=c.target,
-                    published=c.published.astimezone(timezone.utc),
-                    valid_to=c.valid_to.isoformat() if c.valid_to else None,
-                    is_open=c.is_open,
-                    exit_comment=c.exit_comment,
-                    exit_at=c.exit_at.astimezone(timezone.utc) if c.exit_at else None,
-                )
-                for c in calls
-            )
+            s.add_all(HouseCallRecord(fetched_at=at, **_columns(c)) for c in calls)
             s.commit()
+        try:
+            self.record_history(calls, at)
+        except Exception:  # the history is for later study; the snapshot above is what trading reads
+            log.exception("could not add this read to the house-call history; the snapshot is stored")
+
+    def record_history(self, calls: List[HouseCall], seen_at: datetime) -> int:
+        """Add one read to `house_call_events`: a call whose state is unchanged since its latest row only moves that row's
+        `last_seen`; a new call, or one whose state changed, appends a row. Returns the rows appended."""
+        at = seen_at.astimezone(timezone.utc)
+        added = 0
+        with self.sessions() as s:
+            latest: Dict[tuple, HouseCallEvent] = {}
+            symbols = sorted({c.symbol for c in calls})
+            for e in s.scalars(select(HouseCallEvent).where(HouseCallEvent.symbol.in_(symbols)).order_by(HouseCallEvent.id)):
+                latest[(e.symbol, e.kind, e.side, _naive_utc(e.published))] = e  # ordered by id: the last one wins
+            for c in calls:
+                cols = _columns(c)
+                key = (c.symbol, c.kind, c.side, _naive_utc(cols["published"]))
+                last = latest.get(key)
+                if last is not None and _state(last) == _state_of(cols):
+                    last.last_seen = at
+                    continue
+                event = HouseCallEvent(first_seen=at, last_seen=at, **cols)
+                s.add(event)
+                latest[key] = event  # the same call twice in one read is one row
+                added += 1
+            s.commit()
+        return added
 
     def fetched_at(self) -> Optional[datetime]:
         with self.sessions() as s:

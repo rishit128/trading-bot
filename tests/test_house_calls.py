@@ -108,7 +108,7 @@ def test_the_store_keeps_one_snapshot_and_ignores_a_stale_one(tmp_path):
     store = HouseCallStore(make_session_factory(f"sqlite:///{tmp_path / 'h.db'}"), now_fn=lambda: now[0])
     assert store.current() == []
     store.replace(parse_calls([body(CAMS, RBL)]))
-    store.replace(parse_calls([body(ABC, BSE_STOPPED)]))  # replaces, never appends: no history is kept
+    store.replace(parse_calls([body(ABC, BSE_STOPPED)]))  # the snapshot is replaced, never appended to
     with store.sessions() as s:
         assert sorted(s.scalars(select(HouseCallRecord.symbol))) == ["ABCAPITAL", "BSE"]
     assert {c.symbol for c in store.current()} == {"ABCAPITAL", "BSE"}
@@ -116,6 +116,48 @@ def test_the_store_keeps_one_snapshot_and_ignores_a_stale_one(tmp_path):
     assert next(c for c in store.current() if c.symbol == "BSE").exit_at == datetime(2026, 10, 15, 11, 20, tzinfo=IST)
     now[0] = NOW + MAX_AGE + timedelta(seconds=1)  # the watch stopped: the calls are no longer trusted
     assert store.current() == []
+
+
+def events(store):
+    from src.database import HouseCallEvent
+
+    with store.sessions() as s:
+        return [(e.symbol, e.is_open, e.exit_comment, e.stop, e.first_seen, e.last_seen) for e in s.scalars(select(HouseCallEvent).order_by(HouseCallEvent.id))]  # fmt: skip
+
+
+def test_the_history_adds_a_row_only_when_a_call_changes(tmp_path):
+    store = HouseCallStore(make_session_factory(f"sqlite:///{tmp_path / 'h.db'}"), now_fn=lambda: NOW)
+    t1, t2, t3, t4 = (NOW + timedelta(minutes=10 * i) for i in range(4))
+    store.replace(parse_calls([body(CAMS, RBL)]), fetched_at=t1)
+    store.replace(parse_calls([body(CAMS, RBL)]), fetched_at=t2)  # the same calls read again: nothing added
+    rows = events(store)
+    assert [r[0] for r in rows] == ["CAMS", "RBLBANK"]
+    utc = lambda t: t.astimezone(timezone.utc).replace(tzinfo=None)  # noqa: E731 - SQLite hands times back naive
+    assert all(r[4] == utc(t1) and r[5] == utc(t2) for r in rows)  # first seen at the first read, last seen at the second
+    closed = {**CAMS, "CallMode": "Closed", "ExitComment": "Target Hit", "ExitDtm": "2026-10-15T12:25:00"}
+    store.replace(parse_calls([body(closed, RBL)]), fetched_at=t3)  # CAMS hit its target: one row
+    store.replace(parse_calls([body(closed, {**RBL, "StopLoss": "380.00"})]), fetched_at=t4)  # RBL's stop raised: one row
+    rows = events(store)
+    assert [(r[0], r[1], r[2], r[3]) for r in rows] == [
+        ("CAMS", True, "", 698.0),
+        ("RBLBANK", True, "", 376.5),
+        ("CAMS", False, "Target Hit", 698.0),
+        ("RBLBANK", True, "", 380.0),
+    ]
+    assert rows[0][5] == utc(t2) and rows[2][4] == utc(t3) and rows[2][5] == utc(t4)  # the old state is kept as it ended
+    store.replace([], fetched_at=t4 + timedelta(minutes=10))  # a call gone from the list is not a change: nothing added
+    assert len(events(store)) == 4 and store.current() == []
+
+
+def test_a_failing_history_never_costs_the_snapshot(tmp_path, monkeypatch):
+    store = HouseCallStore(make_session_factory(f"sqlite:///{tmp_path / 'h.db'}"), now_fn=lambda: NOW)
+
+    def broken(*a):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store, "record_history", broken)
+    store.replace(parse_calls([body(CAMS)]))
+    assert [c.symbol for c in store.current()] == ["CAMS"] and events(store) == []
 
 
 def test_a_broken_store_means_no_calls_not_a_crash(tmp_path):
@@ -257,6 +299,43 @@ def test_open_swing_buy_calls_join_the_candidates_and_each_decision_records_why(
     assert agent.shown["RBLBANK"].kind == "Swing Trade"
     rbl = next(d for d in decisions(sessions) if d.symbol == "RBLBANK")
     assert HouseCall.from_dict(json.loads(rbl.house_call_json)) == agent.shown["RBLBANK"]
+
+
+def test_a_research_only_stock_skips_the_filters_and_what_they_would_say_is_recorded_not_acted_on(tmp_path):
+    """Record-only (C2): RBLBANK is below its 50-day average, so the rule says HOLD and the screener filtered it out; the
+    AI's BUY still stands. ABCAPITAL's screen check fails: recorded as unknown, and the cycle carries on."""
+    calls = [parse_calls([body(RBL, ABC, {**RBL, "ScripCode": "TCS"})])]
+    pipe, _, sessions, _ = swing(tmp_path, calls)
+    below_ma50 = {"RBLBANK": Snapshot("RBLBANK", 90.0, 98.0, 95.0, 60.0, 1000, bar_date="2026-10-14")}
+    pipe.snapshot_fn = lambda sym: below_ma50.get(sym) or Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000, bar_date="2026-10-14")
+    asked = []
+
+    def screen(symbol, equity):
+        asked.append((symbol, equity))
+        if symbol == "ABCAPITAL":
+            raise ValueError("scan failed")
+        return "filtered out"
+
+    pipe.screen_verdict_fn = screen
+    pipe.run_once()
+    rows = {d.symbol: (d.final_action, d.rule_action, d.screen_verdict) for d in decisions(sessions)}
+    assert rows == {"TCS": ("BUY", "BUY", None), "RBLBANK": ("BUY", "HOLD", "filtered out"), "ABCAPITAL": ("BUY", "BUY", None)}
+    assert sorted(asked) == [("ABCAPITAL", 100_000.0), ("RBLBANK", 100_000.0)]  # only research-only stocks are checked
+
+    from src.learning.jobs import research_gate_line
+
+    line = research_gate_line(sessions)
+    assert "2 stock-sessions, 2 AI BUYs" in line and "turned 1 of those BUYs into HOLDs" in line and "filtered out 1" in line
+
+
+def test_the_screeners_verdict_on_one_stock():
+    from src.data.universe import Candidate, ScreenConfig, UniverseScreener
+
+    day = date(2026, 10, 16)
+    screener = UniverseScreener(list, lambda s: None, ScreenConfig(max_candidates=1, affordable_pct=0.1), today=lambda: day)
+    screener._day, screener._ranked = day, [Candidate("A", 50.0, 0.1, 60, 1e8, 0.01), Candidate("B", 50.0, 0.1, 60, 1e8, 0.01), Candidate("C", 5_000.0, 0.1, 60, 1e8, 0.01)]  # fmt: skip
+    verdicts = {s: screener.verdict(s, equity=10_000.0) for s in ("A", "B", "C", "D")}
+    assert verdicts == {"A": "candidate", "B": "below the top 1", "C": "unaffordable", "D": "filtered out"}
 
 
 def test_without_calls_the_pipeline_runs_exactly_as_before(tmp_path):

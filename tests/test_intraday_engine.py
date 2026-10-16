@@ -429,3 +429,64 @@ def test_the_breakout_engine_trades_the_same_whether_or_not_earlier_sessions_are
     assert [(r.bar_time, r.signal_price, r.outcome) for r in signals(broker_a)] == [
         (r.bar_time, r.signal_price, r.outcome) for r in signals(broker_b)
     ]
+
+
+# ---------------------------------------------------------------- data quality: what was seen vs the final bars (C4)
+def closed_at_1540(eng, broker, now):
+    broker.clock.open = False
+    now[0] = at(15, 40).astimezone(timezone.utc)
+
+
+def test_each_signal_records_what_was_seen_and_is_checked_once_against_the_final_bars(tmp_path):
+    eng, broker, _, now, _ = engine(tmp_path, {"AAA": make_bars(BREAKOUT, volumes=VOLS)}, at(9, 45))
+    eng.step()
+    [row] = signals(broker)
+    assert row.seen_volume == 3000 and row.step_at.replace(tzinfo=timezone.utc) == at(9, 45).astimezone(timezone.utc)
+    assert row.final_close is None and row.final_signal is None  # not verified during the session
+    closed_at_1540(eng, broker, now)
+    final = make_bars(BREAKOUT, volumes=[1000, 1000, 1000, 1000, 3300])  # Yahoo topped up the signal bar's volume
+    calls = []
+
+    def fetch(symbols):
+        calls.append(symbols)
+        if len(calls) == 1:
+            raise ConnectionError("down")
+        return {"AAA": final}
+
+    eng.fetch_bars = fetch
+    eng.step()
+    assert signals(broker)[0].final_close is None  # the download failed: retried next cycle
+    eng.step()
+    [row] = signals(broker)
+    assert (row.final_close, row.final_volume, row.final_signal) == (101.5, 3300, True)
+    eng.step()
+    assert calls == [["AAA"], ["AAA"]]  # verified once: no further downloads
+
+
+def test_a_signal_the_final_bars_do_not_confirm_is_recorded_and_reported(tmp_path):
+    from src.intraday.data_quality import data_quality_report
+
+    eng, broker, _, now, _ = engine(tmp_path, {"AAA": make_bars(BREAKOUT, volumes=VOLS)}, at(9, 45))
+    eng.step()
+    closed_at_1540(eng, broker, now)
+    revised = make_bars([100, 100.4, 100.2, 100.3, 100.45], volumes=VOLS)  # the breakout bar was revised below the range
+    eng.fetch_bars = lambda symbols: {"AAA": revised}
+    eng.step()
+    [row] = signals(broker)
+    assert row.final_signal is False and row.final_close == 100.45
+    text = data_quality_report(broker.sessions, "INTRADAY")
+    assert "verified after the close: 1 on 1 sessions" in text and "too few sessions to judge (1 of 10)" in text
+    assert "do not confirm at the same bar: 1 of 1 (1 of 1 entered trades)" in text
+    assert "median gap 1.03%" in text and "median 1.00x" in text
+
+
+def test_nothing_is_verified_before_the_last_bar_or_without_signals(tmp_path):
+    eng, broker, _, now, _ = engine(tmp_path, {"AAA": make_bars(BREAKOUT, volumes=VOLS)}, at(9, 45))
+    broker.clock.open = False
+    calls = []
+    eng.fetch_bars = lambda symbols: calls.append(symbols) or {}
+    now[0] = at(15, 34).astimezone(timezone.utc)
+    eng.step()
+    now[0] = at(15, 40).astimezone(timezone.utc)
+    eng.step()  # after the close, but no signals today: nothing to download
+    assert calls == [] and eng._verified == "2026-09-21"

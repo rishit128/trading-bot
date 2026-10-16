@@ -21,6 +21,7 @@ from src.learning.mistakes import (  # noqa: E402
     group_stats,
     load_judged,
     missed_gains,
+    rule_buy_passes,
     worst_calls,
 )
 
@@ -38,28 +39,34 @@ def main():
         print("nothing to judge yet: outcomes appear once decisions are old enough. Run scripts/label_outcomes.py.")
         return
     print("\n=== by the call the bot made (a BUY should beat the rest) ===")
-    for g in breakdown(judged, lambda j: j.action, floor):
+    for g in breakdown(judged, lambda j: j.action, floor, horizon):
         print(fmt(g))
-    print(fmt(group_stats("ALL decisions", judged, floor)))
+    print(fmt(group_stats("ALL decisions", judged, floor, horizon)))
     print("\n=== BUYs by confidence (higher confidence should do better; if not, confidence is not calibrated) ===")
-    for g in breakdown([j for j in judged if j.action == "BUY"], confidence_bucket, floor):
+    for g in breakdown([j for j in judged if j.action == "BUY"], confidence_bucket, floor, horizon):
         print(fmt(g))
     print("\n=== by who made the call ===")
-    for g in breakdown(judged, lambda j: j.source or "unknown", floor):
+    for g in breakdown(judged, lambda j: j.source or "unknown", floor, horizon):
         print(fmt(g))
     print("\n=== did the reflection critic help? (a veto is right when the vetoed stocks do WORSE than the calls it upheld) ===")
     print("(only calls the lead agent wanted to BUY reach the critic; both groups below were run through it)")
-    for g in breakdown([j for j in judged if "[reflection " in j.reasoning], lambda j: "vetoed" if j.vetoed else "upheld", floor):
+    for g in breakdown(
+        [j for j in judged if "[reflection " in j.reasoning], lambda j: "vetoed" if j.vetoed else "upheld", floor, horizon
+    ):
         print(fmt(g))
     print("\n=== by model that answered ===")
-    for g in breakdown(judged, lambda j: j.model or "unknown", floor):
+    for g in breakdown(judged, lambda j: j.model or "unknown", floor, horizon):
         print(fmt(g))
-    print("\n=== by agreement with the mechanical rule ===")
-    for g in breakdown(judged, lambda j: j.rule_alignment or "unknown", floor):
+    print("\n=== by the mechanical rule's own verdict ===")
+    for g in breakdown(judged, lambda j: j.rule_action or "unknown", floor, horizon):
         print(fmt(g))
     print("\n=== does the AI add anything over the plain rule? ===")
     print("(the AI earns its place only if 'rule BUY, AI bought' beats 'rule BUY, AI passed' by more than the ± ranges)")
-    for g in breakdown([j for j in judged if ai_vs_rule(j) != "n/a"], ai_vs_rule, floor):
+    for g in breakdown([j for j in judged if ai_vs_rule(j) != "n/a"], ai_vs_rule, floor, horizon):
+        print(fmt(g))
+    print("(within 'rule BUY, AI passed': who passed)")
+    passes = [j for j in judged if ai_vs_rule(j) == "rule BUY, AI passed"]
+    for g in breakdown(passes, rule_buy_passes, floor, horizon):
         print(fmt(g))
     print("\n=== worst BUYs (mistakes of commission) ===")
     for j in worst_calls(judged, "BUY"):

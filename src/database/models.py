@@ -57,6 +57,10 @@ class DecisionRecord(Base):
     # deterministic mechanical filter - the inputs to the rubber-stamp / approval-rate measurement.
     raw_model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     rule_alignment: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)  # agree / deviate / None
+    # The mechanical entry rule's own verdict on this snapshot (BUY/HOLD), computed in code. Unlike `rule_alignment`
+    # (the analyst's answer against the rule, before the critic) it does not move when the critic vetoes the call.
+    # NULL on rows recorded before 2026-10-16: readers recompute it from `snapshot_json`.
+    rule_action: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     falsification: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # the concrete thing that proves it wrong
     # Version stamps (src/versions.py), so a change of prompt, indicators or rules can be attributed per decision.
     prompt_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
@@ -73,6 +77,10 @@ class DecisionRecord(Base):
     # Why the stock was analysed: "held", "screener", "research" (an open broker research call put it on the list) or
     # "screener+research". None on rows written before the research integration.
     candidate_source: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    # For a stock only a research call put on the list: what the screener's own filters made of it (UniverseScreener.
+    # verdict: candidate / below the top N / unaffordable / filtered out). Recorded only; nothing is blocked on it. None
+    # for other stocks, without a screener, or on rows written before 2026-10-16.
+    screen_verdict: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
     # The broker research call the AI was shown for this stock (src.data.house_calls.HouseCall as JSON); None = none shown.
     house_call_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -146,6 +154,9 @@ class PaperPositionRecord(Base):
     target: Mapped[float] = mapped_column(Float)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_checked: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Start of the 5-minute bar whose latest close was the fill price (it may still have been forming); None when the
+    # feed does not say, or on rows recorded before 2026-10-16.
+    entry_price_bar: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     # Latest split/bonus/dividend ex-date already applied (YYYY-MM-DD); None = none since the position opened.
     actions_through: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
 
@@ -165,6 +176,9 @@ class PaperTradeRecord(Base):
     reason: Mapped[str] = mapped_column(String(16))
     fees: Mapped[float] = mapped_column(Float)
     net_pnl: Mapped[float] = mapped_column(Float)
+    # Start of the 5-minute bar each price came from (see PaperPositionRecord.entry_price_bar); None when unknown.
+    entry_price_bar: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    exit_price_bar: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class HoldoutMark(Base):
@@ -236,6 +250,14 @@ class IntradaySignalRecord(Base):
     # The open broker research call on this stock when the signal fired ("Intraday buy", ...); None = none. A stock that is
     # not in the day's recorded universe (intraday_universe) was added to the scan by that call.
     house_call: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # Data quality (all None on rows recorded before 2026-10-16). What the engine saw: when its cycle started and the
+    # signal bar's volume (the close it saw is `signal_price`). What the final bars, downloaded after the close, say about
+    # the same bar, and whether the rule run on them still signals at that bar (IntradayEngine._verify_signals).
+    step_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    seen_volume: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    final_close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    final_volume: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    final_signal: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
 
 class IntradayUniverseRecord(Base):
@@ -291,3 +313,29 @@ class HouseCallRecord(Base):
     is_open: Mapped[bool] = mapped_column(Boolean)
     exit_comment: Mapped[str] = mapped_column(String(64), default="")  # e.g. "Target Hit", "Stoploss Hit", "Exit"
     exit_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)  # None while open
+
+
+class HouseCallEvent(Base):
+    """The history of the broker's research calls (src.data.house_calls), beside the one-snapshot `house_calls` table the
+    trading code reads. One row per distinct state of a call, keyed by (symbol, kind, side, published): a call read again
+    unchanged only moves its row's `last_seen`; any change (closed, stop or target revised) appends a row. Rows are never
+    deleted, so how each call began, changed and ended can be scored later."""
+
+    __tablename__ = "house_call_events"
+    __table_args__ = (Index("ix_house_call_events_call", "symbol", "kind", "side", "published"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(32))
+    side: Mapped[str] = mapped_column(String(8))
+    published: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # UTC
+    entry_low: Mapped[float] = mapped_column(Float)
+    entry_high: Mapped[float] = mapped_column(Float)
+    stop: Mapped[float] = mapped_column(Float)
+    target: Mapped[float] = mapped_column(Float)
+    valid_to: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    is_open: Mapped[bool] = mapped_column(Boolean)
+    exit_comment: Mapped[str] = mapped_column(String(64), default="")
+    exit_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)  # UTC
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # the read that first showed this state
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # the latest read that still showed it

@@ -114,6 +114,7 @@ def build_pipeline(live: bool) -> TradingPipeline:
         fundamentals_fn=FundamentalsProvider(),
         broker_label=kit.broker_label,
         house_calls_fn=house_calls.current,
+        screen_verdict_fn=kit.screener.verdict if kit.screener else None,
     )
     return pipeline
 
