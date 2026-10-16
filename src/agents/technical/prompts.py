@@ -29,13 +29,14 @@ def mechanical_action(s, pulse=None) -> Action:
 def mechanical_baseline(s, pulse=None) -> str:
     """Human-readable form of the mechanical verdict, rendered into the prompt."""
     above, stacked = above_ma50(s.price, s.ma50), ma_stack_bullish(s.ma50, s.ma200)
-    if not entry_filter(s.price, s.ma50, s.ma200, s.rsi) and _surging(s, pulse):
+    passes = entry_filter(s.price, s.ma50, s.ma200, s.rsi)
+    if not passes and _surging(s, pulse):
         return (
             f"BUY (market-pulse rule: price above MA50, RSI(14) below {HOT_MAX_RSI:.0f}, and the stock's sector is "
             "surging. The long-term filter (MA50 above MA200, RSI below 70) does not apply to these stocks; they are "
             "sold on a close below MA50)"
         )
-    if entry_filter(s.price, s.ma50, s.ma200, s.rsi):
+    if passes:
         return (
             f"BUY (price above MA50, MA50 above MA200, RSI(14) below {RSI_OVERBOUGHT:.0f} - the technical filter "
             "this candidate passed)"

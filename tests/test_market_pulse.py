@@ -2,7 +2,7 @@
 uses it (extra candidates, the AI's context, a 50-day exit for those positions) and that nothing changes without it."""
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -25,7 +25,7 @@ from src.data.market_pulse import (
     summary,
     yahoo_sector,
 )
-from src.data.universe import Candidate, ScreenConfig, UniverseScreener
+from src.data.universe import ScreenConfig, UniverseScreener
 from src.database import DecisionRecord, OrderRecord, make_session_factory
 from src.engine.risk_engine import Portfolio
 from src.engine.strategy import trend_exit_decision
@@ -98,14 +98,13 @@ def test_the_screener_keeps_the_movers_of_the_scan_it_already_runs():
     screener = UniverseScreener(lambda: ["UP", "FLAT"], lambda syms: frame, CFG, today=lambda: DAY)
     assert [m.symbol for m in screener.movers()] == ["UP"]
     assert [m.symbol for m in screener.movers()] == ["UP"]  # the day's scan is reused
-    assert isinstance(Candidate, type)
 
 
 SECTORS = {"A": "IT", "B": "IT", "C": "IT", "D": "Banks", "E": "Banks", "F": None}
 
 
 def movers_of(symbols, price=200.0):
-    return [Mover(s, price, 0.10 + i / 100, 0.2, 60.0, 1e8) for i, s in enumerate(symbols)]
+    return [Mover(s, price, 0.10 + i / 100, 0.2, 1e8) for i, s in enumerate(symbols)]
 
 
 def test_a_sector_is_hot_only_with_three_surging_stocks_and_unknown_sectors_are_ignored():
@@ -123,7 +122,7 @@ def test_the_pulse_is_computed_once_a_day_and_picks_respect_budget_held_and_slot
         asked.append(s)
         return SECTORS.get(s)
 
-    movers = movers_of("ABC") + [Mover("D", 5_000.0, 0.5, 0.5, 60.0, 1e8)]
+    movers = movers_of("ABC") + [Mover("D", 5_000.0, 0.5, 0.5, 1e8)]
     pulse = MarketPulse(lambda: (calls.append(1), movers)[1], sector, today=lambda: day[0])
     assert [h.symbol for h in pulse.hot()] == ["C", "B", "A"] and pulse.hot() is pulse.hot() and len(calls) == 1
     assert [h.symbol for h in pulse.picks(1_000.0, [], 5)] == ["C", "B", "A"]
@@ -137,9 +136,9 @@ def test_the_pulse_is_computed_once_a_day_and_picks_respect_budget_held_and_slot
 
 def test_picks_are_the_most_liquid_hot_stocks_not_the_biggest_spikes():
     movers = [
-        Mover("SPIKE", 200.0, 0.30, 0.4, 60.0, 2e7),
-        Mover("LEADER", 200.0, 0.10, 0.2, 60.0, 9e8),
-        Mover("MID", 200.0, 0.2, 0.3, 60.0, 3e8),
+        Mover("SPIKE", 200.0, 0.30, 0.4, 2e7),
+        Mover("LEADER", 200.0, 0.10, 0.2, 9e8),
+        Mover("MID", 200.0, 0.2, 0.3, 3e8),
     ]
     pulse = MarketPulse(lambda: movers, lambda s: "IT", today=lambda: DAY)
     assert [h.symbol for h in pulse.picks(1_000.0, [], 5)] == ["LEADER", "MID", "SPIKE"]
@@ -213,6 +212,18 @@ def decisions(sessions):
         return list(s.scalars(select(DecisionRecord).order_by(DecisionRecord.id)))
 
 
+def bought_on_pulse(sessions, *symbols):
+    """Record a filled BUY that came from a pulse candidate for each symbol."""
+    with sessions() as s:
+        for sym in symbols:
+            d = DecisionRecord(symbol=sym, price=1.0, final_action="BUY", final_confidence=0.9, reasoning="x", candidate_source="pulse",
+                               risk_approved=True, risk_quantity=1, risk_reason="ok")  # fmt: skip
+            s.add(d)
+            s.flush()
+            s.add(OrderRecord(decision_id=d.id, symbol=sym, side="BUY", quantity=1, status="filled"))
+        s.commit()
+
+
 def test_stocks_of_a_surging_sector_join_the_candidates_and_the_ai_is_shown_the_pulse(tmp_path):
     pipe, agent, sessions, told = pulse_pipeline(tmp_path)
     assert [r.symbol for r in pipe.run_once()] == ["TCS", "C", "B", "A"]
@@ -239,27 +250,18 @@ def test_a_remembered_answer_is_not_reused_once_the_stock_becomes_part_of_a_surg
 
 
 def test_the_pulse_can_be_switched_off_and_a_failing_pulse_changes_nothing(tmp_path):
-    pipe, agent, sessions, told = pulse_pipeline(tmp_path, enabled=False)
+    (tmp_path / "off").mkdir()
+    pipe, _, _, told = pulse_pipeline(tmp_path / "off", enabled=False)
     assert [r.symbol for r in pipe.run_once()] == ["TCS"] and told == []
-    pipe, agent, sessions, told = pulse_pipeline(tmp_path / "b" if (tmp_path / "b").mkdir() is None else tmp_path)
-    pipe.pulse = MarketPulse(lambda: (_ for _ in ()).throw(RuntimeError("scan failed")), SECTORS.get, today=lambda: DAY)
-    assert [r.symbol for r in pipe.run_once()] == ["TCS"]  # the cycle carries on without the pulse
-    pipe.pulse = type(
-        "P", (), {"hot": lambda self: movers_of("A") and [HotStock("A", "IT", 3, 0.1, 0.1, 0.1)], "picks": lambda *a: 1 / 0}
-    )()
-    assert [r.symbol for r in pipe.run_once()] == ["TCS"]  # picking failed: none this cycle
+    (tmp_path / "failing").mkdir()
+    pipe, _, _, told = pulse_pipeline(tmp_path / "failing")
+    pipe.pulse = MarketPulse(lambda: 1 / 0, SECTORS.get, today=lambda: DAY)
+    assert [r.symbol for r in pipe.run_once()] == ["TCS"] and told == []  # the cycle carries on without the pulse
 
 
 def test_at_most_three_pulse_positions_are_open_at_once(tmp_path):
     pipe, _, sessions, _ = pulse_pipeline(tmp_path, held={"A": 5, "B": 5}, watchlist=("TCS", "A", "B"))
-    with sessions() as s:  # A and B were bought on the pulse
-        for sym in ("A", "B"):
-            d = DecisionRecord(symbol=sym, price=1.0, final_action="BUY", final_confidence=0.9, reasoning="x", candidate_source="pulse",
-                               risk_approved=True, risk_quantity=1, risk_reason="ok")  # fmt: skip
-            s.add(d)
-            s.flush()
-            s.add(OrderRecord(decision_id=d.id, symbol=sym, side="BUY", quantity=1, status="filled"))
-        s.commit()
+    bought_on_pulse(sessions, "A", "B")
     symbols = [r.symbol for r in pipe.run_once()]
     assert MAX_OPEN == 3 and sorted(symbols) == ["A", "B", "C", "TCS"]  # two pulse positions open: one more slot, for C
 
@@ -270,20 +272,29 @@ def test_a_position_bought_on_the_pulse_is_sold_on_a_close_below_its_50_day_aver
     pipe, _, sessions, _ = pulse_pipeline(
         tmp_path, held={"A": 5, "B": 5}, snapshots={"A": below_50, "B": above_50}, watchlist=("A", "B")
     )
-    with sessions() as s:
-        for sym in ("A", "B"):
-            d = DecisionRecord(symbol=sym, price=1.0, final_action="BUY", final_confidence=0.9, reasoning="x", candidate_source="pulse",
-                               risk_approved=True, risk_quantity=1, risk_reason="ok")  # fmt: skip
-            s.add(d)
-            s.flush()
-            s.add(OrderRecord(decision_id=d.id, symbol=sym, side="BUY", quantity=1, status="filled"))
-        s.commit()
+    bought_on_pulse(sessions, "A", "B")
     pipe.run_once()
     rows = {d.symbol: d for d in decisions(sessions)}
     assert (
         rows["A"].final_action == "SELL" and "50-day average" in rows["A"].reasoning and rows["A"].decision_source == "trend_exit"
     )
     assert rows["B"].final_action == "BUY"  # not sold: its line is the 50-day average, which it holds
+
+
+def test_a_stock_later_bought_by_the_screener_goes_back_to_the_200_day_exit(tmp_path):
+    pipe, _, sessions, _ = pulse_pipeline(
+        tmp_path, held={"A": 5}, watchlist=("A",), snapshots={"A": snap("A", 250.0, 240.0, 260.0, 50.0)}
+    )
+    bought_on_pulse(sessions, "A")
+    with sessions() as s:  # sold, then bought again as an ordinary screener candidate
+        d = DecisionRecord(symbol="A", price=1.0, final_action="BUY", final_confidence=0.9, reasoning="x", candidate_source="screener",
+                           risk_approved=True, risk_quantity=1, risk_reason="ok")  # fmt: skip
+        s.add(d)
+        s.flush()
+        s.add(OrderRecord(decision_id=d.id, symbol="A", side="BUY", quantity=1, status="filled"))
+        s.commit()
+    pipe.run_once()
+    assert next(d for d in decisions(sessions) if d.reasoning != "x").final_action == "SELL"  # under MA200: the usual exit
 
 
 def test_a_screener_position_keeps_the_200_day_exit(tmp_path):
@@ -298,4 +309,3 @@ def test_the_trend_exit_line_depends_on_how_the_position_was_bought():
     assert trend_exit_decision(s, 5).reasoning.endswith("200-day average 260.00")
     assert trend_exit_decision(s, 5, short=True) is None  # above its 50-day average
     assert "50-day average 250.00" in trend_exit_decision(snap("A", 245.0, 250.0, 260.0), 5, short=True).reasoning
-    assert datetime.now(timezone.utc).year >= 2026

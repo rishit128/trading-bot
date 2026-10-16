@@ -4,7 +4,7 @@ import dataclasses
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Set
 
 from sqlalchemy import func, select
 
@@ -103,7 +103,7 @@ class TradingPipeline:
         self.pulse = pulse  # today's surging sectors (src.data.market_pulse); None = not wired
         self._hot: Dict[str, HotStock] = {}  # the day's surging stocks by symbol, read once per cycle
         self._announced: Optional[tuple] = None  # the (day, sectors) last told to the user
-        self._pulse_entries: Dict[str, bool] = {}  # per cycle: whether a held stock was bought on the pulse
+        self._pulse_bought: Optional[Set[str]] = None  # per cycle: stocks whose latest filled BUY came from the pulse
         self._calls: List[HouseCall] = []  # read once per cycle, so every stock in a cycle sees the same snapshot
         self._sources: Dict[str, str] = {}  # why each stock of this cycle is analysed (recorded with its decision)
         self._screened: Dict[str, str] = {}  # the screener's verdict on this cycle's research-only stocks
@@ -200,7 +200,7 @@ class TradingPipeline:
     def _read_pulse(self) -> None:
         """Read today's surging stocks (computed once a day from the scan) and tell the user when the surging sectors
         change. Any failure means no pulse this cycle: the bot then runs as it did before the pulse existed."""
-        self._pulse_entries = {}
+        self._pulse_bought = None
         self._hot = {}
         if self.pulse is None or not self.settings.market_pulse:
             return
@@ -216,19 +216,20 @@ class TradingPipeline:
             self.notify("🔥 Market pulse: sectors surging today (liquid stocks up 8%+ in a month):\n" + pulse_summary(hot))
 
     def _entered_via_pulse(self, symbol: str) -> bool:
-        """Whether the open position in `symbol` was bought as a market-pulse candidate (its latest filled BUY came from a
-        decision whose candidate_source is "pulse"): such a position is sold on a close below its 50-day average."""
-        if symbol not in self._pulse_entries:
+        """Whether a position in `symbol` was bought as a market-pulse candidate (its latest filled BUY came from a
+        decision whose candidate_source is "pulse"): such a position is sold on a close below its 50-day average. One
+        query a cycle answers for every stock."""
+        if self._pulse_bought is None:
             with self.sessions() as s:
-                source = s.scalar(
-                    select(DecisionRecord.candidate_source)
-                    .join(OrderRecord, OrderRecord.decision_id == DecisionRecord.id)
-                    .where(OrderRecord.symbol == symbol, OrderRecord.side == Action.BUY, OrderRecord.status == OrderStatus.FILLED)
-                    .order_by(OrderRecord.id.desc())
-                    .limit(1)
+                rows = s.execute(
+                    select(OrderRecord.symbol, DecisionRecord.candidate_source)
+                    .join(DecisionRecord, OrderRecord.decision_id == DecisionRecord.id)
+                    .where(OrderRecord.side == Action.BUY, OrderRecord.status == OrderStatus.FILLED)
+                    .order_by(OrderRecord.id)
                 )
-            self._pulse_entries[symbol] = source == "pulse"
-        return self._pulse_entries[symbol]
+                latest = dict(rows.all())  # ordered by id: the last BUY of each stock wins
+            self._pulse_bought = {symbol for symbol, source in latest.items() if source == "pulse"}
+        return symbol in self._pulse_bought
 
     def _read_house_calls(self) -> List[HouseCall]:
         if self.house_calls_fn is None:
@@ -329,15 +330,11 @@ class TradingPipeline:
     def _pulse_picks(self, portfolio: Portfolio) -> List[HotStock]:
         """Stocks of surging sectors that the screener did not pick: they skip the screener's long-term filters and go
         through the same AI, risk engine and stop. At most MAX_PULSE_OPEN such positions are open at once."""
-        if self.pulse is None or not self._hot:
+        if self.pulse is None or not self._hot:  # not wired, switched off, failed to read, or nothing surging
             return []
         open_now = sum(1 for s in portfolio.positions if self._entered_via_pulse(s))
         budget = portfolio.equity * self.settings.risk.min_position_pct  # one share must fit the smallest position
-        try:
-            return self.pulse.picks(budget, set(portfolio.positions) | set(self._sources), MAX_PULSE_OPEN - open_now)
-        except Exception:
-            log.exception("could not pick market-pulse stocks; none this cycle")
-            return []
+        return self.pulse.picks(budget, set(portfolio.positions) | set(self._sources), MAX_PULSE_OPEN - open_now)
 
     def _screen(self, symbol: str, portfolio: Portfolio) -> Optional[str]:
         """The screener's verdict on a research-only stock, or None (no screener, or it failed: this is a record only)."""

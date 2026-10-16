@@ -48,7 +48,6 @@ class Mover:
     price: float
     ret21: float
     ret63: float
-    rsi: float
     avg_traded_value: float
 
 
@@ -94,17 +93,16 @@ def mover(
     traded_value = float(np.nanmean(close[-20:] * volume[-20:]))
     if not (price >= min_price and traded_value >= min_traded_value):
         return None
-    recent = close[-64:]
+    recent = close[-BARS_NEEDED:]
     volatility = float(np.std(recent[1:] / recent[:-1] - 1.0, ddof=1))
     if not volatility <= max_daily_volatility:  # also rejects NaN
         return None
     ret21 = price / float(close[-22]) - 1
     if price <= float(close[-50:].mean()) or not HOT_RET_21D <= ret21 <= HOT_MAX_RET_21D:
         return None
-    rsi = rsi_from_array(close)
-    if not rsi < HOT_MAX_RSI:
+    if not rsi_from_array(close) < HOT_MAX_RSI:
         return None
-    return Mover(symbol, price, ret21, price / float(close[-64]) - 1, rsi, traded_value)
+    return Mover(symbol, price, ret21, price / float(close[-BARS_NEEDED]) - 1, traded_value)
 
 
 def movers_from_bars(bars: pd.DataFrame, cfg) -> List[Mover]:
@@ -114,14 +112,10 @@ def movers_from_bars(bars: pd.DataFrame, cfg) -> List[Mover]:
         return found
     newest = bars.index.get_level_values(1).max()
     for symbol, g in bars.groupby(level=0):
-        close = (g["Close"] if "Close" in g else g["close"]).astype(float)
-        volume = (g["Volume"] if "Volume" in g else g["volume"]).astype(float)
-        if len(close) == 0:
-            continue
         m = mover(
             str(symbol),
-            close.to_numpy(),
-            volume.to_numpy(),
+            (g["Close"] if "Close" in g else g["close"]).to_numpy(dtype=float),  # the spellings screen_bars accepts
+            (g["Volume"] if "Volume" in g else g["volume"]).to_numpy(dtype=float),
             g.index.get_level_values(1)[-1],
             newest,
             cfg.min_price,
@@ -183,8 +177,7 @@ class MarketPulse:
         self._sector_fn = sector_fn
         self._day: Optional[date] = None
         self._hot: List[HotStock] = []
-        self._prices: Dict[str, float] = {}
-        self._values: Dict[str, float] = {}
+        self._movers: Dict[str, Mover] = {}
 
     def _sector(self, symbol: str) -> Optional[str]:
         if symbol not in self._sectors:
@@ -197,8 +190,7 @@ class MarketPulse:
             if self._day == self.today():
                 return self._hot
             movers = self.movers_fn()
-            self._prices = {m.symbol: m.price for m in movers}
-            self._values = {m.symbol: m.avg_traded_value for m in movers}
+            self._movers = {m.symbol: m for m in movers}
             self._hot = hot_stocks(movers, self._sector)
             self._day = self.today()
             return self._hot
@@ -209,8 +201,8 @@ class MarketPulse:
         out: List[HotStock] = []
         if slots <= 0:
             return out
-        for h in sorted(self.hot(), key=lambda h: self._values.get(h.symbol, 0.0), reverse=True):  # liquid leaders first
-            if h.symbol in held or self._prices.get(h.symbol, float("inf")) > budget:
+        for h in sorted(self.hot(), key=lambda h: self._movers[h.symbol].avg_traded_value, reverse=True):
+            if h.symbol in held or self._movers[h.symbol].price > budget:
                 continue
             out.append(h)
             if len(out) >= min(slots, MAX_PICKS):
