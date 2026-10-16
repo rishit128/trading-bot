@@ -201,6 +201,9 @@ def test_intraday_commands_show_the_separate_account(control):
                 }
             ]
 
+        def valuation(self):  # what the Telegram view reads: nothing is settled or written
+            return self.portfolio(), self.holdings()
+
         def trade_history(self):
             return []
 

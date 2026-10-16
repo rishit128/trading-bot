@@ -19,7 +19,7 @@ UNIVERSE = {
     "NEWBUY": (100.0, 98.0, 95.0, 60.0, "BUY", 0.90),  # a clean approved entry
     "LOWCONF": (100.0, 98.0, 95.0, 60.0, "BUY", 0.50),  # below the 0.60 minimum confidence
     "HOLDER": (100.0, 98.0, 95.0, 60.0, "HOLD", 0.70),  # the agent stands aside
-    "HELD1": (100.0, 98.0, 95.0, 60.0, "BUY", 0.90),  # already holds 20% of equity: no room to add
+    "HELD1": (100.0, 98.0, 95.0, 60.0, "BUY", 0.90),  # already held: a second buy is refused
     "HELD2": (90.0, 92.0, 95.0, 55.0, "BUY", 0.90),  # price below MA200: the deterministic trend exit sells it
     "BROKEN": None,  # the data fetch raises
     "OPENORD": (100.0, 98.0, 95.0, 60.0, "BUY", 0.90),  # an order is already open at the broker

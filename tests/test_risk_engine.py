@@ -37,11 +37,6 @@ def test_buy_is_capped_at_position_limit():
     assert d.approved and d.quantity == 33  # 5% of 100k = 5000 -> 33 shares
 
 
-def test_position_limit_counts_existing_holding_at_its_own_value():
-    d = ENGINE.evaluate("BUY", 0.9, "AAPL", 150.0, pf(positions={"AAPL": 4000.0}, position_qty={"AAPL": 20}))
-    assert d.approved and d.quantity == 6  # only $1000 of room left
-
-
 def test_buy_rejected_when_position_full():
     d = ENGINE.evaluate("BUY", 0.9, "AAPL", 150.0, pf(positions={"AAPL": 5000.0}, position_qty={"AAPL": 33}))
     assert not d.approved and d.quantity == 0
@@ -114,10 +109,12 @@ def test_new_symbol_rejected_when_max_open_positions_reached():
     assert not d.approved and "max open positions" in d.reason
 
 
-def test_existing_position_can_still_be_topped_up_at_max_open_positions():
-    limits = RiskLimits(max_open_positions=2)
-    p = pf(positions={"A": 1000.0, "B": 1000.0}, position_qty={"A": 10, "B": 10})
-    assert RiskEngine(limits).evaluate("BUY", 0.9, "A", 100.0, p).approved
+def test_a_held_stock_is_never_bought_again_whatever_room_is_left():
+    p = pf(positions={"A": 1000.0}, position_qty={"A": 10})  # 1% of the account: plenty of room for more
+    d = ENGINE.evaluate("BUY", 0.9, "A", 100.0, p)
+    assert not d.approved and d.quantity == 0 and "already held" in d.reason
+    assert ENGINE.evaluate("BUY", 0.9, "B", 100.0, p).approved  # another stock is fine
+    assert ENGINE.evaluate("SELL", 0.9, "A", 100.0, p).approved  # and a held one can still be sold
 
 
 def test_sells_are_never_blocked_by_max_open_positions():
@@ -282,19 +279,19 @@ def test_an_approved_buy_never_breaks_a_limit(seed):
             continue
         approved += 1
         value = d.quantity * price
-        existing = p.positions.get(symbol, 0.0)
+        assert symbol not in p.positions  # never a top-up
         assert d.quantity >= 1
         assert conf >= limits.min_confidence
         assert value <= p.cash + 1e-6  # never spends money it lacks
-        assert existing + value <= p.equity * engine.position_pct(conf) + price  # size follows confidence
-        assert existing + value <= p.equity * limits.max_position_pct + price  # ... and the position cap
+        assert value <= p.equity * engine.position_pct(conf) + price  # size follows confidence
+        assert value <= p.equity * limits.max_position_pct + price  # ... and the position cap
         assert sum(p.positions.values()) + value <= p.equity * limits.max_portfolio_exposure_pct + price
-        assert symbol in p.positions or len(p.positions) < limits.max_open_positions  # never a slot beyond the cap
+        assert len(p.positions) < limits.max_open_positions  # never a slot beyond the cap
         assert engine.halt_reason(p) is None  # never buys while halted
         if limits.max_fee_drag_pct > 0:
             drag = (india_delivery_fees("BUY", value) + india_delivery_fees("SELL", value)) / value
             assert drag <= limits.max_fee_drag_pct + 1e-9  # never a fee-dominated position
-    assert approved > 150  # the generator really produces approvable cases; a vacuous pass would prove nothing
+    assert approved > 80  # the generator really produces approvable cases; a vacuous pass would prove nothing
 
 
 @pytest.mark.parametrize("seed", [4, 5])

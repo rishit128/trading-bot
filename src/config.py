@@ -139,6 +139,7 @@ class Settings:
     # skipping 63% of the breakouts the strategy had been tested on (STRATEGY.md, intraday audit 2026-09-28).
     intraday_risk_pct: float = 0.005
     intraday_max_position_pct: float = 0.20
+    intraday_max_daily_loss_pct: float = 0.02  # an intraday account takes no new entries once down this much on the day
     intraday_max_positions: int = 5
     intraday_universe: tuple = ()  # explicit symbols; empty = the Nifty 100 file if saved, else Yahoo's top 100 by traded value
     intraday_archive: bool = True  # save every finished session's 5-minute bars (Yahoo keeps only ~60 sessions)
@@ -164,7 +165,7 @@ class Settings:
             raise ValueError(f"cash_yield_pct must be an annual fraction in [0, 0.15], e.g. 0.05, got {self.cash_yield_pct}")
         if not 0 < self.max_daily_volatility < 1:
             raise ValueError("max_daily_volatility must be a fraction in (0, 1), e.g. 0.04")
-        for name in ("intraday_risk_pct", "intraday_max_position_pct"):
+        for name in ("intraday_risk_pct", "intraday_max_position_pct", "intraday_max_daily_loss_pct"):
             if not 0 < getattr(self, name) <= 1:
                 raise ValueError(f"{name} must be a fraction in (0, 1], got {getattr(self, name)}")
         if self.intraday_max_positions < 1:
@@ -220,6 +221,7 @@ def load_settings() -> Settings:
         llm_reflect=os.getenv("LLM_REFLECT", "true").strip().lower() != "false",
         intraday_risk_pct=_float("INTRADAY_RISK_PCT", 0.005),
         intraday_max_position_pct=_float("INTRADAY_MAX_POSITION_PCT", 0.20),
+        intraday_max_daily_loss_pct=_float("INTRADAY_MAX_DAILY_LOSS_PCT", 0.02),
         intraday_max_positions=int(_float("INTRADAY_MAX_POSITIONS", 5)),
         intraday_universe=tuple(x.strip().upper() for x in os.getenv("INTRADAY_UNIVERSE", "").split(",") if x.strip()),
         intraday_archive=os.getenv("INTRADAY_ARCHIVE", "true").strip().lower() != "false",

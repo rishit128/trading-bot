@@ -109,12 +109,13 @@ class RiskEngine:
         if halt:
             return _reject(halt[1])
 
-        if symbol not in p.positions and len(p.positions) >= lim.max_open_positions:
+        if symbol in p.positions:
+            return _reject(f"{symbol} is already held: no top-ups")  # the broker refuses a second buy as well
+        if len(p.positions) >= lim.max_open_positions:
             return _reject(f"max open positions reached ({lim.max_open_positions})")
 
         pct = self.position_pct(confidence)
-        existing_value = p.positions.get(symbol, 0.0)
-        position_room = p.equity * pct - existing_value
+        position_room = p.equity * pct
         total_exposure = sum(p.positions.values())
         exposure_room = p.equity * lim.max_portfolio_exposure_pct - total_exposure
         budget = min(position_room, exposure_room, p.cash)

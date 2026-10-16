@@ -6,29 +6,50 @@ The one-off research scripts named in the dated sections below were removed on 2
 recorded here; they remain in git history at commit 8284b54. The intraday audit and hypothesis scripts are kept: they
 are meant to be re-run as the 5-minute archive grows.
 
-## Market and universe
-- **India (default):** all NSE main-board EQ-series stocks (~2,300), scanned once per day.
-- Filters: price >= Rs 100, average daily traded value >= Rs 10 crore, >= 200 days of history, daily volatility <= 4%,
-  price > MA50 > MA200, RSI(14) < 70. Ranked by 63-day return / volatility; top 15 analysed, plus current holdings.
-- `UNIVERSE=watchlist` uses a fixed `WATCHLIST` instead.
+## How the bot runs today (2026-10-16)
+Everything after this section is the history of how it got here. When the two disagree, **this section and the code win**.
+The server's own `.env` overrides some code defaults; both are shown.
 
-## Entry
-- Technical agent (AI over price, MA50, MA200, RSI14, volume of the **last completed session**) proposes BUY / SELL / HOLD
-  with a confidence; long only.
-- Multiple agents combine by role: leads must agree, advisors confirm or veto (`src/engine/strategy.py`). Minimum confidence 0.60.
+| | Code default | Live on the server |
+|---|---|---|
+| Paper account (each of four) | Rs 1,000,000 | **Rs 25,000** |
+| Swing position size | 5% of equity | **8.8%** |
+| Most invested in swing | 80% | **90%** |
+| Open swing positions | 10 | **15** |
+| Idle cash earns | 0% | 3.5% a year (stands in for a liquid fund) |
+| Everything else in the risk engine | | as the defaults: confidence >= 0.60, no top-ups, fee drag <= 4%, new buys halt at -2% on the day or -20% from peak (lapses after 30 days) |
 
-## Exits (changed after a 9-year test, see below)
-- **Protective stop -15%** (broker-side; was -8% until 2026-09-25 and -2% originally, see the live-configuration section) and effectively **no profit target** (+100%; was +5%): winners run.
-- **Deterministic trend exit** (`TREND_EXIT=true`): a held stock is sold when its last completed close is below its
-  200-day average. Plain code, like the risk engine; it does not depend on the AI happening to say SELL.
-- The AI can still say SELL. Re-buy cooldown 24h so a stop-out is not bought straight back.
+**Swing bot** (one analysis per stock per completed daily bar, long only, paper):
+1. *Candidates*, three sources, all analysed by the same AI and risk engine: (a) the **screener**: Yahoo's list of NSE stocks
+   (about 1,300 after its pre-cut), kept if price >= Rs 100, average traded value >= Rs 10 crore, 200+ days of history,
+   daily volatility <= 4%, price > MA50 > MA200, RSI(14) < 70 and one share fits the smallest position; ranked by **12-1 month
+   momentum**, top 15; (b) **research calls**: stocks of the broker's open Swing Trade / Momentum / Stellar Pick buy calls,
+   only on days the research watch is on (see "Broker research calls"); (c) the **market pulse**: stocks of industries that
+   are surging today (see "Market pulse"). Held positions are always analysed.
+2. *Decision*: the technical agent (AI) is shown the chart, the mechanical baseline, the stock's 12-1 momentum, the company's
+   latest results and ratios, the market situation, and any research call or pulse. It follows the baseline unless the
+   company data gives a concrete numbered reason; a veto-only critic may turn a BUY into a HOLD. Minimum confidence 0.60.
+3. *Exits*: a 15% protective stop (broker-side) and effectively no target (+100%); the **deterministic trend exit** sells a
+   held stock whose last completed close is below its 200-day average (for a pulse position: its 50-day average); the AI
+   may also say SELL. A stop-out is not re-bought for 24 hours. A held stock is never bought again (no top-ups).
 
-## Risk limits (the risk engine is the only source of order size)
-- 5% of equity per stock; 80% total exposure; at most 10 open positions.
-- New buys halt at -2% on the day or -20% from peak equity. The -20% halt now lapses by itself after 30 calendar days (`DRAWDOWN_PAUSE_DAYS`; the peak is rebased to current equity), or at once with `/rebase`; 0 keeps the old permanent halt. `/pause` blocks all orders.
+**Controls.** `UNIVERSE=watchlist` scans a fixed `WATCHLIST` instead of the market. Several agents would combine by role (leads
+must agree, advisors confirm or veto); today there is one lead, the technical agent. The -20% drawdown halt lapses by itself
+after 30 days (`DRAWDOWN_PAUSE_DAYS`) or at once with `/rebase`; `/pause` blocks all orders; `MARKET_PULSE=false` and
+`TREND_EXIT` switch those features off.
+
+**Intraday** (three separate paper accounts, each Rs 25,000, paper only, squared off at 15:15): the opening-range breakout
+(ORB, 09:30-14:00), gap-and-go (gap >= 2%, then a close above the opening range by 10:30) and gap-only (the same gap bought
+on the 09:30 close: gap-and-go's control). Sized by risk (0.5% of equity per trade) under a 20% position cap, 5 positions,
+no new entries after a 2% loss on the day (`INTRADAY_MAX_DAILY_LOSS_PCT`). Stepped gap-only, gap-and-go, ORB (from the next deploy: see "Paper-trading reliability"). ORB also scans
+the day's open Intraday buy calls and skips a stock the broker has an open SELL call on.
+
+**Evidence status.** No part of this is a proven edge. The 10-year studies found the entry rule adds little over holding the
+stocks; only the exits and the sizing were shown to matter; the intraday rules lose after costs in every test. The AI is
+judged forward only. Everything here is paper trading, never real money.
 
 ## Acceptance criteria (set before testing)
-AgentSignal research (`scripts/research_signals.py`), all seven required: net CAGR > 10%; Sharpe > 0.5; held-out final 3 years
+AgentSignal research (`scripts/research_signals.py`, since removed: see the note at the top), all seven required: net CAGR > 10%; Sharpe > 0.5; held-out final 3 years
 Sharpe > 0.5 and CAGR > 0; Sharpe above Nifty 50 buy-and-hold; profitable in >= 60% of calendar years; max drawdown better
 than -30% (relaxed from the plan's -20% up front, since no long-only Indian equity strategy avoids that through 2020);
 still profitable with costs doubled.
@@ -109,6 +130,8 @@ Rule (`src/intraday/strategy.py`, parameters fixed in advance, not tuned): long 
 - Sample is one ~3-month regime, so this is not final, but there is no evidence of an edge. Not tuned afterwards on purpose (tuning on 58 days would just fit noise). The engine is paper-only to gather live evidence.
 
 ## Intraday: confidence-scaled sizing and shared budget (2026-09-22)
+*Superseded 2026-09-28: the intraday engines have their own `INTRADAY_*` settings and size by risk, not by this scheme (see "Intraday audit and Phase 0 repairs").*
+
 Same idea as the swing risk engine: the ORB rule has no AI confidence, so `Setup.strength` stands in for it (0.0 at the
 minimum required volume surge of 1.5x average, 1.0 at 2x that or more). Position size scales linearly from
 `MIN_POSITION_PCT` to `MAX_POSITION_PCT` of equity by that strength (`src/intraday/strategy.position_size`), replacing
@@ -144,6 +167,8 @@ on symbol/date pairs already scored). Raw logs: `logs/ai_backtest_full.log`.
 **Decision:** the AI stays -- this project is an AI trading bot, not a rule-based one. The fix under consideration is a
 richer prompt (inputs the mechanical filter doesn't already see, so the AI has a genuine reason to disagree) and/or
 testing pure 12-1 momentum as the candidate list instead of the current trend+momentum combination.
+*Resolved 2026-10-09: the prompt was redesigned to add company and market data (see "The AI's job, redesigned"), and the
+historical AI backtest described here was removed because an AI cannot be fairly replayed on past dates.*
 
 
 ## Live-configuration backtest (2026-09-25): the numbers that match the account actually running
@@ -226,7 +251,7 @@ a BUY that failed):
 1. **Label outcomes** (`src/learning/outcomes.py`, once a day after a cycle, or `scripts/label_outcomes.py`). For each analysed
    stock-session: entry at the next open, exit `LEARNING_HORIZON` (60 since 2026-09-26; was 20) sessions later, plus the worst dip and whether the
    protective stop would have been hit. Only matured sessions are labelled; nothing looks ahead.
-2. **Setup memory** (`src/learning/setups.py`, fed to the agent's learning step when `LLM_LEARNING=true`). "How did setups like
+2. **Setup memory (REMOVED 2026-10-09: it failed its walk-forward test, see below; kept here as the record).** "How did setups like
    this one (trend shape, RSI, ADX, volume) turn out, across all stocks?" Guardrails: silent below `LEARNING_MIN_SAMPLES`
    (30) independent observations; one observation per stock per week; results net of a 0.35% round-trip cost; it always
    shows the win rate of all comparable setups beside the matched one, so the market drifting up is not mistaken for an edge;
@@ -235,8 +260,8 @@ a BUY that failed):
 3. **Mistake report** (`scripts/analyze_mistakes.py`): read-only. BUY vs HOLD forward returns with 95% intervals, confidence
    calibration, worst BUYs, biggest missed gains; groups too small to judge are marked insufficient.
 
-Nothing here retunes settings automatically: that would fit noise. The memory stays silent until the first 20-session
-outcomes mature and enough of them accumulate; whether it helps is then measurable with `scripts/ablate_phases.py`.
+Nothing here retunes settings automatically: that would fit noise. Today only items 1 (outcome labels) and 3 (the mistake
+report, and the weekly Telegram comparison of the rule's picks the AI bought with those it passed) remain.
 
 ### Feature study on 10 years of Nifty 500 (`scripts/research_features.py`, report only)
 
@@ -590,7 +615,7 @@ most recent Nifty 500 window 8% loses on return and risk. Sizing stays 10 x 5%.
 so that about Rs 15,000-16,000 of the Rs 20,000 is working (the 80% exposure cap still applies) instead of ~43%. This is a
 chosen trade of more risk for more return, not a better strategy: the table above is the expectation (drawdowns of
 -26% to -39% instead of -13% to -27%, so the 20% drawdown pause will trigger more often). Positions opened at 5% keep
-their size, and **held positions are never topped up**: the risk engine approves the extra shares, but the paper broker refuses a second buy of a held stock ("position already open"), so the order is logged as SKIPPED_OPEN_ORDER. Only slots freed by an exit are refilled at 8%, so the invested share rises only as old positions leave. (An earlier version of this note said held stocks would be topped up: that was wrong. It was found independently on 2026-10-13 and again on 2026-10-15, when the account was still 44% invested after four sessions.)
+their size, and **held positions are never topped up**: at the time the risk engine approved the extra shares and the paper broker refused a second buy of a held stock ("position already open"), so the order was logged as SKIPPED_OPEN_ORDER (since 2026-10-16 the risk engine itself rejects it: "already held: no top-ups"). Only slots freed by an exit are refilled at 8%, so the invested share rises only as old positions leave. (An earlier version of this note said held stocks would be topped up: that was wrong. It was found independently on 2026-10-13 and again on 2026-10-15, when the account was still 44% invested after four sessions.)
 
 ## The AI's job, redesigned (2026-10-09): from second-guessing the chart to reading what the chart cannot show
 **Finding (live data, 134 stock-sessions, 2026-09-25..10-08).** The rule said BUY on 116; the AI bought 39. The stocks it
@@ -754,12 +779,37 @@ engine and the swing bot are unchanged. Judged by `scripts/compare_gap.py`: gap-
 only if it beats gap-only per trade AND date by date (paired t >= 2.6); the report also shows the same stock on the same
 day, fees, daily return, drawdown and how much of each account was used.
 
+## Broker research calls (2026-10-15, swing-v2 / orb-v3; NOT backtested)
+The owner's broker publishes research calls (Swing Trade, Momentum, Stellar Pick, BTST, Intraday, F&O) on its client portal.
+The bot reads them as an extra input; it does not copy them. No call has been shown to have an edge: on the day they were
+inspected, 3 of 22 closed equity calls hit their target and 19 hit their stop-loss, so the AI is told they are an
+unproven second opinion.
+- **Access** (`src/portfolio/`, `src/data/house_calls.py`): read-only, from the owner's own login. `/research_start` on Telegram
+  starts one login (the portal's OTP is typed by the owner into Telegram and deleted at once; the bot never has the MPIN or OTP
+  itself), reads the Research page every 10 minutes until 15:35 IST, and logs out. A network guard aborts any request that
+  looks like a transaction. If the portal shows its login page the watch stops and is never retried automatically. Only
+  data the page itself loads is used; no undocumented endpoint, scraping tool or stored session. Without a fresh read
+  (older than 30 minutes) the bots ignore the calls and trade exactly as before.
+- **Swing:** the stocks of open Swing Trade, Momentum and Stellar Pick buy calls are added to the candidates (they skip the
+  screener's filters; what the screener and the mechanical rule would have said is recorded, not acted on). The AI is shown the
+  call's numbers; it may raise or lower confidence but the call alone is not a reason to buy. A "HOUSE WARNING" goes to
+  Telegram when a held stock gets an open SELL call or its call hits its stop-loss.
+- **Intraday:** ORB adds the day's open Intraday buy calls to its scan (they still need a real breakout) and does not buy a
+  stock with an open SELL call. The gap engines ignore the calls, to keep their comparison clean.
+- **Recorded for later study:** every decision stores its `candidate_source` and the call shown (`house_call_json`), every
+  ORB signal its `house_call`, and each read is added to a history table (`house_call_events`), so results can be split by
+  source after a few weeks.
+- **First live reads (2026-10-16):** the first read found no calls; the cause was a response shape the parser did not expect
+  and data arriving after the page went quiet. It now waits 5 seconds longer and logs what it received and why any row was
+  skipped.
+
 ## Paper budget raised from Rs 20,000 to Rs 25,000 (2026-10-16, at the owner's request)
 Not a strategy change: the four paper accounts (swing, ORB, gap-and-go, gap-only) each received Rs 5,000 of cash and
 their starting balance became Rs 25,000, so returns still measure against what was put in. The server's `.env` now has
 `PAPER_INITIAL_CASH=25000`, `MIN_POSITION_PCT=MAX_POSITION_PCT=0.088` (was 0.08) and `MAX_PORTFOLIO_EXPOSURE_PCT=0.90`
-(was the 0.80 default), so 10 positions can hold up to about Rs 22,000 (88%). `MAX_OPEN_POSITIONS` (10), the stop and
-the intraday limits (0.5% risk, 20% cap, 5 positions) are unchanged; intraday sizing is by stop distance, so it scales
+(was the 0.80 default), so 10 positions can hold up to about Rs 22,000 (88%). `MAX_OPEN_POSITIONS` was raised from 10 to 15
+later the same day, because ten ~Rs 1,000 positions left the account about 40% invested while the slots were full. The stop
+and the intraday limits (0.5% risk, 20% cap, 5 positions) are unchanged; intraday sizing is by stop distance, so it scales
 with equity without a setting. Results before this date were measured on Rs 20,000 and are not directly comparable.
 
 ## Market pulse: join the sectors that are surging today (2026-10-16, swing-v3, technical-v12; NOT backtested)
@@ -784,3 +834,22 @@ results rather than on history: there is no backtest behind it, so treat it as a
   average +13%), Steel, Aerospace & Defense, Specialty Chemicals; first picks HCLTECH, COFORGE, WHIRLPOOL, TARIL, RSYSTEMS.
 - **Known limits:** it reads completed daily bars, so it reacts a session late; Yahoo's labels are coarse for some stocks; the
   intraday engines are not changed.
+- **First live cycle (2026-10-16):** HCLTECH was bought (one share); COFORGE and WHIRLPOOL were approved by the AI but blocked
+  because the account was already at its position limit (pulse stocks share the swing slots; none are reserved for them).
+
+## Paper-trading reliability (2026-10-16; no change to what any strategy trades; implemented, awaiting deploy)
+- **Alerts (intraday engines, once per fault, again if it clears and returns):** a failed square-off; a stop/target that could
+  not be checked (price feed failed); a position valued at cost (no price); a scan returning bars for under 80% of the stocks
+  asked for, or a download that raised; a fill priced from a bar that started over 10 minutes earlier; gap-only's 09:30 step
+  starting after 09:33. Each evening every intraday account sends one line: universe, stocks with bars, signals by outcome and
+  reason, entries, exits, net P&L. Fault-injection tests cover each alert; a normal day raises none.
+- **Views write nothing:** `/intraday`, `/gapgo` and `/gaponly` use `PaperBroker.valuation()`, which settles no stop, applies no
+  corporate action, credits no interest and writes no row. Before, a command sent to the swing process could settle another
+  process's account.
+- **Step order:** gap-only, then gap-and-go, then the breakout engine, with each step's start time logged, so the one step
+  gap-only trades on does not wait behind the others (the first engine also pays for the shared download).
+- **No top-ups:** the risk engine rejects a BUY on a stock already held ("already held: no top-ups"), as the broker already did,
+  so the swing logs no longer show approved BUYs that end as SKIPPED_OPEN_ORDER.
+- **Wiring:** the intraday daily-loss limit is a setting (`INTRADAY_MAX_DAILY_LOSS_PCT`, default 0.02, unchanged), also used by
+  the replay; positions open at start-up are remembered before anything is settled, so a stop hit while the process was down is
+  still reported.

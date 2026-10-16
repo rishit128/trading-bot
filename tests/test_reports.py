@@ -107,12 +107,13 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     monkeypatch.setenv("INTRADAY_RISK_PCT", "0.01")
     monkeypatch.setenv("INTRADAY_MAX_POSITION_PCT", "0.25")
     monkeypatch.setenv("INTRADAY_MAX_POSITIONS", "4")
+    monkeypatch.setenv("INTRADAY_MAX_DAILY_LOSS_PCT", "0.03")
     monkeypatch.setattr(intraday_cli, "Notifier", lambda token, chat: SimpleNamespace(send=alerts.append))
     monkeypatch.setattr(
         intraday_cli,
         "run_together",
         lambda engines, heartbeat=None: started.update(
-            engine=engines[0], gapgo=engines[1], gaponly=engines[2], count=len(engines), heartbeat=heartbeat
+            engine=engines[2], gapgo=engines[1], gaponly=engines[0], count=len(engines), heartbeat=heartbeat
         ),
     )
     intraday_cli.run_intraday(live=True)
@@ -120,18 +121,25 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     assert engine.live is True and engine.universe == ["AAA", "BBB", "CCC"] and engine.notify is not None
     # its own INTRADAY_* sizing, not the swing settings; and the universe's source is passed on so it is recorded daily
     assert (engine.risk_pct, engine.max_position_pct, engine.max_positions) == (0.01, 0.25, 4)
+    assert engine.max_daily_loss_pct == 0.03  # the configurable intraday daily-loss limit reaches every engine
     assert engine.universe_source == "Nifty 100 (hand-saved NSE file)"
     assert engine.archive is not None and engine.archive.sessions is broker.sessions  # finished sessions are kept for research
     out = capsys.readouterr().out
     assert "3 stocks [Nifty 100 (hand-saved NSE file)]" in out and "PAPER ORDERS" in out and "no edge" in out
     assert "risk 1.00% of equity per trade" in out and "cap 25%" in out
     assert alerts == [
-        f"[{name}] started: PAPER ORDERS (separate intraday accounts)" for name in ("INTRADAY", "GAP-GO", "GAP-ONLY")
-    ]
+        f"[{name}] started: PAPER ORDERS (separate intraday accounts)" for name in ("GAP-ONLY", "GAP-GO", "INTRADAY")
+    ]  # stepped in this order: gap-only trades on one step and must not wait behind the others
     # breakouts past the position limit are recorded too, for all three engines
     assert started["count"] == 3 and started["engine"].record_capped is True
     # gap-and-go: the same universe and sizing, its own rule, label, version and entry window, and no second archive
-    from src.intraday.strategy import GAP_ENTRY_UNTIL, GAP_ONLY_ENTRY_UNTIL, find_gap_only_setup, find_gap_setup
+    from src.intraday.strategy import (
+        GAP_ENTRY_UNTIL,
+        GAP_ONLY_ENTRY_UNTIL,
+        GAP_ONLY_LATEST_START,
+        find_gap_only_setup,
+        find_gap_setup,
+    )
     from src.versions import GAPGO_VERSION, GAPONLY_VERSION
 
     gap = started["gapgo"]
@@ -144,7 +152,8 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     assert only.universe == engine.universe and (only.risk_pct, only.max_position_pct, only.max_positions) == (0.01, 0.25, 4)
     assert only.find_setup is find_gap_only_setup and only.entry_until == GAP_ONLY_ENTRY_UNTIL and only.label == "GAP-ONLY"
     assert only.version == GAPONLY_VERSION and only.archive is None and only.record_capped is True and "gap-only" in out
-    assert urls[:3] == ["sqlite:///intraday.db", "sqlite:///gapgo.db", "sqlite:///gaponly.db"]  # three separate accounts
+    assert only.step_deadline == GAP_ONLY_LATEST_START and gap.step_deadline is None and engine.step_deadline is None
+    assert sorted(urls[:3]) == ["sqlite:///gapgo.db", "sqlite:///gaponly.db", "sqlite:///intraday.db"]  # three separate accounts
     intraday_cli.run_intraday(live=False)
     assert started["engine"].live is False and "DRY RUN" in capsys.readouterr().out
     monkeypatch.setenv("INTRADAY_ARCHIVE", "false")

@@ -263,8 +263,8 @@ def test_works_end_to_end_inside_the_trading_pipeline(tmp_path):
     )
     [r] = pipe.run_once()
     assert r.order_status == "filled" and broker.portfolio().position_qty == {"AAA": 500}  # 5% of 1,000,000 / 100
-    [again] = pipe.run_once()  # position now at its 5% cap: the risk engine stops a second buy before cooldown matters
-    assert again.order_status is None and "no room" in again.risk.reason
+    [again] = pipe.run_once()  # already held: the risk engine refuses a second buy (no top-ups) before the broker is asked
+    assert again.order_status is None and "already held" in again.risk.reason
 
 
 def test_holdings_show_buy_date_live_price_and_profit_or_loss_best_first(tmp_path):

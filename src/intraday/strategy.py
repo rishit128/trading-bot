@@ -50,6 +50,7 @@ GAP_ENTRY_UNTIL = dtime(10, 30)  # ...and break the opening range high within th
 NO_TARGET = 1.0  # a +100% "target" for a strategy that has none: it exits at the stop or the square-off
 GAP_ONLY_BAR = dtime(9, 25)  # gap-only: enter on the close of this bar (09:25-09:30, the last opening-range bar)...
 GAP_ONLY_ENTRY_UNTIL = dtime(9, 30)  # ...so no bar starting at or after 09:30 can signal: only the 09:30 cycle trades
+GAP_ONLY_LATEST_START = dtime(9, 33)  # that one step must start by this, else the day is flagged as possibly missed
 CASH_HEADROOM = 1.003  # cash kept back per share bought: slippage (0.05%) and both fees fit inside 0.3%
 
 

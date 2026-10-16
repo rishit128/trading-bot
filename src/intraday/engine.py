@@ -24,7 +24,7 @@ from datetime import time as dtime
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from src.data.house_calls import HouseCall, intraday_buys, open_sells
 from src.data.india import IST
@@ -39,6 +39,8 @@ from src.versions import INTRADAY_VERSION
 
 log = logging.getLogger(__name__)
 ARCHIVE_FROM = dtime(15, 35)  # the session's last bar (15:25-15:30) is published by then
+MIN_COVERAGE = 0.8  # a scan that returns bars for fewer of the stocks asked for than this raises an alert
+STALE_FILL = timedelta(minutes=10)  # a fill priced from a bar that started longer ago than this raises an alert
 
 
 @dataclass
@@ -65,6 +67,7 @@ class IntradayEngine:
     record_capped: bool = False  # also record (as SKIPPED) the signals the position limit left out: the gap experiments
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     house_calls_fn: Optional[Callable[[], List[HouseCall]]] = None  # broker research calls; None = not used
+    step_deadline: Optional[dtime] = None  # the first step of the day at or after 09:30 must start by this, else an alert
     _day: Optional[str] = field(default=None, init=False)
     _calls: List[HouseCall] = field(default_factory=list, init=False)  # this cycle's snapshot of house calls
     _done_today: Set[str] = field(default_factory=set, init=False)
@@ -73,15 +76,31 @@ class IntradayEngine:
     _verified: Optional[str] = field(default=None, init=False)  # the session date whose signals were last verified
     _step_at: Optional[datetime] = field(default=None, init=False)  # when the current cycle started
     _seen_volume: Dict[str, float] = field(default_factory=dict, init=False)  # signal bar volume as this cycle saw it
+    _flags: Set[str] = field(default_factory=set, init=False)  # faults currently alerted (cleared when they clear)
+    _with_data: int = field(default=0, init=False)  # the most stocks any of today's scans returned bars for
+    _deadline_day: Optional[str] = field(default=None, init=False)  # the day the step deadline was last checked
+    _summarised: Optional[str] = field(default=None, init=False)  # the session date whose summary line was sent
 
     def _say(self, text: str) -> None:
         log.info(text)
         if self.notify:
             self.notify(f"[{self.label}] " + text)
 
+    def _flag(self, key: str, bad: bool, text: str) -> None:
+        """Alert once when a fault appears, stay quiet while it lasts, and forget it when it clears (so its return is
+        alerted again)."""
+        if not bad:
+            self._flags.discard(key)
+        elif key not in self._flags:
+            self._flags.add(key)
+            self._say("⚠️ ALERT: " + text)
+
     def _new_day(self, today: str) -> None:
-        """Forget yesterday; anything already traded today (e.g. before a restart) counts as done. Records the universe."""
-        self._day, self._done_today, self._known = today, set(), {}
+        """Forget yesterday; anything already traded today (e.g. before a restart) counts as done. Records the universe.
+        Positions already open (a restart) are remembered before anything is settled, so their exits are still reported."""
+        _, held = self.broker.valuation()
+        self._day, self._done_today, self._known = today, set(), {h["symbol"]: h["qty"] for h in held}
+        self._with_data = 0
         for t in self.broker.trade_history():
             if t["closed_at"].astimezone(IST).date().isoformat() == today:
                 self._done_today.add(t["symbol"])
@@ -154,12 +173,26 @@ class IntradayEngine:
         if not self.clock.is_open(now):
             self._archive_session(now)
             self._verify_signals(now)
+            self._summarise(now)
             return "closed"
         local = now.astimezone(IST)
         today = local.date().isoformat()
         if self._day != today:
             self._new_day(today)
+        self._check_start(local)
         pf = self.broker.portfolio()  # settles any stop/target hit since the last cycle
+        self._flag(
+            "stops",
+            bool(self.broker.unchecked_exits),
+            f"could not check the stop/target of {', '.join(sorted(self.broker.unchecked_exits))}: the price feed failed, "
+            "so those positions are unprotected until it returns",
+        )
+        self._flag(
+            "at-cost",
+            bool(self.broker.valued_at_cost),
+            f"no price for {', '.join(sorted(self.broker.valued_at_cost))}: valued at cost, so equity and the daily-loss "
+            "limit are not reliable",
+        )
         if pf.positions and self._close_stale(today):
             pf = self.broker.portfolio()
         self._report_exits(pf)
@@ -184,7 +217,18 @@ class IntradayEngine:
         added = [s for s in intraday_buys(self._calls, local.date()) if s not in self.universe]
         sells = open_sells(self._calls)
         candidates = [s for s in self.universe + added if s not in pf.positions and s not in self._done_today]
-        bars = self.fetch_bars(candidates)
+        try:
+            bars = self.fetch_bars(candidates)
+        except Exception as e:
+            self._flag("coverage", True, f"the 5-minute download failed ({type(e).__name__}: {e}): no scan this cycle")
+            raise
+        self._with_data = max(self._with_data, len(bars))
+        self._flag(
+            "coverage",
+            bool(candidates) and len(bars) < MIN_COVERAGE * len(candidates),
+            f"the scan got bars for only {len(bars)} of {len(candidates)} stocks (under {MIN_COVERAGE:.0%}): "
+            "breakouts may be missed",
+        )
         entered = skipped = 0
         cash = pf.cash
         for sym, df in bars.items():
@@ -250,8 +294,69 @@ class IntradayEngine:
             return SignalOutcome.FAILED, None
         self._known[setup.symbol] = qty
         self._say(text)
+        self._check_fill_age(setup.symbol, fill)
         self._record(setup, SignalOutcome.ENTERED, qty)
         return SignalOutcome.ENTERED, fill
+
+    def _check_start(self, local: datetime) -> None:
+        """Alert when the day's first step at or after 09:30 starts after `step_deadline` (gap-only trades on that one step,
+        so a late start means a missed day)."""
+        today = local.date().isoformat()
+        if self.step_deadline is None or self._deadline_day == today or local.time() < st.ENTRY_FROM:
+            return
+        self._deadline_day = today
+        if local.time() > self.step_deadline:
+            self._say(
+                f"⚠️ ALERT: the {st.ENTRY_FROM:%H:%M} step started late, at {local:%H:%M:%S} (it must start by "
+                f"{self.step_deadline:%H:%M}); today's entries may have been missed"
+            )
+
+    def _check_fill_age(self, symbol: str, fill: Fill) -> None:
+        """Alert when a fill was priced from a bar that started more than STALE_FILL ago: the feed was lagging."""
+        if fill.price_bar is None:
+            return
+        started = pd.Timestamp(fill.price_bar)
+        started = started.tz_localize(timezone.utc) if started.tzinfo is None else started.tz_convert(timezone.utc)
+        age = self.now_fn() - started.to_pydatetime()
+        if age > STALE_FILL:
+            self._say(
+                f"⚠️ ALERT: {symbol} was filled at {fill.avg_price:,.2f} from a bar that started {age.total_seconds() / 60:.0f} "
+                "minutes ago: the price feed is lagging, so the fill may not match the market"
+            )
+
+    def _summarise(self, now: datetime) -> None:
+        """One line each evening, once a session has finished: universe, stocks with data, signals by outcome and reason,
+        entries, exits and net P&L. Only on days this engine traded (it ran a session today)."""
+        local = now.astimezone(IST)
+        today = local.date().isoformat()
+        if self._summarised == today or self._day != today or local.time() < ARCHIVE_FROM:
+            return
+        with self.broker.sessions() as s:
+            rows = s.execute(
+                select(IntradaySignalRecord.outcome, IntradaySignalRecord.reason, func.count())
+                .where(IntradaySignalRecord.day == today)
+                .group_by(IntradaySignalRecord.outcome, IntradaySignalRecord.reason)
+            ).all()
+        by_outcome: Dict[str, int] = {}
+        reasons: Dict[str, int] = {}
+        for outcome, reason, n in rows:
+            by_outcome[str(outcome)] = by_outcome.get(str(outcome), 0) + n
+            if reason:
+                reasons[reason[:40]] = reasons.get(reason[:40], 0) + n
+        trades = [t for t in self.broker.trade_history() if t["closed_at"].astimezone(IST).date().isoformat() == today]
+        exits: Dict[str, int] = {}
+        for t in trades:
+            exits[t["reason"]] = exits.get(t["reason"], 0) + 1
+        signals = ", ".join(f"{k} {v}" for k, v in sorted(by_outcome.items())) or "none"
+        why = "; ".join(f"{r} x{n}" for r, n in sorted(reasons.items(), key=lambda kv: -kv[1])[:3])
+        self._say(
+            f"{today}: universe {len(self.universe)}, bars for {self._with_data}; signals: {signals}"
+            + (f" ({why})" if why else "")
+            + f"; entries {by_outcome.get(str(SignalOutcome.ENTERED), 0)}; exits {len(trades)}"
+            + (f" ({', '.join(f'{k} {v}' for k, v in sorted(exits.items()))})" if exits else "")
+            + f"; net P&L {sum(t['net_pnl'] for t in trades):+,.0f}"
+        )
+        self._summarised = today
 
     def _archive_session(self, now: datetime) -> None:
         """Once a session has finished, save its 5-minute bars for the whole universe. Runs at most once a day (a holiday, when
@@ -350,8 +455,12 @@ class IntradayEngine:
             try:
                 self.broker.sell(sym, qty)
                 closed += 1
+                self._flags.discard(f"square-off {sym}")
             except Exception as e:
                 log.warning("square-off %s failed: %s", sym, e)
+                self._flag(
+                    f"square-off {sym}", True, f"square-off of {sym} x{qty} FAILED ({e}): it stays open, retried next cycle"
+                )
         if closed:
             for t in self.broker.trade_history(limit=closed):
                 self._say(f"SQUARE-OFF {t['symbol']}: {t['net_pnl']:+,.0f} net")
@@ -373,8 +482,10 @@ def run_together(
     while True:
         failed = []
         for engine in engines:
+            started = datetime.now(IST)
             try:
-                log.info("%s cycle: %s", engine.label.lower(), engine.step())
+                status = engine.step()
+                log.info("%s cycle (started %s): %s", engine.label.lower(), f"{started:%H:%M:%S}", status)
             except Exception:
                 failed.append(engine.label)
                 log.exception("%s cycle failed", engine.label.lower())

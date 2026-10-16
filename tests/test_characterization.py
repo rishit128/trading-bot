@@ -24,7 +24,7 @@ LIVE = {
         ("NEWBUY", "BUY", 0.9, True, 50, "approved 50 shares"),
         ("LOWCONF", "BUY", 0.5, False, 0, "confidence 0.50 below minimum 0.60"),
         ("HOLDER", "HOLD", 0.7, False, 0, "HOLD: nothing to do"),
-        ("HELD1", "BUY", 0.9, False, 0, "no room: position_room=-15,000 exposure_room=40,000 cash=60,"),
+        ("HELD1", "BUY", 0.9, False, 0, "HELD1 is already held: no top-ups"),
         ("HELD2", "SELL", 1.0, True, 100, "closing full HELD2 position"),
         ("OPENORD", "BUY", 0.9, True, 50, "approved 50 shares"),
         ("COOL", "BUY", 0.9, True, 50, "approved 50 shares"),

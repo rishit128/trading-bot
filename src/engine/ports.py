@@ -21,6 +21,7 @@ class Fill:
     status: str
     filled_qty: Optional[int] = None
     avg_price: Optional[float] = None
+    price_bar: Optional[datetime] = None  # start (UTC) of the bar the fill price came from, when the feed says
 
 
 BAR = timedelta(minutes=5)  # the length of the intraday bars every feed here serves (Yahoo interval "5m")

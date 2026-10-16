@@ -121,7 +121,7 @@ class ReplayConfig:
             risk_pct=settings.intraday_risk_pct,
             max_position_pct=settings.intraday_max_position_pct,
             max_positions=settings.intraday_max_positions,
-            max_daily_loss_pct=settings.risk.max_daily_loss_pct,
+            max_daily_loss_pct=settings.intraday_max_daily_loss_pct,
         )
 
 

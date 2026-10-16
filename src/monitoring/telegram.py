@@ -267,7 +267,7 @@ def _account_view(account, name: str, history: bool, cur: str) -> str:
     """/intraday, /gapgo and /gaponly (equity, cash, open positions) and their _history variants (closed trades)."""
     if history:
         return format_history(account.trade_history(), cur)
-    p, held = account.portfolio(), account.holdings()
+    p, held = account.valuation()  # a view: settles nothing and writes nothing (the engines own the database)
     day = f"{(p.equity / p.start_of_day_equity - 1):+.2%} today" if p.start_of_day_equity else "n/a"
     title = {"intraday": "INTRADAY account", "gapgo": "GAP-AND-GO paper account", "gaponly": "GAP-ONLY control account"}[name]
     head = f"⚡ <b>{title}</b>\n💰 Equity <b>{cur}{p.equity:,.2f}</b> ({day})\n💵 Cash {cur}{p.cash:,.2f}\n\n"

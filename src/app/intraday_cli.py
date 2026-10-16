@@ -15,17 +15,25 @@ from src.app.wiring import (
 from src.data.intraday_bars import BarArchive, fetch_5m_bars, shared_download
 from src.engine.costs import intraday_fees
 from src.intraday.engine import IntradayEngine, run_together
-from src.intraday.strategy import GAP_ENTRY_UNTIL, GAP_ONLY_ENTRY_UNTIL, find_gap_only_setup, find_gap_setup
+from src.intraday.strategy import (
+    GAP_ENTRY_UNTIL,
+    GAP_ONLY_ENTRY_UNTIL,
+    GAP_ONLY_LATEST_START,
+    find_gap_only_setup,
+    find_gap_setup,
+)
 from src.intraday.universe import select_universe
 from src.monitoring.heartbeat import Heartbeat
 from src.monitoring.telegram import Notifier
 from src.versions import GAPGO_VERSION, GAPONLY_VERSION
 
-# The gap experiments: (Telegram label, database, rule, last bar that may signal, version). Same sizing and universe as
-# the breakout engine; the 5-day download supplies the previous session's close.
+# The gap experiments, in the order they are stepped: (Telegram label, database, rule, last bar that may signal, version,
+# latest start of the 09:30 step). Gap-only goes first because it trades on that one step and must not wait behind the
+# others' work (the first engine also pays for the shared download); the breakout engine, which has all day, goes last.
+# Same sizing and universe as the breakout engine; the 5-day download supplies the previous session's close.
 GAP_EXPERIMENTS = (
-    ("GAP-GO", gapgo_db_url, find_gap_setup, GAP_ENTRY_UNTIL, GAPGO_VERSION),
-    ("GAP-ONLY", gaponly_db_url, find_gap_only_setup, GAP_ONLY_ENTRY_UNTIL, GAPONLY_VERSION),
+    ("GAP-ONLY", gaponly_db_url, find_gap_only_setup, GAP_ONLY_ENTRY_UNTIL, GAPONLY_VERSION, GAP_ONLY_LATEST_START),
+    ("GAP-GO", gapgo_db_url, find_gap_setup, GAP_ENTRY_UNTIL, GAPGO_VERSION, None),
 )
 
 
@@ -50,6 +58,7 @@ def run_intraday(live: bool) -> None:
             max_positions=settings.intraday_max_positions,
             risk_pct=settings.intraday_risk_pct,
             max_position_pct=settings.intraday_max_position_pct,
+            max_daily_loss_pct=settings.intraday_max_daily_loss_pct,
             **rule,
         )
 
@@ -62,25 +71,26 @@ def run_intraday(live: bool) -> None:
     house_calls = open_house_calls()
     engines = [
         engine(
+            make_paper_broker(settings, db_url(), fees=intraday_fees),
+            fetch_bars=bars,
+            find_setup=rule,
+            entry_until=until,
+            label=name,
+            version=version,
+            step_deadline=deadline,
+            record_capped=True,
+        )
+        for name, db_url, rule, until, version, deadline in GAP_EXPERIMENTS
+    ]
+    engines.append(
+        engine(
             broker,
             fetch_bars=bars,
             archive=BarArchive(broker.sessions) if settings.intraday_archive else None,
             record_capped=True,
             house_calls_fn=house_calls.current,
         )
-    ]
-    for name, db_url, rule, until, version in GAP_EXPERIMENTS:
-        engines.append(
-            engine(
-                make_paper_broker(settings, db_url(), fees=intraday_fees),
-                fetch_bars=bars,
-                find_setup=rule,
-                entry_until=until,
-                label=name,
-                version=version,
-                record_capped=True,
-            )
-        )
+    )
     mode = "PAPER ORDERS (separate intraday accounts)" if live else "DRY RUN (signals only)"
     print(f"intraday: opening-range breakout on {len(universe)} stocks [{label}], {mode}; square-off 15:15 IST")
     print(

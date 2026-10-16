@@ -19,7 +19,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Callable, Dict, List, Optional, Tuple, cast
+from typing import Callable, Dict, List, Optional, Set, Tuple, cast
 
 import pandas as pd
 from sqlalchemy import func, select
@@ -73,6 +73,8 @@ class PaperBroker:
 
     def __post_init__(self):
         self._lock = threading.RLock()
+        self.valued_at_cost: Set[str] = set()  # positions the last valuation had no price for (shown at cost instead)
+        self.unchecked_exits: Set[str] = set()  # positions whose stop/target could not be checked in the last settlement
         self._actions_cache: Dict[str, Tuple[float, CorporateActions]] = {}
         with self.sessions() as s:
             if s.get(PaperAccountRecord, 1) is None:
@@ -113,14 +115,10 @@ class PaperBroker:
                 acct = s.get(PaperAccountRecord, 1)
                 self._accrue_interest(acct)
                 positions = s.scalars(select(PaperPositionRecord)).all()
+                self.valued_at_cost = set()
                 values, qtys = {}, {}
                 for p in positions:
-                    try:
-                        price = self.feed.last_price(p.symbol)
-                    except Exception as e:
-                        log.warning("no price for %s, valuing at cost: %s", p.symbol, e)
-                        price = p.avg_price
-                    values[p.symbol], qtys[p.symbol] = p.qty * price, p.qty
+                    values[p.symbol], qtys[p.symbol] = p.qty * self._price_or_cost(p), p.qty
                 equity = acct.cash + sum(values.values())
                 today = self.clock.today_ist(self.now_fn())
                 if acct.day != today:
@@ -131,6 +129,49 @@ class PaperBroker:
                 return Portfolio(
                     cash=acct.cash, equity=equity, positions=values, position_qty=qtys, start_of_day_equity=acct.day_start_equity
                 )
+
+    def _price_or_cost(self, p: PaperPositionRecord) -> float:
+        """The live price of a held stock, or its cost when the feed has none (the symbol is then listed in
+        `valued_at_cost` until the next valuation, so a caller can alert on it)."""
+        try:
+            return self.feed.last_price(p.symbol)
+        except Exception as e:
+            log.warning("no price for %s, valuing at cost: %s", p.symbol, e)
+            self.valued_at_cost.add(p.symbol)
+            return p.avg_price
+
+    def valuation(self) -> Tuple[Portfolio, List[dict]]:
+        """The account and its open positions as they stand, for a VIEW: unlike `portfolio()` and `holdings()` it settles
+        no stop or target, applies no corporate action, credits no interest and writes nothing, so a Telegram command
+        can never change the database the trading process is running on. Positions with no price are shown at cost."""
+        with self._lock, self.sessions() as s:
+            self.valued_at_cost = set()
+            acct = s.get(PaperAccountRecord, 1)
+            rows = self._holding_rows(s.scalars(select(PaperPositionRecord)).all())
+            values = {r["symbol"]: r["value"] for r in rows}
+            qtys = {r["symbol"]: r["qty"] for r in rows}
+            equity = acct.cash + sum(values.values())
+            return Portfolio(acct.cash, equity, values, qtys, start_of_day_equity=acct.day_start_equity), rows
+
+    def _holding_rows(self, positions) -> List[dict]:
+        """Open positions in detail, best profit first (the rows `holdings()` and `valuation()` return)."""
+        out = []
+        for p in positions:
+            price = self._price_or_cost(p)
+            out.append(
+                {
+                    "symbol": p.symbol,
+                    "qty": p.qty,
+                    "avg_price": p.avg_price,
+                    "price": price,
+                    "value": p.qty * price,
+                    "pnl": p.qty * (price - p.avg_price),
+                    "pnl_pct": price / p.avg_price - 1,
+                    "stop": p.stop,
+                    "opened_at": _utc(p.opened_at),
+                }
+            )
+        return sorted(out, key=lambda h: h["pnl"], reverse=True)
 
     def buy_with_bracket(self, symbol: str, qty: int, price: float, stop_pct: float, take_pct: float) -> Fill:
         """Simulated market buy with slippage and Indian costs; records the stop and target levels."""
@@ -161,7 +202,7 @@ class PaperBroker:
                     )
                 )
                 s.commit()
-            return Fill(f"paper-{uuid.uuid4().hex[:12]}", OrderStatus.FILLED, qty, fill_price)
+            return Fill(f"paper-{uuid.uuid4().hex[:12]}", OrderStatus.FILLED, qty, fill_price, quote_bar)
 
     def sell(self, symbol: str, qty: int) -> Fill:
         """Simulated market sell of some or all of a position."""
@@ -283,6 +324,7 @@ class PaperBroker:
     def _settle_exits(self) -> None:
         """Replay the 5-minute bars since each position was last checked to see whether its stop or target was hit."""
         now = _utc(self.now_fn())
+        self.unchecked_exits = set()
         with self.sessions() as s:
             positions = [
                 (p.symbol, p.qty, p.stop, p.target, _utc(p.last_checked)) for p in s.scalars(select(PaperPositionRecord))
@@ -292,6 +334,7 @@ class PaperBroker:
                 bars = self.feed.bars_since(symbol, last_checked)
             except Exception as e:
                 log.warning("could not check exits for %s: %s", symbol, e)
+                self.unchecked_exits.add(symbol)
                 continue
             if bars is None or len(bars) == 0:
                 continue
@@ -329,28 +372,8 @@ class PaperBroker:
             self._apply_corporate_actions()
             self._settle_exits()
             with self.sessions() as s:
-                rows = s.scalars(select(PaperPositionRecord)).all()
-                out = []
-                for p in rows:
-                    try:
-                        price = self.feed.last_price(p.symbol)
-                    except Exception as e:
-                        log.warning("no price for %s, showing cost: %s", p.symbol, e)
-                        price = p.avg_price
-                    out.append(
-                        {
-                            "symbol": p.symbol,
-                            "qty": p.qty,
-                            "avg_price": p.avg_price,
-                            "price": price,
-                            "value": p.qty * price,
-                            "pnl": p.qty * (price - p.avg_price),
-                            "pnl_pct": price / p.avg_price - 1,
-                            "stop": p.stop,
-                            "opened_at": _utc(p.opened_at),
-                        }
-                    )
-                return sorted(out, key=lambda h: h["pnl"], reverse=True)
+                self.valued_at_cost = set()
+                return self._holding_rows(s.scalars(select(PaperPositionRecord)).all())
 
     def trade_history(self, limit: Optional[int] = None) -> List[dict]:
         """Closed trades, newest first (optionally only the latest `limit`): dates, prices, why, fees and net P&L."""
