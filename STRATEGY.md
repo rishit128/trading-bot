@@ -761,3 +761,26 @@ their starting balance became Rs 25,000, so returns still measure against what w
 (was the 0.80 default), so 10 positions can hold up to about Rs 22,000 (88%). `MAX_OPEN_POSITIONS` (10), the stop and
 the intraday limits (0.5% risk, 20% cap, 5 positions) are unchanged; intraday sizing is by stop distance, so it scales
 with equity without a setting. Results before this date were measured on Rs 20,000 and are not directly comparable.
+
+## Market pulse: join the sectors that are surging today (2026-10-16, swing-v3, technical-v12; NOT backtested)
+Prompted by the IT stocks rallying 8-15% in a month while the screener could not see them: the long-term filter wants price
+above a rising 50- and 200-day average and ranks by 12-1 month momentum, so a sector that turns up after a year-long slump
+never qualifies. Earlier tests (above) found sector/breadth *gates* did not help; this is different (it adds candidates from
+what the market is doing today, instead of filtering the existing ones) and, by the owner's decision, it is judged on live
+results rather than on history: there is no backtest behind it, so treat it as an experiment, small by construction.
+- **Detection** (`src/data/market_pulse.py`), from the daily bars the scanner already downloads: a *mover* is liquid, above its
+  50-day average, up 8-35% over 21 sessions (a month past +35% is a blow-off), RSI(14) below 80. A *hot group* is a Yahoo
+  industry (sector if none) with at least 3 movers among the 150 strongest. Broad Yahoo sectors were tried first and rejected
+  after a dry run: in a wide small-cap rally every broad sector looks hot.
+- **Action:** up to 5 hot-group stocks per cycle (most liquid first, affordable, not held) join the candidates with
+  `candidate_source = "pulse"`; at most 3 pulse positions are open at once. The AI sees a MARKET PULSE line and a baseline
+  that says BUY while price is above MA50 with RSI below 80; the risk engine, the 8.8% size, the 90% exposure cap, the
+  position limit and the 15% stop are unchanged. Stocks outside a hot group get byte-for-byte the v11 prompt (tested).
+- **Exit:** a position whose buy came from the pulse is sold on a close below its 50-day average (its 200-day line is not yet
+  reclaimed, so the usual exit would sell it the next day); every other position keeps the 200-day exit.
+- **Switch:** `MARKET_PULSE=false` returns to the screener only. Every decision records `pulse_json` and `candidate_source`, so
+  pulse trades can be compared with the rest after a few weeks.
+- **Dry run on 2026-10-16 (server, read-only):** 102 movers; hot groups included Information Technology Services (8 stocks,
+  average +13%), Steel, Aerospace & Defense, Specialty Chemicals; first picks HCLTECH, COFORGE, WHIRLPOOL, TARIL, RSYSTEMS.
+- **Known limits:** it reads completed daily bars, so it reacts a session late; Yahoo's labels are coarse for some stocks; the
+  intraday engines are not changed.

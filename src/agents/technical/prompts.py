@@ -6,20 +6,35 @@ sent (`scripts/replay_decision.py`) and a wording change is a one-file diff. Cha
 from typing import Optional
 
 from src.data.house_calls import HouseCall, prompt_line
+from src.data.market_pulse import HOT_MAX_RSI, HotStock, pulse_line
 from src.engine.enums import Action
 from src.engine.rules import RSI_OVERBOUGHT, above_ma50, entry_filter, ma_stack_bullish, overbought, rule_verdict
 
 
-def mechanical_action(s) -> Action:
+def _surging(s, pulse) -> bool:
+    """A stock of a surging sector (market pulse) that is still above its 50-day average and not extreme."""
+    return pulse is not None and above_ma50(s.price, s.ma50) and s.rsi < HOT_MAX_RSI
+
+
+def mechanical_action(s, pulse=None) -> Action:
     """The deterministic long-only filter that produced the candidate: BUY only when price is above MA50, MAs are
-    stacked (MA50 > MA200) and RSI(14) is below 70; otherwise HOLD. This is the baseline the AI agrees with or overrides,
-    and the yardstick the weekly report scores the AI against."""
+    stacked (MA50 > MA200) and RSI(14) is below 70; otherwise HOLD. A stock of a surging sector (market pulse) is also
+    a BUY while it stays above MA50 with RSI(14) below the pulse's own line. This is the baseline the AI agrees with
+    or overrides, and the yardstick the weekly report scores the AI against."""
+    if _surging(s, pulse):
+        return Action.BUY
     return rule_verdict(s.price, s.ma50, s.ma200, s.rsi)
 
 
-def mechanical_baseline(s) -> str:
+def mechanical_baseline(s, pulse=None) -> str:
     """Human-readable form of the mechanical verdict, rendered into the prompt."""
     above, stacked = above_ma50(s.price, s.ma50), ma_stack_bullish(s.ma50, s.ma200)
+    if not entry_filter(s.price, s.ma50, s.ma200, s.rsi) and _surging(s, pulse):
+        return (
+            f"BUY (market-pulse rule: price above MA50, RSI(14) below {HOT_MAX_RSI:.0f}, and the stock's sector is "
+            "surging. The long-term filter (MA50 above MA200, RSI below 70) does not apply to these stocks; they are "
+            "sold on a close below MA50)"
+        )
     if entry_filter(s.price, s.ma50, s.ma200, s.rsi):
         return (
             f"BUY (price above MA50, MA50 above MA200, RSI(14) below {RSI_OVERBOUGHT:.0f} - the technical filter "
@@ -106,7 +121,20 @@ def house_section(h) -> str:
     )
 
 
-def cot_prompt(s, market=None, company=None, house=None) -> str:
+def pulse_section(p) -> str:
+    """The market pulse as the prompt shows it (`p` is a HotStock, or its stored dict), or nothing at all when there is
+    none: a stock outside a surging sector gets exactly the prompt it got before the pulse was wired in."""
+    if p is None:
+        return ""
+    return (
+        f"MARKET PULSE: {pulse_line(p if isinstance(p, HotStock) else HotStock.from_dict(p))}. The strategy "
+        "also buys stocks riding a sector-wide surge that has not yet lifted them above their 200-day average. Judge "
+        "from the COMPANY data whether this stock's own results support the move; a surge that the results do not "
+        "support is a risk to name in step5_risks.\n"
+    )
+
+
+def cot_prompt(s, market=None, company=None, house=None, pulse=None) -> str:
     """The exact prompt sent to the model (also used to replay and fingerprint decisions)."""
     above, stacked = above_ma50(s.price, s.ma50), ma_stack_bullish(s.ma50, s.ma200)
     avg = s.avg_volume
@@ -132,10 +160,11 @@ def cot_prompt(s, market=None, company=None, house=None) -> str:
         f"PRICE: {s.price:.2f} | MA50: {s.ma50:.2f} | MA200: {s.ma200:.2f} | RSI(14): {s.rsi:.1f} | "
         f"Volume: {s.volume:,} | 20-day avg volume: {avg if avg else 'n/a'} | volume ratio: {ratio} | 14-day momentum "
         f"{momentum} | MACD histogram {macd_hist} | price at {bb} | volume trend {vol_trend} | ATR {atr} | ADX {adx}\n"
-        f"MECHANICAL BASELINE (the deterministic filter): {mechanical_baseline(s)}\n"
+        f"MECHANICAL BASELINE (the deterministic filter): {mechanical_baseline(s, pulse)}\n"
         f"COMPANY: {company_text(company)}\n"
         f"MARKET: {market_text(market)}\n"
         f"{house_section(house)}"
+        f"{pulse_section(pulse)}"
         "STEP 1 (trend): is price above MA50 ("
         + ("yes" if above else "no")
         + ") and MA50 above MA200 ("

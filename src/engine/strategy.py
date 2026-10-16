@@ -23,14 +23,16 @@ class Decision:
     source: DecisionSource = DecisionSource.AGENTS
 
 
-def trend_exit_decision(snapshot: "Snapshot", held_qty: int, enabled: bool = True) -> Optional[Decision]:
+def trend_exit_decision(snapshot: "Snapshot", held_qty: int, enabled: bool = True, short: bool = False) -> Optional[Decision]:
     """The deterministic exit: a held stock whose last completed close is below its 200-day average is sold, whatever the
-    AI says. Like the risk engine this is plain code, not an opinion. None when the rule does not apply."""
-    if enabled and held_qty > 0 and trend_broken(snapshot.price, snapshot.ma200):
+    AI says. Like the risk engine this is plain code, not an opinion. A stock bought on the market pulse (`short`) has
+    not yet reclaimed its 200-day average, so its line is the 50-day one. None when the rule does not apply."""
+    average, days = (snapshot.ma50, 50) if short else (snapshot.ma200, 200)
+    if enabled and held_qty > 0 and trend_broken(snapshot.price, average):
         return Decision(
             Action.SELL,
             1.0,
-            f"{TREND_EXIT_PREFIX} last close {snapshot.price:,.2f} is below the 200-day average {snapshot.ma200:,.2f}",
+            f"{TREND_EXIT_PREFIX} last close {snapshot.price:,.2f} is below the {days}-day average {average:,.2f}",
             DecisionSource.TREND_EXIT,
         )
     return None

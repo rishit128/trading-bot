@@ -47,7 +47,7 @@ class TechnicalAgent:
             log.warning("%s data failed for %s: %s", what, symbol, e)
             return None
 
-    def _base(self, ctx: AgentContext, market, company, house=None) -> AgentSignal:
+    def _base(self, ctx: AgentContext, market, company, house=None, pulse=None) -> AgentSignal:
         """The first call, with a fallback ladder for unreliable free models: the full analysis; if every model fails at
         that, the compact one-sentence prompt (recorded as tier "compact"); only when that fails too does the caller
         stand down with a HOLD."""
@@ -55,7 +55,7 @@ class TechnicalAgent:
             return self.llm.signal(prompts.simple_prompt(ctx.snapshot))
         try:
             advanced = self.llm.structured_call(
-                prompts.cot_prompt(ctx.snapshot, market, company, house), AdvancedSignal, COT_SCHEMA
+                prompts.cot_prompt(ctx.snapshot, market, company, house, pulse), AdvancedSignal, COT_SCHEMA
             )
         except LLMUnavailable as e:
             log.warning("full analysis failed for %s (%s); trying the compact prompt", ctx.symbol, str(e)[:200])
@@ -64,7 +64,7 @@ class TechnicalAgent:
             return AgentSignal(action=compact.action, confidence=compact.confidence, reasoning=compact.reasoning, details=details)
         # Whether the call departs from the mechanical filter is a fact we can compute; a model's own claim about it is
         # unreliable (the live logs showed it labelling a HOLD "deviate" while quoting the filter's BUY), so overwrite it.
-        advanced.rule_alignment = "agree" if advanced.action == mechanical_action(ctx.snapshot) else "deviate"
+        advanced.rule_alignment = "agree" if advanced.action == mechanical_action(ctx.snapshot, pulse) else "deviate"
         return advanced.to_signal()
 
     def _reflect(self, ctx: AgentContext, base: AgentSignal, market, company) -> AgentSignal:
@@ -99,8 +99,9 @@ class TechnicalAgent:
         market = self._lazy(ctx.market, "market", ctx.symbol) if self.use_cot else None
         company = self._lazy(ctx.company, "company", ctx.symbol) if self.use_cot else None
         house = self._lazy(ctx.house, "house research", ctx.symbol) if self.use_cot else None
+        pulse = self._lazy(ctx.pulse, "market pulse", ctx.symbol) if self.use_cot else None
         try:
-            current = phases.stamp_base(self._base(ctx, market, company, house), market, company, house)
+            current = phases.stamp_base(self._base(ctx, market, company, house, pulse), market, company, house, pulse)
         except LLMUnavailable as e:
             return fail_safe_hold(f"LLM unavailable: {e}")
         if self.use_reflect and not current.degraded and current.action != Action.HOLD:

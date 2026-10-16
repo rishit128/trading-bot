@@ -14,15 +14,18 @@ from src.data.house_calls import HouseCall
 from src.data.india import IST
 from src.data.indicators import Snapshot
 from src.data.market_context import MarketContext
+from src.data.market_pulse import HotStock
 from src.engine.agent_signal import AgentSignal
 from src.versions import PROMPT_VERSION
 
 FINGERPRINTS = {
     "technical-v10": "2b025ee232b16e3f959e75a3c53a1d44dfce2c9991b626d275d8840b1098d06e",
     "technical-v11": "be59a29a6f2a4ec570e8043432657ec9a5ec2f38e3b6aa4ef06b8de025d37ab5",
+    "technical-v12": "bc29cd47022acf18b728bc5bade85e783a839f3ccb7606ebd3211031ccef70b1",
 }  # earlier versions' texts live in git history
 
 
+PULSE = HotStock("UP", "Information Technology", 6, 0.11, 0.13, 0.09)
 HOUSE = HouseCall(
     symbol="UP",
     kind="Swing Trade",
@@ -37,7 +40,7 @@ HOUSE = HouseCall(
 )
 
 
-def fingerprint(with_house: bool = True) -> str:
+def fingerprint(with_house: bool = True, with_pulse: bool = True) -> str:
     snaps = [
         Snapshot(
             "UP",
@@ -101,6 +104,11 @@ def fingerprint(with_house: bool = True) -> str:
     if with_house:
         out["prompts"]["house"] = cot_prompt(snaps[0], market, company, HOUSE)
         out["prompts"]["house_stored"] = cot_prompt(snaps[0], market, company, json.loads(HOUSE.to_json()))
+    if with_pulse:
+        out["prompts"]["pulse"] = cot_prompt(snaps[2], market, company, None, PULSE)
+        out["prompts"]["pulse_stored"] = cot_prompt(snaps[2], market, company, None, json.loads(PULSE.to_json()))
+        out["prompts"]["pulse_baseline"] = [mechanical_baseline(s, PULSE) for s in snaps]
+        out["prompts"]["pulse_action"] = [str(mechanical_action(s, PULSE)) for s in snaps]
     return hashlib.sha256(json.dumps(out, sort_keys=True).encode()).hexdigest()
 
 
@@ -114,7 +122,28 @@ def test_the_prompt_text_matches_the_recorded_version():
 
 def test_a_stock_without_a_house_call_gets_exactly_the_v10_prompt():
     """v11 only ADDS the research line when there is a call: every other prompt is byte-for-byte what v10 sent."""
-    assert fingerprint(with_house=False) == FINGERPRINTS["technical-v10"]
+    assert fingerprint(with_house=False, with_pulse=False) == FINGERPRINTS["technical-v10"]
+
+
+def test_a_stock_without_a_pulse_gets_exactly_the_v11_prompt():
+    """v12 only ADDS the market-pulse line and baseline when the stock's sector is surging."""
+    assert fingerprint(with_pulse=False) == FINGERPRINTS["technical-v11"]
+
+
+def test_a_surging_sector_stock_above_its_50_day_average_is_a_mechanical_buy():
+    s = Snapshot("UP", 250.0, 240.0, 260.0, 74.0, 1000)  # MA50 below MA200, RSI 74: the long-term filter says HOLD
+    assert str(mechanical_action(s)) != str(mechanical_action(s, PULSE))
+    assert "market-pulse rule" in mechanical_baseline(s, PULSE) and "did NOT select" in mechanical_baseline(s)
+    broken = Snapshot("UP", 230.0, 240.0, 260.0, 55.0, 1000)  # below MA50: the pulse does not make it a buy
+    assert mechanical_action(broken, PULSE) == mechanical_action(broken)
+    stretched = Snapshot("UP", 250.0, 240.0, 260.0, 85.0, 1000)  # RSI past the pulse's own line
+    assert mechanical_action(stretched, PULSE) == mechanical_action(stretched)
+
+
+def test_a_stored_pulse_rebuilds_the_same_prompt_on_replay():
+    s = Snapshot("UP", 250.0, 240.0, 260.0, 74.0, 1000)
+    assert cot_prompt(s, pulse=PULSE) == cot_prompt(s, pulse=json.loads(PULSE.to_json()))
+    assert "MARKET PULSE" in cot_prompt(s, pulse=PULSE) and "MARKET PULSE" not in cot_prompt(s)
 
 
 def test_a_stored_house_call_rebuilds_the_same_prompt_on_replay():

@@ -34,6 +34,8 @@ class AgentContext:
     company: Callable[[], Optional[object]] = lambda: None
     # The broker's research call on this stock (src.data.house_calls.HouseCall); None when there is none or no session.
     house: Callable[[], Optional[object]] = lambda: None
+    # The market pulse on this stock (src.data.market_pulse.HotStock): its sector is surging; None when it is not.
+    pulse: Callable[[], Optional[object]] = lambda: None
 
 
 class Agent(Protocol):

@@ -32,6 +32,7 @@ from src.data.fundamentals import FundamentalsProvider
 from src.data.india import SUFFIX
 from src.data.market_context import MarketContextProvider
 from src.data.market_data import fetch_daily_bars
+from src.data.market_pulse import MarketPulse
 from src.database import make_session_factory
 from src.engine.costs import intraday_fees
 from src.learning.jobs import DailyOutcomeLabelling, WeeklyLearningReport
@@ -115,6 +116,7 @@ def build_pipeline(live: bool) -> TradingPipeline:
         broker_label=kit.broker_label,
         house_calls_fn=house_calls.current,
         screen_verdict_fn=kit.screener.verdict if kit.screener else None,
+        pulse=MarketPulse(kit.screener.movers) if kit.screener and settings.market_pulse else None,
     )
     return pipeline
 

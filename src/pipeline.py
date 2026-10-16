@@ -14,6 +14,9 @@ from src.data.fundamentals import Fundamentals
 from src.data.house_calls import HouseCall, call_for, open_sells, recently_stopped, swing_buys
 from src.data.indicators import Snapshot
 from src.data.market_context import MarketContext
+from src.data.market_pulse import MAX_OPEN as MAX_PULSE_OPEN
+from src.data.market_pulse import HotStock, MarketPulse
+from src.data.market_pulse import summary as pulse_summary
 from src.database import DecisionRecord, EquityRecord, OrderRecord
 from src.engine.agent_signal import AgentSignal, SignalDetails
 from src.engine.enums import NOT_A_PLACED_BUY, SILENT_STATUSES, Action, OrderStatus
@@ -78,6 +81,7 @@ class TradingPipeline:
         broker_label: str = "",
         house_calls_fn: Optional[Callable[[], List[HouseCall]]] = None,
         screen_verdict_fn: Optional[Callable[[str, float], str]] = None,
+        pulse: Optional[MarketPulse] = None,
     ):
         names = [a.name for a in agents]
         if len(set(names)) != len(names):
@@ -96,6 +100,10 @@ class TradingPipeline:
         self.fundamentals_fn = fundamentals_fn
         self.house_calls_fn = house_calls_fn  # the broker's research calls (src.data.house_calls); None = not wired
         self.screen_verdict_fn = screen_verdict_fn  # the screener's verdict on one stock (recorded for research-only ones)
+        self.pulse = pulse  # today's surging sectors (src.data.market_pulse); None = not wired
+        self._hot: Dict[str, HotStock] = {}  # the day's surging stocks by symbol, read once per cycle
+        self._announced: Optional[tuple] = None  # the (day, sectors) last told to the user
+        self._pulse_entries: Dict[str, bool] = {}  # per cycle: whether a held stock was bought on the pulse
         self._calls: List[HouseCall] = []  # read once per cycle, so every stock in a cycle sees the same snapshot
         self._sources: Dict[str, str] = {}  # why each stock of this cycle is analysed (recorded with its decision)
         self._screened: Dict[str, str] = {}  # the screener's verdict on this cycle's research-only stocks
@@ -135,6 +143,7 @@ class TradingPipeline:
                     DecisionRecord.feature_version == VERSIONS["feature"],
                     DecisionRecord.signals_json.isnot(None),
                     self._house_matches(symbol),
+                    self._pulse_matches(symbol),
                 )
                 .order_by(DecisionRecord.id.desc())
                 .limit(1)
@@ -158,6 +167,7 @@ class TradingPipeline:
             market=lambda: self.market_context_fn(snapshot) if self.market_context_fn else None,
             company=lambda: self.fundamentals_fn(symbol) if self.fundamentals_fn else None,
             house=lambda: self.house_call(symbol),
+            pulse=lambda: self._hot.get(symbol),
         )
 
     def house_call(self, symbol: str) -> Optional[HouseCall]:
@@ -170,6 +180,11 @@ class TradingPipeline:
         call = self.house_call(symbol)
         return DecisionRecord.house_call_json.is_(None) if call is None else DecisionRecord.house_call_json == call.to_json()
 
+    def _pulse_matches(self, symbol: str):
+        """Likewise for the market pulse: an answer given without it is not reused once the stock's sector is surging."""
+        hot = self._hot.get(symbol)
+        return DecisionRecord.pulse_json.is_(None) if hot is None else DecisionRecord.pulse_json == hot.to_json()
+
     def open_cycle(self) -> Portfolio:
         """Start a cycle: read the account, record its equity, apply the drawdown pause and check halts."""
         portfolio = self.broker.portfolio()
@@ -178,8 +193,42 @@ class TradingPipeline:
         self._check_halt(portfolio)
         self._cycle_llm = []
         self._calls = self._read_house_calls()
+        self._read_pulse()
         self._warn_on_held(portfolio)
         return portfolio
+
+    def _read_pulse(self) -> None:
+        """Read today's surging stocks (computed once a day from the scan) and tell the user when the surging sectors
+        change. Any failure means no pulse this cycle: the bot then runs as it did before the pulse existed."""
+        self._pulse_entries = {}
+        self._hot = {}
+        if self.pulse is None or not self.settings.market_pulse:
+            return
+        try:
+            hot = self.pulse.hot()
+        except Exception:
+            log.exception("could not read the market pulse; this cycle runs without it")
+            return
+        self._hot = {h.symbol: h for h in hot}
+        key = (datetime.now(timezone.utc).date(), tuple(sorted({h.sector for h in hot})))
+        if hot and key != self._announced:
+            self._announced = key
+            self.notify("🔥 Market pulse: sectors surging today (liquid stocks up 8%+ in a month):\n" + pulse_summary(hot))
+
+    def _entered_via_pulse(self, symbol: str) -> bool:
+        """Whether the open position in `symbol` was bought as a market-pulse candidate (its latest filled BUY came from a
+        decision whose candidate_source is "pulse"): such a position is sold on a close below its 50-day average."""
+        if symbol not in self._pulse_entries:
+            with self.sessions() as s:
+                source = s.scalar(
+                    select(DecisionRecord.candidate_source)
+                    .join(OrderRecord, OrderRecord.decision_id == DecisionRecord.id)
+                    .where(OrderRecord.symbol == symbol, OrderRecord.side == Action.BUY, OrderRecord.status == OrderStatus.FILLED)
+                    .order_by(OrderRecord.id.desc())
+                    .limit(1)
+                )
+            self._pulse_entries[symbol] = source == "pulse"
+        return self._pulse_entries[symbol]
 
     def _read_house_calls(self) -> List[HouseCall]:
         if self.house_calls_fn is None:
@@ -221,7 +270,8 @@ class TradingPipeline:
         """Turn the agents' signals into one recorded decision: the deterministic trend exit if it applies, else the agents
         combined by role; then size it with the risk engine and write the audit row."""
         held = portfolio.position_qty.get(symbol, 0)
-        decision = trend_exit_decision(snapshot, held, self.settings.trend_exit) or combine_signals(
+        short = held > 0 and self._entered_via_pulse(symbol)
+        decision = trend_exit_decision(snapshot, held, self.settings.trend_exit, short) or combine_signals(
             signals, {n: a.role for n, a in self.agents.items()}
         )
         price = self._quote(symbol, snapshot.price) if decision.action != Action.HOLD else snapshot.price
@@ -272,7 +322,22 @@ class TradingPipeline:
         for s in research:
             self._sources.setdefault(s, "research")
         self._screened = {s: v for s in research if self._sources[s] == "research" and (v := self._screen(s, portfolio))}
+        for h in self._pulse_picks(portfolio):
+            self._sources.setdefault(h.symbol, "pulse")
         return list(self._sources)
+
+    def _pulse_picks(self, portfolio: Portfolio) -> List[HotStock]:
+        """Stocks of surging sectors that the screener did not pick: they skip the screener's long-term filters and go
+        through the same AI, risk engine and stop. At most MAX_PULSE_OPEN such positions are open at once."""
+        if self.pulse is None or not self._hot:
+            return []
+        open_now = sum(1 for s in portfolio.positions if self._entered_via_pulse(s))
+        budget = portfolio.equity * self.settings.risk.min_position_pct  # one share must fit the smallest position
+        try:
+            return self.pulse.picks(budget, set(portfolio.positions) | set(self._sources), MAX_PULSE_OPEN - open_now)
+        except Exception:
+            log.exception("could not pick market-pulse stocks; none this cycle")
+            return []
 
     def _screen(self, symbol: str, portfolio: Portfolio) -> Optional[str]:
         """The screener's verdict on a research-only stock, or None (no screener, or it failed: this is a record only)."""
@@ -374,6 +439,7 @@ class TradingPipeline:
                 candidate_source=self._sources.get(symbol),
                 screen_verdict=self._screened.get(symbol),
                 house_call_json=call.to_json() if (call := self.house_call(symbol)) is not None else None,
+                pulse_json=hot.to_json() if (hot := self._hot.get(symbol)) is not None else None,
             )
             s.add(record)
             s.commit()

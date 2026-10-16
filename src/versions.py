@@ -6,11 +6,13 @@ rules change. The decisions table stores these per-decision (columns added by th
 can answer "why did behaviour change on that date" by comparing stamps instead of guessing."""
 
 FEATURE_VERSION = "indicators-v4"  # v3 + 12-1 month momentum (the scanner's ranking signal) in the snapshot
-PROMPT_VERSION = "technical-v11"  # v10 + the broker's research call on the stock, when there is one (a second opinion)
+PROMPT_VERSION = "technical-v12"  # v11 + the market pulse (a surging sector) and its own baseline, when the stock has one
 SCHEMA_VERSION = "signal-v1"  # the llm.SIGNAL_SCHEMA output contract, frozen for replay compatibility
 # swing-v1: mechanical BUY filter + trend exit + 15% protective stop, sized and gated by the risk engine, paper broker.
 # swing-v2: the same, with the stocks of open broker Swing/Momentum/Stellar Pick buy calls added to the candidates.
-STRATEGY_VERSION = "swing-v2"
+# swing-v3: stocks of surging sectors (the market pulse) are also candidates, bought while above MA50 and sold on a
+#           close below MA50 (the other stocks keep the MA200 exit).
+STRATEGY_VERSION = "swing-v3"
 
 # The intraday engine (a separate paper account). Recorded with every signal so results can be split by system version.
 #   orb-v1: sizing borrowed from the swing settings (5% of equity), stop/target replay dropped each bar's tail, no record

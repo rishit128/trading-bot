@@ -47,7 +47,9 @@ def replay(record: DecisionRecord, roles: Mapping[str, str] = DEFAULT_ROLES) -> 
         rule_based = record.reasoning.startswith(TREND_EXIT_PREFIX)
     if rule_based:
         recomputed = (
-            Action.SELL if snap is not None and trend_broken(snap.price, snap.ma200) else None
+            Action.SELL
+            if snap is not None and trend_broken(snap.price, snap.ma50 if "50-day" in record.reasoning else snap.ma200)
+            else None
         )  # a deterministic override, not an AI call
     else:
         recomputed = combine_signals(signals, roles).action if signals else None
@@ -59,6 +61,7 @@ def replay(record: DecisionRecord, roles: Mapping[str, str] = DEFAULT_ROLES) -> 
             shown.market_context_json if shown else None,
             shown.company_json if shown else None,
             shown.house_call_json if shown else None,
+            shown.pulse_json if shown else None,
         )
         if snap is not None
         else None

@@ -361,7 +361,8 @@ def test_a_remembered_answer_is_reused_only_under_the_same_research_call(tmp_pat
 
 
 def test_the_user_is_warned_once_when_the_house_turns_against_a_held_stock(tmp_path):
-    calls = [parse_calls([body({**DMART_SELL, "ScripCode": "TCS"}, {**BSE_STOPPED, "ScripCode": "INFY"})])]
+    stopped_at = (datetime.now(IST) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S")  # always inside the one-day window
+    calls = [parse_calls([body({**DMART_SELL, "ScripCode": "TCS"}, {**BSE_STOPPED, "ScripCode": "INFY", "ExitDtm": stopped_at})])]
     pipe, _, _, told = swing(tmp_path, calls, held={"TCS": 10, "INFY": 5}, watchlist=("TCS", "INFY"))
     pipe.run_once()
     pipe.run_once()

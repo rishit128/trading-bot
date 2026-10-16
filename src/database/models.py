@@ -83,6 +83,9 @@ class DecisionRecord(Base):
     screen_verdict: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
     # The broker research call the AI was shown for this stock (src.data.house_calls.HouseCall as JSON); None = none shown.
     house_call_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The market pulse the AI was shown (src.data.market_pulse.HotStock as JSON): this stock's sector was surging; None
+    # = none shown. A stock bought on it has candidate_source "pulse" and is sold on a close below its 50-day average.
+    pulse_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class OrderRecord(Base):

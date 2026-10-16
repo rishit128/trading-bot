@@ -13,6 +13,7 @@ import pandas as pd
 
 from src.data.delivery import load_delivery as default_load_delivery
 from src.data.indicators import MAX_STALE_DAYS, MIN_BARS, rsi_from_array
+from src.data.market_pulse import movers_from_bars
 from src.engine.rules import overbought, uptrend
 
 log = logging.getLogger(__name__)
@@ -190,6 +191,12 @@ class UniverseScreener:
         self.sleep, self.use_delivery_filter, self.delivery_loader = sleep, use_delivery_filter, delivery_loader
         self._day: Optional[date] = None
         self._ranked: List[Candidate] = []
+        self._movers: list = []  # today's surging stocks (src.data.market_pulse), found in the same scan
+
+    def movers(self) -> list:
+        """Today's surging stocks from the scan's bars (the scan runs first if it has not yet today)."""
+        self.ranked()
+        return self._movers
 
     def ranked(self) -> List[Candidate]:
         """Every stock that passed today's filters, best first; the full scan runs once per day and is cached."""
@@ -198,8 +205,12 @@ class UniverseScreener:
         symbols = self.list_symbols()
         log.info("screening %d symbols", len(symbols))
         passed: List[Candidate] = []
+        movers: list = []
         for i in range(0, len(symbols), self.chunk):
-            passed.extend(screen_bars(self._fetch_with_retry(symbols[i : i + self.chunk]), self.cfg))
+            bars = self._fetch_with_retry(symbols[i : i + self.chunk])
+            passed.extend(screen_bars(bars, self.cfg))
+            movers.extend(movers_from_bars(bars, self.cfg))
+        self._movers = movers
         if self.use_delivery_filter:
             ok = delivery_filter(self.today(), self.delivery_loader)
             if ok is not None:
