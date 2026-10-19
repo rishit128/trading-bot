@@ -116,6 +116,7 @@ class Settings:
     min_traded_value: float = 100_000_000.0
     max_daily_volatility: float = 0.04
     trend_exit: bool = True  # sell a held stock when its last completed close is below its 200-day average
+    research_rule_gate: bool = False  # a BUY on a stock only a broker research call put on the list needs the rule's BUY too
     market_pulse: bool = True  # also analyse stocks of surging sectors (src.data.market_pulse); False = the screener only
     # Only above the day's cross-sectional median 20-day NSE delivery %. Combined with 12-1 momentum ranking, a
     # single 3-year test added ~14%/yr over the same-window basket (STRATEGY.md, 2026-09-22) -- promising, unproven.
@@ -210,6 +211,7 @@ def load_settings() -> Settings:
         min_traded_value=_float("MIN_TRADED_VALUE", defaults.min_traded_value),
         max_daily_volatility=_float("MAX_DAILY_VOLATILITY", 0.04),
         trend_exit=os.getenv("TREND_EXIT", "true").strip().lower() != "false",
+        research_rule_gate=os.getenv("RESEARCH_RULE_GATE", "false").strip().lower() == "true",
         market_pulse=os.getenv("MARKET_PULSE", "true").strip().lower() != "false",
         delivery_filter=os.getenv("DELIVERY_FILTER", "false").strip().lower() == "true",
         analysis_workers=int(_float("ANALYSIS_WORKERS", 3)),

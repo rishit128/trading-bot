@@ -328,6 +328,28 @@ def test_a_research_only_stock_skips_the_filters_and_what_they_would_say_is_reco
     assert "2 stock-sessions, 2 AI BUYs" in line and "turned 1 of those BUYs into HOLDs" in line and "filtered out 1" in line
 
 
+def test_the_research_gate_turns_a_research_only_buy_the_rule_rejects_into_a_hold_only_when_switched_on(tmp_path):
+    """C2: with RESEARCH_RULE_GATE on, RBLBANK (below its 50-day average, rule HOLD) is held; the watchlist stock and the
+    research stock the rule also likes still buy. Off, nothing changes."""
+    import dataclasses
+
+    below_ma50 = {"RBLBANK": Snapshot("RBLBANK", 90.0, 98.0, 95.0, 60.0, 1000, bar_date="2026-10-14")}
+    final = {}
+    for gate in (False, True):
+        calls = [parse_calls([body(RBL, ABC, {**RBL, "ScripCode": "TCS"})])]
+        (tmp_path / str(gate)).mkdir()
+        pipe, _, sessions, _ = swing(tmp_path / str(gate), calls)
+        pipe.settings = dataclasses.replace(pipe.settings, research_rule_gate=gate)
+        pipe.snapshot_fn = lambda sym: below_ma50.get(sym) or Snapshot(sym, 100.0, 98.0, 95.0, 60.0, 1000, bar_date="2026-10-14")
+        pipe.run_once()
+        final[gate] = {d.symbol: (d.final_action, d.rule_action) for d in decisions(sessions)}
+        if gate:
+            held = next(d for d in decisions(sessions) if d.symbol == "RBLBANK")
+            assert "research-call gate" in held.reasoning
+    assert final[False] == {"TCS": ("BUY", "BUY"), "RBLBANK": ("BUY", "HOLD"), "ABCAPITAL": ("BUY", "BUY")}
+    assert final[True] == {"TCS": ("BUY", "BUY"), "RBLBANK": ("HOLD", "HOLD"), "ABCAPITAL": ("BUY", "BUY")}
+
+
 def test_the_screeners_verdict_on_one_stock():
     from src.data.universe import Candidate, ScreenConfig, UniverseScreener
 

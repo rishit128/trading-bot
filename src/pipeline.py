@@ -275,10 +275,25 @@ class TradingPipeline:
         decision = trend_exit_decision(snapshot, held, self.settings.trend_exit, short) or combine_signals(
             signals, {n: a.role for n, a in self.agents.items()}
         )
+        decision = self._research_gate(symbol, snapshot, decision)
         price = self._quote(symbol, snapshot.price) if decision.action != Action.HOLD else snapshot.price
         risk = self.risk.evaluate(decision.action, decision.confidence, symbol, price, portfolio)
         decision_id = self._log_decision(symbol, snapshot, signals, decision, risk, price, universe_size=universe_size)
         return Verdict(decision, risk, price, decision_id)
+
+    def _research_gate(self, symbol: str, snapshot: Snapshot, decision: Decision) -> Decision:
+        """With RESEARCH_RULE_GATE on, a BUY on a stock that only a broker research call put on the list (the scanner
+        did not pick it) must also pass the mechanical entry rule, else it becomes a HOLD. Off by default: the weekly
+        report counts what this would change before it is switched on."""
+        if not (self.settings.research_rule_gate and decision.action == Action.BUY and self._sources.get(symbol) == "research"):
+            return decision
+        if rule_verdict(snapshot.price, snapshot.ma50, snapshot.ma200, snapshot.rsi) == Action.BUY:
+            return decision
+        return dataclasses.replace(
+            decision,
+            action=Action.HOLD,
+            reasoning=f"research-call gate: the rule's entry filter says HOLD. AI said: {decision.reasoning}",
+        )
 
     def place(self, symbol: str, verdict: Verdict) -> str:
         """Carry out an approved verdict (or record why it was not sent) and return the order status."""
