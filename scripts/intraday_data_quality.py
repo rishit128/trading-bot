@@ -3,7 +3,7 @@ and volume, signals the final bars do not confirm, and how old the prices behind
 verified sessions.
 
     python scripts/intraday_data_quality.py
-On the server: sudo docker compose -f docker-compose.aws.yml exec intraday-bot python scripts/intraday_data_quality.py"""
+"""
 
 import argparse
 import sys

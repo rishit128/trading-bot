@@ -333,8 +333,8 @@ def test_the_market_data_cache_goes_where_market_cache_dir_says(tmp_path, monkey
     assert (tmp_path / "cache").is_dir() and any((tmp_path / "cache").iterdir())
 
 
-def test_both_docker_images_point_the_market_cache_at_the_writable_data_volume():
+def test_the_docker_image_point_the_market_cache_at_the_writable_data_volume():
     from pathlib import Path
 
-    for name in ("Dockerfile", "Dockerfile.aws"):
+    for name in ("Dockerfile",):
         assert "ENV MARKET_CACHE_DIR=/data/cache" in Path(name).read_text(encoding="utf-8"), name

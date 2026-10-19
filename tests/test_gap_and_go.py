@@ -150,8 +150,8 @@ def test_telegram_shows_the_gap_account_and_its_trades(tmp_path):
     assert "/gapgo - gap-and-go paper account" in HELP
 
 
-def test_both_docker_images_keep_the_gap_account_on_the_data_volume():
-    for name in ("Dockerfile", "Dockerfile.aws"):
+def test_the_docker_image_keep_the_gap_account_on_the_data_volume():
+    for name in ("Dockerfile",):
         assert "ENV GAPGO_DATABASE_URL=sqlite:////data/gapgo.db" in (ROOT / name).read_text(encoding="utf-8")
 
 
@@ -240,8 +240,8 @@ def test_telegram_shows_the_gap_only_account(tmp_path):
     assert "GAP-ONLY control account" in view and "AAA" in view and "/gaponly - gap-only control account" in HELP
 
 
-def test_both_docker_images_keep_the_gap_only_account_on_the_data_volume():
-    for name in ("Dockerfile", "Dockerfile.aws"):
+def test_the_docker_image_keep_the_gap_only_account_on_the_data_volume():
+    for name in ("Dockerfile",):
         assert "ENV GAPONLY_DATABASE_URL=sqlite:////data/gaponly.db" in (ROOT / name).read_text(encoding="utf-8")
 
 

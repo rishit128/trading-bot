@@ -4,7 +4,7 @@ about the universe that was traded.
 In order: an explicit list (INTRADAY_UNIVERSE), then the hand-saved Nifty 100 file, then Yahoo's top 100 by average daily
 traded value. The last is NOT the Nifty 100: on 2026-09-28 it shared only 44 names with it, adding recently listed stocks
 whose IPO-period volume inflates a 3-month average. It is the only automatic choice that makes no request to NSE's sites
-(the AWS deployment has no saved file), so it is allowed but reported with a label that says what it is."""
+(a machine without the saved file), so it is allowed but reported with a label that says what it is."""
 
 from typing import Callable, List, Sequence, Tuple
 

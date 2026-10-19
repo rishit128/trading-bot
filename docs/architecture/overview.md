@@ -71,5 +71,5 @@ engine and every research script, so what is tested is what trades.
 - **Databases** (above): decisions, orders, positions, trades, equity history, signals, the bars archive.
 - **Heartbeat files** (`/data/heartbeat-*`): each loop's latest cycle outcome, read by the container health check.
 - **Cache** (`/data/cache`): the Nifty and VIX series for the AI's market context.
-- **Settings**: environment variables read once into `config.Settings`; the server's `.env` is its own and a deploy never
-  overwrites it ([deployment](../operations/deployment.md)).
+- **Settings**: environment variables read once into `config.Settings`; the `.env` is one folder above the project
+  (`/home/rishit/trading bt/.env`) and is never committed.

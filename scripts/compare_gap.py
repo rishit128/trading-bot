@@ -3,7 +3,7 @@ how much of each account was used, from the two paper accounts (see src/research
 
     python scripts/compare_gap.py
     python scripts/compare_gap.py --gapgo-database-url sqlite:///gapgo.db --gaponly-database-url sqlite:///gaponly.db
-On the server: sudo docker compose -f docker-compose.aws.yml exec intraday-bot python scripts/compare_gap.py"""
+"""
 
 import argparse
 import sys

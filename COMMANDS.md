@@ -1,33 +1,21 @@
 # Commands cheat sheet
 
-Everything you'd actually type, in one place. Run from the project folder (`C:\Users\RISHIT\Downloads\AI trading bot`)
-in a terminal with `venv\Scripts\activate` run first, unless a section says otherwise. Full explanations are in
+Everything you'd actually type, in one place. The bots run on this laptop. Run from the project folder
+(`/home/rishit/trading bt/trading-bot`) with `source venv/bin/activate` run first, unless a section says otherwise. Full explanations are in
 `README.md` — this file is just "what do I type."
 
-## The AWS deployment (the one that's actually running, 24/7)
+## Running the bots (on this laptop)
 
 ```
-./deploy/deploy.sh                          # deploy your current local code changes to AWS (safe to re-run anytime)
-ssh -i deploy/ai-trading-bot-key.pem ubuntu@35.154.232.64                          # log in to the server
-ssh -i deploy/ai-trading-bot-key.pem ubuntu@35.154.232.64 "cd ai-trading-bot && sudo docker compose -f docker-compose.aws.yml logs -f"      # watch it live
+./scripts/start_bots.sh                    # start the swing bot and the intraday bot in the background (safe to re-run)
+pgrep -af main.py                          # are both running? (--loop 30 --live --holdout and --intraday --live)
+tail -f logs/bot.log                       # watch the swing bot live (Ctrl+C stops watching, not the bot)
+tail -f logs/intraday.log                  # watch the intraday engines (ORB, gap-and-go, gap-only)
+pkill -f "main.py --loop"; pkill -f "main.py --intraday"                              # stop both
+pkill -f "main.py --loop"; pkill -f "main.py --intraday"; sleep 5; ./scripts/start_bots.sh   # restart (after changing .env or code)
 ```
-Once logged in via `ssh` above, run these **on the server**. Two containers run: `trading-bot` (the swing bot, every 30
-min, plus the real-portfolio agent) and `intraday-bot` (the opening-range breakout engine, its own paper account).
-```
-cd ai-trading-bot
-sudo docker compose -f docker-compose.aws.yml ps                              # is it running? (both containers)
-sudo docker compose -f docker-compose.aws.yml logs -f                         # watch both live (Ctrl+C to stop watching)
-sudo docker compose -f docker-compose.aws.yml logs -f intraday-bot            # watch just the intraday engine
-sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --report        # paper account summary
-sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --positions     # open positions & history
-sudo docker compose -f docker-compose.aws.yml exec trading-bot python main.py --check         # test all connections
-sudo docker compose -f docker-compose.aws.yml exec intraday-bot python main.py --intraday-report  # the intraday accounts' status
-sudo docker compose -f docker-compose.aws.yml exec trading-bot python scripts/paper_report.py       # full P&L history, both accounts
-sudo docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio setup  # one-time: save your Integrated login
-sudo docker compose -f docker-compose.aws.yml exec trading-bot python -m src.portfolio check  # what's saved (masked)
-sudo docker compose -f docker-compose.aws.yml restart                         # restart both
-sudo docker compose -f docker-compose.aws.yml down                            # stop both (history is kept, safe)
-```
+Cron starts both about a minute after the laptop boots. Keep the laptop on, awake and online from 09:15 to 15:30 on trading
+days: the bots only trade while it is running. Settings are in `/home/rishit/trading bt/.env` (one folder above this one).
 
 ## Telegram (no terminal needed)
 
@@ -47,7 +35,6 @@ sudo docker compose -f docker-compose.aws.yml down                            # 
 /resume               allow orders again
 ```
 Automatic messages: a weekly learning report (Mondays: outcomes labelled, AI vs the plain rule, holdout reserve),
-and WATCHDOG alerts from the server itself if a bot container is down or silent for 75 minutes.
 
 ## Checking things on this PC
 
@@ -59,7 +46,7 @@ python main.py --check           # test keys and connectivity (OpenRouter, broke
 python main.py --graph           # print the LangGraph workflow diagrams
 ```
 
-## Running the bot locally (only if you're NOT relying on the AWS one for something)
+## Running the bot by hand, in a terminal (what start_bots.sh does for you)
 
 ```
 python main.py                    # one dry-run cycle: scan + AI + risk check, records decisions, trades nothing
@@ -68,9 +55,9 @@ python main.py --loop 30 --live   # same, but trade in the built-in paper simula
 python main.py --intraday [--live]     # intraday breakout engine, its own paper account
 python main.py --intraday-report       # the intraday accounts (breakout, gap-and-go, gap-only): positions, history, status
 ```
-**Don't run this at the same time as the AWS deployment** — they'd fight over the same Telegram bot. Stop one first.
+**Don't start a second copy while the background bots are running** — they'd fight over the same Telegram bot and databases.
 
-## The real-portfolio agent, on this PC (only needed if you're not using the AWS one)
+## The real-portfolio agent, on this PC 
 
 ```
 python -m src.portfolio setup              # mobile, MPIN, customer ID -> Windows Credential Manager
@@ -90,7 +77,7 @@ python -m bandit -r src main.py -q            # static security checks
 python -m pip_audit -r requirements.txt --no-deps   # known vulnerabilities in the pinned dependencies
 ```
 
-## Docker, locally on this PC (an alternative to running python main.py directly — not needed if using AWS)
+## Docker, locally on this PC (an alternative to start_bots.sh; not used right now)
 
 ```
 docker compose up -d --build     # paper trading in the built-in simulator, every 30 min while NSE is open
@@ -109,16 +96,9 @@ scripts/analyze_mistakes.py                # judges every analysed stock against
 scripts/intraday_archive.py status|refresh|import-cache   # the archive of 5-minute bars (fills itself while the engine runs)
 scripts/compare_gap.py                     # gap-and-go vs its gap-only control: per trade, date by date, costs, drawdown
 scripts/intraday_data_quality.py           # the intraday engines' live data vs the final bars (verdict after 10 sessions)
-scripts/backtest_intraday.py [--strategy gapgo|gaponly] [--bars-file F]   # the LIVE engine replayed over stored sessions (PAPER_INITIAL_CASH by default: Rs 25,000 on the server)
+scripts/backtest_intraday.py [--strategy gapgo|gaponly] [--bars-file F]   # the LIVE engine replayed over stored sessions (PAPER_INITIAL_CASH by default: Rs 25,000)
 scripts/audit_intraday.py                  # does the intraday rule beat a random entry? which filters add anything?
 scripts/research_intraday.py               # five pre-declared intraday ideas vs a random null; re-run as the archive grows
 scripts/backtest_live_config.py [--index 0|50|100|500]   # the live swing setup on 10 years of history (0 = every NSE stock)
 ```
 Run any of these with `python scripts/<name>.py` (some accept `--help` for their options).
-
-## AWS account — where things live
-
-- **Region:** ap-south-1 (Mumbai) — the console must be switched to this region to see the instance.
-- **Instance:** `ai-trading-bot`, static IP `35.154.232.64`.
-- **Login secret:** AWS Secrets Manager → `ai-trading-bot/integrated-portfolio` (never shown in plain text there).
-- **SSH key:** `deploy/ai-trading-bot-key.pem` in this folder — the only copy; don't delete it or you lose server access.

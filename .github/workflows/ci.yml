@@ -57,5 +57,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: The production image builds
-        run: docker build -f Dockerfile.aws -t ai-trading-bot:ci .
+      - name: The image builds
+        run: docker build -f Dockerfile -t ai-trading-bot:ci .

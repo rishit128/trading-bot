@@ -20,7 +20,7 @@ a LangGraph workflow orchestrates everything. **Indian market by default** (NSE,
 | [Dependency map](docs/architecture/dependency-map.md) | who imports whom, and the layering rules a test enforces |
 | [Decisions](docs/architecture/decisions/) | why the code is shaped the way it is |
 | [Development standards](docs/development/standards.md), [testing](docs/development/testing.md) | the checks CI runs, code and test conventions |
-| [Deployment and rollback](docs/operations/deployment.md), [monitoring](docs/operations/monitoring.md) | AWS, health checks, alerts, what to do when one fires |
+| [Monitoring](docs/operations/monitoring.md) | Health checks, alerts, what to do when one fires |
 | [Execution safety](docs/trading/execution-safety.md) | the guarantees around orders, and what enforces each |
 | [AI workflows](docs/ai/workflows.md) | where the AI is used, model fallback, how failures are contained |
 | [Strategy log](STRATEGY.md), [database](docs/database.md), [holdout reserve](docs/holdout.md), [real-portfolio agent](docs/portfolio-agent.md) | research results and the data layer |
@@ -160,25 +160,6 @@ docker compose down              # stop (the database volume, and so your paper 
 `docker-compose.yml` runs with `--live` (simulated trades in the paper broker, never real money); remove `--live` for
 decisions only. **Phase 5 = leave this running for ~4 weeks**, then judge it with the checks below. The image is non-root, contains no
 secrets (`.env` is passed at runtime) and has telemetry off. Any Docker host works.
-
-### AWS deployment (paper bot + the real-portfolio agent, running 24/7)
-
-```
-aws configure          # or `aws sso login`; your keys never pass through this repo or an AI assistant
-./deploy/deploy.sh      # provisions one EC2 instance (Mumbai, t3.small, a static IP) and deploys this checkout to it
-```
-One image (`Dockerfile.aws`) runs both: the paper bot, and — since `/portfolio` is wired into the same Telegram
-listener — the read-only agent for your real Integrated account, with Chromium included. Two things differ from the
-Windows setup: `PORTFOLIO_SECRET_BACKEND=aws` puts your mobile/MPIN in one AWS Secrets Manager secret (KMS-encrypted;
-the instance's IAM role can only read/write that one secret — see `deploy/ec2-secrets-policy.json`), since there is no
-Windows Credential Manager on Linux; and `PORTFOLIO_NO_SANDBOX=true` swaps Chromium's own OS sandbox for Docker's
-container isolation (a container does not have the capability that sandbox needs). Nothing else about the agent
-changes: still read-only, still asks for the OTP on Telegram, still never places an order.
-
-`deploy.sh` is idempotent (re-running it updates the running instance rather than making a new one) and opens SSH
-(port 22) only from the IP you ran it from — nothing else is exposed; the bot only ever makes outbound calls. The first
-run prints a one-time command to save your Integrated login into Secrets Manager (`python -m src.portfolio setup`,
-run on the instance, same as the local flow) — the mobile/MPIN never travels through this script or through git.
 
 ## Phase 5 checks (after ~4 weeks of paper trading)
 

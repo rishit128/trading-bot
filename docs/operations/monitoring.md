@@ -1,27 +1,27 @@
 # Monitoring and incident response
 
-"Running" is not "working". Four independent layers watch the bots, from the process outward.
+"Running" is not "working". The bots run on the owner's laptop (started by `scripts/start_bots.sh`, and by cron at boot).
 
 | Layer | Detects | Where it reports |
 | --- | --- | --- |
-| **Docker restart policy** (`unless-stopped`) | The process crashed | Restarts it; `docker inspect` shows the restart count |
-| **Heartbeat health check** (`src/monitoring/heartbeat.py`) | A loop that is **stuck** (nothing recorded for 75 min swing / 15 min intraday) or whose **last 3 cycles all failed** (Yahoo down, a bug, a broker error) | `docker compose ps` shows `(unhealthy)`; the watchdog alerts |
-| **Watchdog** (`deploy/watchdog.sh`, cron every 15 min on the server) | A container not running, a container unhealthy, or the swing bot silent for 75 min | One Telegram message when it goes wrong and one when it is back |
+| **Process check** (`pgrep -af main.py`) | A bot crashed or was never started | You run it; `./scripts/start_bots.sh` starts whatever is missing |
+| **Heartbeat** (`src/monitoring/heartbeat.py`, written when `HEARTBEAT_FILE` is set) | A loop that is **stuck** (nothing recorded for 75 min swing / 15 min intraday) or whose **last 3 cycles all failed** | The heartbeat file; not set by default on the laptop |
 | **The bot's own alerts** (Telegram) | Risk halts and their clearing, a drawdown pause ending, `CYCLE FAILED`, `ERROR processing <stock>`, `UNIVERSE SCAN FAILED`, `LLM UNAVAILABLE` and recovery, every order outcome, every intraday entry/exit/square-off, a weekly learning report | Your Telegram chat |
 
-Logs are JSON in the containers (`LOG_FORMAT=json`): `sudo docker logs --since 1h <container>`. Secrets are never logged (the HTTP
-library's request logging is switched off because the Telegram token is part of every URL).
+There is no watchdog now: nothing messages you if the laptop sleeps, loses internet or a bot dies. Check `pgrep -af main.py`
+when Telegram goes quiet during market hours. Secrets are never logged (the HTTP library's request logging is switched off
+because the Telegram token is part of every URL).
 
 ## Looking at the state
 
 ```
-sudo docker compose -f docker-compose.aws.yml ps                       # Up / healthy / unhealthy
-sudo docker exec ai-trading-bot-trading-bot-1 cat /data/heartbeat-swing     # last cycle, ok or not, failures in a row
-sudo docker exec ai-trading-bot-intraday-bot-1 cat /data/heartbeat-intraday
-cat ~/ai-trading-bot/.deployed-commit                                  # what is running (after the first deploy with the new script)
+pgrep -af main.py                       # both bots running?
+tail -n 50 logs/bot.log                 # swing bot
+tail -n 50 logs/intraday.log            # intraday engines
+python main.py --report                 # swing account; --intraday-report for the three intraday accounts
 ```
 
-Telegram: `/status`, `/positions`, `/pnl`, `/intraday`, `/gapgo`, `/gaponly`. Reports on the server:
+Telegram: `/status`, `/positions`, `/pnl`, `/intraday`, `/gapgo`, `/gaponly`. Reports:
 `scripts/paper_report.py` (every trade), `scripts/compare_gap.py` (gap-and-go against its control),
 `scripts/reconcile_paper.py` (does the ledger tie out; non-zero exit on drift).
 
@@ -29,19 +29,16 @@ Telegram: `/status`, `/positions`, `/pnl`, `/intraday`, `/gapgo`, `/gaponly`. Re
 
 | Alert | Meaning | Do |
 | --- | --- | --- |
-| `WATCHDOG: ... is unhealthy` | The loop stopped reporting, or 3+ cycles failed in a row | Read the last cycle's detail in the heartbeat file and the logs; Yahoo or OpenRouter outages clear by themselves; a code error needs a fix or a rollback ([deployment](deployment.md)) |
-| `WATCHDOG: ... is not running` | The container exited and Docker is not restarting it | `docker compose up -d`; look at `docker logs` for the crash |
-| `CYCLE FAILED (will retry in N min)` | One whole swing cycle raised; it retries by itself | Only act if it repeats (the heartbeat turns unhealthy at 3) |
+| `CYCLE FAILED (will retry in N min)` | One whole swing cycle raised; it retries by itself | Only act if it repeats |
 | `LLM UNAVAILABLE` | Every AI model failed this cycle; the bot is holding, no new buys | Check `scripts/test_openrouter_api.py`; free models are rate-limited and sometimes withdrawn |
 | `RISK HALT: ...` | Daily-loss or drawdown limit reached; new buys blocked | Expected protection. A drawdown halt ends by itself after `DRAWDOWN_PAUSE_DAYS`, or send `/rebase` |
 | `ERROR processing <stock>` | One stock failed; the others went on | Usually that stock's data; the same stock failing for days needs a look |
-| No Telegram messages at all | Bot token wrong, or a second process is polling the same bot (a `409` conflict) | The bot says so once in chat; stop the other poller (an old deploy on another computer) |
+| `the 09:30 step started late` | The intraday engine was not running at 09:30, so that day's entries may be missed | Check the laptop was awake; restart the bots |
+| No Telegram messages at all | Bot token wrong (HTTP 401 in `logs/bot.log`), or a second process is polling the same bot (a `409` conflict) | Fix `TELEGRAM_BOT_TOKEN` in `.env` and restart, or stop the other poller |
 
 ## Not covered (be aware)
 
-- **Stale market data** is handled per stock (the stock waits), not as a process-level alarm: a data source that is down for
-  hours shows up as repeated `WAIT`s and failed cycles, which the heartbeat turns into `unhealthy`.
+- **Laptop sleep, shutdown or lost internet** is not alarmed; those sessions are simply missed.
+- **Stale market data** is handled per stock (the stock waits), not as a process-level alarm.
 - **Reconciliation** is a command you run (`scripts/reconcile_paper.py`), not a scheduled alert.
-- **Disk space and memory** are not alarmed. At the last check the server had 66% of a 20 GB disk used and the two containers
-  used about 200 MB each of 1.9 GB. The image is now built once, but the two older copies stay on disk until they are removed
-  (`sudo docker image prune -a` once the new containers are healthy: it frees about 3 GB).
+- **Backups**: the `.db` files in the project folder are the only copy of the trading history; copy them somewhere safe now and then.
