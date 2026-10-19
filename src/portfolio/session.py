@@ -28,6 +28,12 @@ def _no_sandbox() -> bool:
     return os.getenv("PORTFOLIO_NO_SANDBOX", "false").strip().lower() == "true"
 
 
+def _browser_channel() -> Optional[str]:
+    """An installed browser to drive instead of Playwright's own Chromium (e.g. "chrome"), for systems Playwright cannot
+    download Chromium for (Ubuntu 20.04). Empty = Playwright's Chromium."""
+    return os.getenv("PORTFOLIO_BROWSER_CHANNEL", "").strip() or None
+
+
 # The only pages ever opened after login. Opened by address, never by clicking the portal's menus.
 READ_PAGES = {
     "dashboard": "Dashboard/DashboardV1.html",
@@ -116,6 +122,7 @@ class PortalRun:
                 accept_downloads=False,
                 viewport={"width": 1366, "height": 900},
                 args=args,
+                channel=_browser_channel(),
             )
             self._ctx.route("**/*", self._route)
             self.page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()

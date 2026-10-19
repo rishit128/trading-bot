@@ -576,3 +576,14 @@ def test_no_sandbox_defaults_off_and_is_only_true_on_the_literal_string(monkeypa
     assert _no_sandbox() is True
     monkeypatch.setenv("PORTFOLIO_NO_SANDBOX", "TRUE")
     assert _no_sandbox() is True
+
+
+def test_browser_channel_defaults_to_playwrights_chromium_and_takes_an_installed_browser(monkeypatch):
+    from src.portfolio.session import _browser_channel
+
+    monkeypatch.delenv("PORTFOLIO_BROWSER_CHANNEL", raising=False)
+    assert _browser_channel() is None
+    monkeypatch.setenv("PORTFOLIO_BROWSER_CHANNEL", "  ")
+    assert _browser_channel() is None
+    monkeypatch.setenv("PORTFOLIO_BROWSER_CHANNEL", " chrome ")
+    assert _browser_channel() == "chrome"
