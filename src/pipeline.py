@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from src.agents.base import Agent, AgentContext
 from src.config import Settings
 from src.data.fundamentals import Fundamentals
-from src.data.house_calls import HouseCall, call_for, open_sells, recently_stopped, swing_buys
+from src.data.house_calls import HouseCall, call_for, open_sells, recently_ended, swing_buys
 from src.data.indicators import Snapshot
 from src.data.market_context import MarketContext
 from src.data.market_pulse import MAX_OPEN as MAX_PULSE_OPEN
@@ -248,7 +248,7 @@ class TradingPipeline:
             return
         now, sells = datetime.now(timezone.utc), open_sells(self._calls)
         for symbol in sorted(portfolio.positions):
-            call = sells.get(symbol) or recently_stopped(self._calls, symbol, now)
+            call = sells.get(symbol) or recently_ended(self._calls, symbol, now)
             if call is None or (symbol, call.published, call.is_open) in self._warned:
                 continue
             self._warned.add((symbol, call.published, call.is_open))
@@ -275,25 +275,19 @@ class TradingPipeline:
         decision = trend_exit_decision(snapshot, held, self.settings.trend_exit, short) or combine_signals(
             signals, {n: a.role for n, a in self.agents.items()}
         )
-        decision = self._research_gate(symbol, snapshot, decision)
+        if (  # RESEARCH_RULE_GATE: a stock only a broker research call listed needs the rule's BUY too
+            self.settings.research_rule_gate
+            and decision.action == Action.BUY
+            and self._sources.get(symbol) == "research"
+            and rule_verdict(snapshot.price, snapshot.ma50, snapshot.ma200, snapshot.rsi) != Action.BUY
+        ):
+            decision = dataclasses.replace(
+                decision, action=Action.HOLD, reasoning=f"research-call gate: rule says HOLD. AI said: {decision.reasoning}"
+            )
         price = self._quote(symbol, snapshot.price) if decision.action != Action.HOLD else snapshot.price
         risk = self.risk.evaluate(decision.action, decision.confidence, symbol, price, portfolio)
         decision_id = self._log_decision(symbol, snapshot, signals, decision, risk, price, universe_size=universe_size)
         return Verdict(decision, risk, price, decision_id)
-
-    def _research_gate(self, symbol: str, snapshot: Snapshot, decision: Decision) -> Decision:
-        """With RESEARCH_RULE_GATE on, a BUY on a stock that only a broker research call put on the list (the scanner
-        did not pick it) must also pass the mechanical entry rule, else it becomes a HOLD. Off by default: the weekly
-        report counts what this would change before it is switched on."""
-        if not (self.settings.research_rule_gate and decision.action == Action.BUY and self._sources.get(symbol) == "research"):
-            return decision
-        if rule_verdict(snapshot.price, snapshot.ma50, snapshot.ma200, snapshot.rsi) == Action.BUY:
-            return decision
-        return dataclasses.replace(
-            decision,
-            action=Action.HOLD,
-            reasoning=f"research-call gate: the rule's entry filter says HOLD. AI said: {decision.reasoning}",
-        )
 
     def place(self, symbol: str, verdict: Verdict) -> str:
         """Carry out an approved verdict (or record why it was not sent) and return the order status."""

@@ -66,8 +66,10 @@ def run_intraday(live: bool) -> None:
     # only today's rows). record_capped: a signal the 5-position limit left out is still recorded (as SKIPPED), so the
     # forward record covers every signal of the day, not only the first five.
     bars = shared_download(lambda symbols: fetch_5m_bars(symbols, "5d"))
-    # The breakout engine also reads the broker's research calls (today's Intraday buys join its scan; an open SELL call
-    # blocks a buy). The gap engines do not: they are a matched pair, and an input on one side would spoil the comparison.
+    # The breakout engine also reads the broker's research calls and notes them on its signals; it trades on them (today's
+    # Intraday buys join its scan, an open SELL call blocks a buy) only if INTRADAY_CALLS_ACT is on, so by default it stays
+    # a clean control. The gap engines do not read them: they are a matched pair, and an input on one side would spoil the
+    # comparison.
     house_calls = open_house_calls()
     engines = [
         engine(
@@ -89,6 +91,7 @@ def run_intraday(live: bool) -> None:
             archive=BarArchive(broker.sessions) if settings.intraday_archive else None,
             record_capped=True,
             house_calls_fn=house_calls.current,
+            act_on_calls=settings.intraday_calls_act,
         )
     )
     mode = "PAPER ORDERS (separate intraday accounts)" if live else "DRY RUN (signals only)"

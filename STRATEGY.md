@@ -853,3 +853,50 @@ results rather than on history: there is no backtest behind it, so treat it as a
 - **Wiring:** the intraday daily-loss limit is a setting (`INTRADAY_MAX_DAILY_LOSS_PCT`, default 0.02, unchanged), also used by
   the replay; positions open at start-up are remembered before anything is settled, so a stop hit while the process was down is
   still reported.
+
+## Intraday improvement tests, and what was learned (2026-10-19)
+Run once each, with the rules and the pass criteria declared first, on the 5-minute archive: 492 stocks (the frozen top 500 by traded
+value), 58 sessions (2026-07-27 .. 2026-10-19). A pass needs 300 trades, date-clustered t >= 2.6, both halves positive, positive at
+twice the slippage, and a better result than the comparison rule day by day. **None passed.** The round trip costs about 0.21%.
+- **Live ORB:** 10,948 signals, gross -0.002%, net -0.21% a trade. Costs against no gross edge. No segment (entry time, range width,
+  stop distance, volume surge, price, gap, liquidity, breadth) beats costs in both halves; the best gross figures are about +0.08%.
+- **Stocks in play (I1):** the 10 highest relative opening volumes a day, long above the 5- or 15-minute range: 95 and 78 trades,
+  -0.12% and -0.20%. **Cost filter (I3b):** skipping setups whose round trip is over a quarter of the stop distance: -0.20% on 9,304
+  trades (live -0.21%). **Ranking (R1):** the 5 ORB signals a day with the highest time-of-day relative volume: -0.22% (day's best, hindsight)
+  and -0.24% (first five by time), against -0.30% for five random ones (t 0.3 to 0.6; 220 trades). All dropped from the code.
+- **Gap-and-go** (2% gap, 5 slots): 168 trades, -0.12%. **Bigger gaps are worse**: >= 3% -0.49%, >= 4% -0.59%, >= 5% -0.87% (the
+  12 trades >= 7% earned +0.81%). So "largest gap first" (I2a) is the wrong premise, and the cap drops only 23 of 191 signals, so it
+  never changed a trade. **Skip weak-gap days (I2b)** earned +0.115% a day against -0.076% and **break-even stop after +1R (I2c)** -0.00%
+  a day (t 1.2 and 1.3 over 58 dates): leads, not passes; both are still tested.
+- **Day type:** the share of the universe opening above its previous close (DT1). Compared per date, ORB's passing days beat its
+  skipped days by +0.14% (t 1.3) and gap-and-go's go the other way (t -0.3). A VIX rule showed nothing (t 0.6, -0.7) and was dropped.
+  Do not read "vs null t" for a rule that skips days unless a skipped day counts as 0: any filter flatters a losing rule otherwise.
+- **News:** broker results dates come from Yahoo, whose times are not reliable (46% fall inside trading hours, on exact half-hours), so
+  the flag is by date only ("results on the previous or this session's date"). Gap-and-go: 19 flagged signals +0.51% against 75 at
+  -0.46%; ORB 153 at -0.07% against -0.22%. Far too few to trade on; kept as a column to rerun as sessions accumulate.
+- **Swing sizing** (Rs 25,000, real delivery fees, 10-year backtest on today's top 500, so survivorship-biased): 15 x 8.8% (live) was
+  best over the full period (+23.5% a year) but 8 x 11% to 4 x 22% were better over the last 3 to 5 years. No variant beat live in all
+  three windows, so sizing stays. The fixed demat charge is real (a Rs 1,500 position pays 1.38% round trip, Rs 5,000 pays 0.64%) but
+  moved the live setup's yearly return by only about 0.4 points against the same limits on Rs 10 lakh.
+- **Broker research calls:** the portal also sends rows typed "Book Profit" (a call whose profit the desk has booked). They are kept as
+  ended calls (side read from the prices) and a held stock gets a warning; any other unseen type is skipped and logged with its value.
+
+## The same tests on 8 years of Angel One history (2026-10-21)
+*Removed 2026-10-21 after these results:* the Angel One download, `research_bars.db`, the results-date flag, the day-type
+tests and the round-2/3 research code (I2b, I2c, DT1, R1-R5, T1-T2). The findings below stay as the record; the code is
+in the working-tree history only, not in git.
+`research_bars.db` (Angel One, 5-minute, 2018-01-01 .. 2026-10-19, 195 stocks) plus the live archive: 332,843 stock-sessions over
+2,168 dates, about 12 times the 58 sessions above, covering the 2020 crash, the 2021 rally, 2022 and the sideways years. Same
+pre-declared criteria. **No rule passes, and the round-1/2 results are now firm, not "too little data":**
+- **Live ORB:** 116,908 trades, gross -0.02%, **net -0.23% a trade (t -27)**, negative in both halves and worse than a random entry
+  time (t -4.5). About Rs 11 lost per Rs 5,000 trade. No filter tried (day type, track record of the stock) rescues it.
+- **Live gap-and-go (5 slots):** 1,815 trades, gross +0.15%, **net -0.06%**: costs take a thin gross edge. The break-even stop (I2c,
+  -0.05%), skipping weak-gap days (I2b, -0.12%) and the breadth filter (DT1, -0.01%) do not change that.
+- **Round 3** (research code since removed; output in `logs/research_round3.log`): stocks-in-play ORB -0.16% (28,686 trades), big-gap fade -0.28%, leaders on a weak tape
+  -0.26%, VWAP stretch reversion -0.20%, ORB on "proven" stocks only -0.21%. All fail.
+- **The one lead: gap-and-go right after results (R4).** Only sessions after the stock reported results the previous session (so known
+  before the open): **231 trades, net +0.35% a trade, positive in both halves (+0.16% / +0.54%) and still +0.25% at twice the
+  slippage**, but t 1.5 and under 300 trades, so not a pass. Gap-and-go on the stock's own good record (T2) is +0.20% on 79 trades.
+  Both point to the same thing: news-driven gaps continue, ordinary ones do not.
+- **A look-ahead fixed before these runs:** the results flag had counted results dated on the trading day itself, which often come out
+  after 15:30. It now counts only the previous session's date. The earlier "+0.33%, 262 trades" slice included that leak.

@@ -39,6 +39,7 @@ from src.learning.jobs import DailyOutcomeLabelling, WeeklyLearningReport
 from src.llm import LLMClient
 from src.monitoring.heartbeat import Heartbeat
 from src.monitoring.telegram import CommandListener, Notifier, handle_command
+from src.ops.holdout import HoldoutReserve
 from src.ops.preflight import build_checks, critical_failures, format_results, run_checks
 from src.pipeline import TradingPipeline
 from src.runner import run_cycle, run_loop
@@ -150,7 +151,6 @@ def build_holdout_callback(pipeline):
     import yfinance as yf
 
     from src.engine.costs import SLIPPAGE
-    from src.ops.holdout import HoldoutReserve
 
     def reserve_bars(sym: str):
         """Daily OHLCV for one symbol; a failure means the symbol is priced out of the reserve, never guessed."""
@@ -238,7 +238,15 @@ def run_trading_bot(live: bool, holdout: bool, loop_minutes: int | None) -> None
 
     reserve_callback = build_holdout_callback(pipeline) if holdout else None
     labeller = build_outcome_labeller(pipeline)
-    weekly_report = WeeklyLearningReport(pipeline.sessions, pipeline.control, pipeline.notify)
+    weekly_report = WeeklyLearningReport(
+        pipeline.sessions,
+        pipeline.control,
+        pipeline.notify,
+        make_reserve=lambda: HoldoutReserve(
+            pipeline.sessions, lambda symbol: fetch_daily_bars(symbol, suffix=SUFFIX), cash_yield=st.cash_yield_pct
+        ),
+        primary_model=st.models[0] if st.models else None,
+    )
 
     def after_cycle() -> None:
         """Chores after each cycle: mark the holdout reserve (if enabled), label matured outcomes (once a day) and send

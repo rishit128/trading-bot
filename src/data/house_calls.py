@@ -84,6 +84,26 @@ class HouseCall:
         return json.dumps(d, sort_keys=True)
 
 
+# CallType labels, besides buy and sell, that the portal uses for a call whose profit the desk has told clients to take. Seen on
+# 2026-10-19 (DEEPAKNTR, Intraday). The row still carries the call's own prices, so its side is read from them. Any other label
+# is skipped and logged with its value; add one here only after it has been seen and its meaning is clear.
+EXIT_LABELS = ("book profit",)
+
+
+def _label(row: Dict[str, Any]) -> str:
+    return str(row.get("CallType") or row.get("AppCallType") or "").strip().lower()
+
+
+def _side(label: str, entry: Optional[float], stop: Optional[float], target: Optional[float]) -> Optional[str]:
+    """buy or sell: the label itself, or for a profit-booking label the direction the prices show (stop below entry below
+    target is a buy; target below entry below stop is a sell). None when the label or the prices do not settle it."""
+    if label in ("buy", "sell"):
+        return label
+    if label in EXIT_LABELS and entry is not None and stop is not None and target is not None:
+        return "buy" if stop < entry < target else "sell" if target < entry < stop else None
+    return None
+
+
 def _price(value: Any) -> Optional[float]:
     try:
         number = float(str(value).replace(",", ""))
@@ -140,14 +160,21 @@ def looks_like_calls(body: Any) -> bool:
 
 
 def why_skipped(row: Dict[str, Any]) -> str:
-    """Why `parse_call` gives nothing for this row, in plain words (for the log: no prices or other values)."""
+    """Why `parse_call` gives nothing for this row, in plain words (for the log: no prices; a call type is a label, so it is shown)."""
     if str(row.get("RecomType", "Equity")).strip().lower() != "equity":
         return f"type {row.get('RecomType')}"
+    label, entry, stop, target = (
+        _label(row),
+        _price(row.get("CMPFrom")),
+        _price(row.get("StopLoss")),
+        _price(row.get("TargetPrice")),
+    )
     bad = [
         name
         for name, ok in (
             ("ScripCode", bool(str(row.get("ScripCode") or "").strip())),
-            ("CallType", str(row.get("CallType") or row.get("AppCallType") or "").strip().lower() in ("buy", "sell")),
+            ("CallType", label in ("buy", "sell") or label in EXIT_LABELS),
+            ("prices that settle the side", label not in EXIT_LABELS or _side(label, entry, stop, target) is not None),
             ("CMPFrom", _price(row.get("CMPFrom")) is not None),
             ("StopLoss", _price(row.get("StopLoss")) is not None),
             ("TargetPrice", _price(row.get("TargetPrice")) is not None),
@@ -155,7 +182,8 @@ def why_skipped(row: Dict[str, Any]) -> str:
         )
         if not ok
     ]
-    return "unusable " + "/".join(bad) if bad else "duplicate"
+    shown = [f"{name} {row.get('CallType') or row.get('AppCallType')!r}" if name == "CallType" else name for name in bad]
+    return "unusable " + "/".join(shown) if bad else "duplicate"
 
 
 def parse_call(row: Dict[str, Any]) -> Optional[HouseCall]:
@@ -164,14 +192,15 @@ def parse_call(row: Dict[str, Any]) -> Optional[HouseCall]:
     if str(row.get("RecomType", "Equity")).strip().lower() != "equity":
         return None  # F&O and commodity calls: options and futures are not traded here
     symbol = str(row.get("ScripCode") or "").strip().upper()
-    side = str(row.get("CallType") or row.get("AppCallType") or "").strip().lower()
+    label = _label(row)
     a, b = _price(row.get("CMPFrom")), _price(row.get("CMPTo"))
     stop, target, published = _price(row.get("StopLoss")), _price(row.get("TargetPrice")), _published(row.get("PublishedDtm"))
-    if not symbol or side not in ("buy", "sell") or a is None or stop is None or target is None or published is None:
+    side = _side(label, a, stop, target)
+    if not symbol or side is None or a is None or stop is None or target is None or published is None:
         return None
     low, high = (a, a) if b is None else (min(a, b), max(a, b))
     exit_at = _exit_at(row.get("ExitDtm"))
-    closed = str(row.get("CallMode") or "").strip().lower() not in ("open", "") or exit_at is not None
+    closed = label in EXIT_LABELS or str(row.get("CallMode") or "").strip().lower() not in ("open", "") or exit_at is not None
     return HouseCall(
         symbol=symbol,
         kind=str(row.get("RecomSubType") or "").strip(),
@@ -183,7 +212,7 @@ def parse_call(row: Dict[str, Any]) -> Optional[HouseCall]:
         published=published,
         valid_to=_valid_to(row.get("ValidTo")),
         is_open=not closed,
-        exit_comment=str(row.get("ExitComment") or "").strip()[:64],
+        exit_comment=(str(row.get("ExitComment") or "").strip() or (label.title() if label in EXIT_LABELS else ""))[:64],
         exit_at=exit_at,
     )
 
@@ -383,12 +412,13 @@ def call_for(
     return None
 
 
-def recently_stopped(
+def recently_ended(
     calls: Iterable[HouseCall], symbol: str, now: datetime, within: timedelta = timedelta(days=1)
 ) -> Optional[HouseCall]:
-    """The house's call on this stock that hit its stop-loss in the last day, if any (a warning for a stock we hold)."""
+    """The house's call on this stock that hit its stop-loss or had its profit booked in the last day, if any (a warning for a
+    stock we hold). A call closed without an exit time cannot be dated, so it is not reported."""
     for c in calls:
         if c.symbol == symbol and not c.is_open and c.exit_at is not None and now - c.exit_at <= within:
-            if "stop" in c.exit_comment.lower():
+            if any(word in c.exit_comment.lower() for word in ("stop", "profit")):
                 return c
     return None

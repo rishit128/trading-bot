@@ -21,7 +21,7 @@ from src.data.house_calls import (
     open_sells,
     parse_calls,
     prompt_line,
-    recently_stopped,
+    recently_ended,
     swing_buys,
 )
 from src.data.india import IST
@@ -99,7 +99,7 @@ def test_which_calls_feed_which_strategy():
     assert list(open_sells(calls)) == ["DMART"]
     assert call_for(calls, "BSE", NOW).exit_comment == "Stoploss Hit"  # closed 40 minutes ago: still shown
     assert call_for(calls, "BSE", NOW + timedelta(days=4)) is None and call_for(calls, "NONE", NOW) is None
-    assert recently_stopped(calls, "BSE", NOW) is not None and recently_stopped(calls, "CAMS", NOW) is None
+    assert recently_ended(calls, "BSE", NOW) is not None and recently_ended(calls, "CAMS", NOW) is None
 
 
 # ---------------------------------------------------------------- the snapshot store
@@ -415,6 +415,24 @@ def test_a_stock_the_house_says_to_sell_is_not_bought_on_a_breakout(tmp_path):
     assert rec.outcome == "SKIPPED" and "SELL call" in rec.reason and rec.house_call == "Intraday sell"
 
 
+def test_without_act_on_calls_the_calls_are_noted_on_signals_but_change_nothing(tmp_path):
+    bars = {"AAA": make_bars(BREAKOUT, volumes=VOLS), "CALLED": make_bars(BREAKOUT, volumes=VOLS)}
+    day = DAY.strftime("%d %b %Y")
+    calls = parse_calls([body({**CAMS, "ScripCode": "CALLED", "PublishedDtm": f"{day} 09:20 AM"},
+                              {**DMART_SELL, "ScripCode": "AAA", "PublishedDtm": f"{day} 09:20 AM"})])  # fmt: skip
+    eng, broker, *_ = engine(
+        tmp_path,
+        {"AAA": bars["AAA"]},
+        at(9, 45),
+        prices={"AAA": 101.5, "CALLED": 101.5},
+        house_calls_fn=lambda: calls,
+        act_on_calls=False,
+    )
+    assert "entered 1" in eng.step()  # AAA is bought despite the open SELL call, and CALLED is not added to the scan
+    [rec] = signals(broker)
+    assert (rec.symbol, rec.outcome, rec.house_call) == ("AAA", "ENTERED", "Intraday sell")
+
+
 def test_a_failing_call_reader_never_stops_the_breakout_engine(tmp_path):
     def broken():
         raise RuntimeError("db locked")
@@ -591,3 +609,69 @@ def test_a_crashing_watch_is_reported_not_raised():
 
 def test_a_response_that_is_a_json_string_inside_a_json_string_is_still_read():
     assert looks_like_calls(json.dumps(body(CAMS)))
+
+
+def test_a_row_skipped_for_its_call_type_says_which_type_it_was(caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="src.data.house_calls"):
+        assert parse_calls([body({**RBL, "CallType": "Hold"})]) == []  # an unseen label: skipped, never guessed
+    assert "RBLBANK" in caplog.text and "unusable CallType 'Hold'" in caplog.text
+    assert str(RBL["TargetPrice"]) not in caplog.text  # no prices in the log
+
+
+PROFIT_BOOKED = {**RBL, "ScripCode": "DEEPAKNTR", "RecomSubType": "Intraday", "CallType": "Book Profit", "CallMode": "Closed",
+                 "CMPFrom": "1580.00", "CMPTo": "1582.00", "StopLoss": "1565.00", "TargetPrice": "1620.00",
+                 "ExitDtm": "2026-10-19T13:00:00"}  # fmt: skip
+
+
+def test_a_book_profit_row_is_an_ended_call_whose_side_comes_from_its_prices():
+    [long] = parse_calls([body(PROFIT_BOOKED)])
+    assert (long.symbol, long.side, long.is_open, long.exit_comment) == (
+        "DEEPAKNTR",
+        "buy",
+        False,
+        "Book Profit",
+    )  # stop < entry < target
+    assert long.exit_at == datetime(2026, 10, 19, 13, 0, tzinfo=IST)
+    [short] = parse_calls([body({**PROFIT_BOOKED, "StopLoss": "1595.00", "TargetPrice": "1540.00"})])  # target < entry < stop
+    assert (short.side, short.is_open) == ("sell", False)
+    assert parse_calls([body({**PROFIT_BOOKED, "TargetPrice": "1570.00"})]) == []  # the prices do not settle a direction
+    assert parse_calls([body({**PROFIT_BOOKED, "CallType": "book profit "})])[0].side == "buy"  # case and spaces do not matter
+
+
+def test_an_ended_book_profit_call_never_adds_a_stock_or_blocks_one():
+    from src.data.house_calls import intraday_buys, open_sells, swing_buys
+
+    calls = parse_calls(
+        [body(PROFIT_BOOKED, {**PROFIT_BOOKED, "ScripCode": "XYZ", "StopLoss": "1595.00", "TargetPrice": "1540.00"})]
+    )
+    assert (
+        len(calls) == 2 and intraday_buys(calls, date(2026, 10, 19)) == [] and swing_buys(calls) == [] and open_sells(calls) == {}
+    )
+
+
+def test_a_stock_we_hold_gets_a_warning_when_the_house_books_profit_on_it(tmp_path):
+    calls = [
+        parse_calls(
+            [
+                body(
+                    {
+                        **PROFIT_BOOKED,
+                        "ScripCode": "TCS",
+                        "ExitDtm": (datetime.now(IST) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S"),
+                    }
+                )
+            ]
+        )
+    ]
+    pipe, _, _, told = swing(tmp_path, calls, held={"TCS": 10}, watchlist=("TCS",))
+    pipe.run_once()
+    warnings = [m for m in told if m.startswith("HOUSE WARNING")]
+    assert len(warnings) == 1 and "TCS" in warnings[0] and "Book Profit" in warnings[0]
+    undated = [parse_calls([body({**PROFIT_BOOKED, "ScripCode": "TCS", "ExitDtm": "1900-01-01T00:00:00"})])]
+    (tmp_path / "q").mkdir()
+    quiet_pipe, _, _, quiet = swing(tmp_path / "q", undated, held={"TCS": 10}, watchlist=("TCS",))
+    quiet_pipe.run_once()
+    # closed with no exit time: it cannot be dated, so it is not reported
+    assert not [m for m in quiet if m.startswith("HOUSE WARNING")]

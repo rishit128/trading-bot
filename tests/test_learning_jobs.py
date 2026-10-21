@@ -153,3 +153,106 @@ def test_a_failing_report_never_reaches_the_trading_loop_and_is_retried(tmp_path
     report = WeeklyLearningReport(sessions, Control(sessions), broken, today=lambda: date(2026, 10, 5))
     assert report() is None
     assert Control(sessions).get_flag("learning_report_week") is None  # not marked as sent: next cycle tries again
+
+
+# ---------------------------------------------------------------- A3 the critic, A2 the models, A1 the rule-only replay
+def judged_group(n, net, *, vetoed, offset=0):
+    """n rule-BUY observations, two per date over n/2 dates, on distinct stocks: the AI passed (vetoed by the critic) or bought."""
+    from src.learning.mistakes import Judged
+
+    return [
+        Judged(
+            f"{'V' if vetoed else 'U'}{offset + i}",
+            f"2026-09-{1 + i % (n // 2):02d}",
+            "HOLD" if vetoed else "BUY",
+            0.7,
+            "agents",
+            "[reflection vetoed] too stretched" if vetoed else "fine",
+            net + 0.001 * (i % 3),
+            False,
+            rule_action="BUY",
+        )
+        for i in range(n)
+    ]
+
+
+def critic(vetoed_net, upheld_net, vetoes=60):
+    from src.learning.jobs import critic_lines
+
+    judged = judged_group(vetoes, vetoed_net, vetoed=True) + judged_group(60, upheld_net, vetoed=False)
+    return "\n".join(critic_lines(judged, horizon=1, min_samples=5))
+
+
+def test_the_critic_is_judged_only_after_sixty_matured_vetoes():
+    assert "not yet" in critic(-0.05, 0.02, vetoes=40) and "have 40" in critic(-0.05, 0.02, vetoes=40)
+
+
+def test_the_critic_stays_on_when_the_vetoed_buys_did_worse_and_can_go_off_when_they_did_not():
+    assert "keep LLM_REFLECT on" in critic(vetoed_net=-0.05, upheld_net=0.02)
+    assert "LLM_REFLECT can be switched off" in critic(vetoed_net=0.03, upheld_net=0.02)  # the vetoed ones did better
+    assert "LLM_REFLECT can be switched off" in critic(vetoed_net=0.02, upheld_net=0.02)  # no worse: the critic added nothing
+
+
+def test_the_share_of_calls_answered_by_fallback_models_is_counted_over_the_window(tmp_path):
+    from datetime import datetime, timezone
+
+    from src.learning.jobs import fallback_share
+
+    sessions = make_session_factory(f"sqlite:///{tmp_path / 'fb.db'}")
+    with sessions() as s:
+        for model in ["primary"] * 6 + ["backup"] * 3 + [None]:
+            s.add(DecisionRecord(symbol="X", price=1.0, final_action="HOLD", final_confidence=0.5, reasoning="r",
+                                 risk_approved=False, risk_quantity=0, risk_reason="x", raw_model=model))  # fmt: skip
+        s.commit()
+    assert fallback_share(sessions, "primary", datetime(2020, 1, 1, tzinfo=timezone.utc)) == (3 / 9, 9)  # no model = not counted
+    assert fallback_share(sessions, "primary", datetime(2100, 1, 1, tzinfo=timezone.utc)) == (0.0, 0)
+
+
+def test_fallback_models_answering_too_much_alert_once_a_day(tmp_path):
+    from src.learning.jobs import FALLBACK_ALERTED, WeeklyLearningReport
+
+    sessions = make_session_factory(f"sqlite:///{tmp_path / 'fa.db'}")
+    with sessions() as s:
+        for model in ["primary"] * 12 + ["backup"] * 8:  # 40% fallback over 20 calls
+            s.add(DecisionRecord(symbol="X", price=1.0, final_action="HOLD", final_confidence=0.5, reasoning="r",
+                                 risk_approved=False, risk_quantity=0, risk_reason="x", raw_model=model))  # fmt: skip
+        s.commit()
+    told, today = [], [date.today()]
+    run = WeeklyLearningReport(sessions, Control(sessions), told.append, today=lambda: today[0], primary_model="primary")
+    run._check_fallbacks()
+    run._check_fallbacks()
+    assert len(told) == 1 and "40%" in told[0] and "AI MODEL ALERT" in told[0]  # the second call the same day is silent
+    today[0] = date.fromordinal(today[0].toordinal() + 1)
+    run._check_fallbacks()
+    assert len(told) == 2 and Control(sessions).get_flag(FALLBACK_ALERTED) == today[0].isoformat()
+
+
+def test_no_fallback_alert_for_few_calls_or_a_healthy_mix(tmp_path):
+    from src.learning.jobs import WeeklyLearningReport
+
+    def alerts(models, name):
+        sessions = make_session_factory(f"sqlite:///{tmp_path / name}")
+        with sessions() as s:
+            for model in models:
+                s.add(DecisionRecord(symbol="X", price=1.0, final_action="HOLD", final_confidence=0.5, reasoning="r",
+                                     risk_approved=False, risk_quantity=0, risk_reason="x", raw_model=model))  # fmt: skip
+            s.commit()
+        told: list = []
+        WeeklyLearningReport(sessions, Control(sessions), told.append, primary_model="primary")._check_fallbacks()
+        return told
+
+    assert alerts(["backup"] * 10, "few.db") == []  # all fallback, but only 10 calls: too few to judge
+    assert alerts(["primary"] * 17 + ["backup"] * 3, "ok.db") == []  # 15% is under the 20% limit
+
+
+def test_the_weekly_report_goes_out_even_when_the_rule_only_replay_cannot_be_built(tmp_path):
+    from src.learning.jobs import WeeklyLearningReport
+
+    def broken():
+        raise RuntimeError("no database")
+
+    sessions = make_session_factory(f"sqlite:///{tmp_path / 'r.db'}")
+    told: list = []
+    run = WeeklyLearningReport(sessions, Control(sessions), told.append, make_reserve=broken, primary_model="primary")
+    assert run() is not None and len(told) == 1
+    assert "Rule-only replay: unavailable" in told[0] and "Critic verdict" in told[0] and "Fallback models answered" in told[0]

@@ -142,6 +142,9 @@ class Settings:
     intraday_max_position_pct: float = 0.20
     intraday_max_daily_loss_pct: float = 0.02  # an intraday account takes no new entries once down this much on the day
     intraday_max_positions: int = 5
+    intraday_calls_act: bool = (
+        False  # the breakout engine trades on the broker's calls (False: it only notes them on its signals)
+    )
     intraday_universe: tuple = ()  # explicit symbols; empty = the Nifty 100 file if saved, else Yahoo's top 100 by traded value
     intraday_archive: bool = True  # save every finished session's 5-minute bars (Yahoo keeps only ~60 sessions)
     heartbeat_file: str = ""  # where the loop records each cycle's outcome for the container health check; empty = off
@@ -225,6 +228,7 @@ def load_settings() -> Settings:
         intraday_max_position_pct=_float("INTRADAY_MAX_POSITION_PCT", 0.20),
         intraday_max_daily_loss_pct=_float("INTRADAY_MAX_DAILY_LOSS_PCT", 0.02),
         intraday_max_positions=int(_float("INTRADAY_MAX_POSITIONS", 5)),
+        intraday_calls_act=os.getenv("INTRADAY_CALLS_ACT", "false").strip().lower() == "true",
         intraday_universe=tuple(x.strip().upper() for x in os.getenv("INTRADAY_UNIVERSE", "").split(",") if x.strip()),
         intraday_archive=os.getenv("INTRADAY_ARCHIVE", "true").strip().lower() != "false",
         heartbeat_file=os.getenv("HEARTBEAT_FILE", "").strip(),

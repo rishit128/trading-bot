@@ -20,15 +20,17 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import timezone
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 from sqlalchemy import select
 
 from src.database import DecisionRecord, HoldoutMark, PaperAccountRecord
 from src.engine.costs import SLIPPAGE, india_delivery_fees
 from src.engine.enums import Action
-from src.research.backtest import RiskLimits, SignalTable, simulate
+from src.learning.mistakes import rule_action_from_snapshot
+from src.research.backtest import BuySource, RiskLimits, SignalTable, simulate
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +43,30 @@ def _bar_date(created_at) -> Optional[pd.Timestamp]:
         return None
     dt = created_at if created_at.tzinfo is None else created_at.astimezone(timezone.utc)
     return pd.Timestamp(dt.year, dt.month, dt.day)
+
+
+def _picks_by_day(
+    picks: List[Tuple[DecisionRecord, float]], bars: Dict[str, pd.DataFrame]
+) -> Dict[pd.Timestamp, List[Tuple[str, float]]]:
+    """Per decision day, the (symbol, confidence) picks in the order recorded, one per stock per day, for stocks that have a
+    bar on that day."""
+    out: Dict[pd.Timestamp, List[Tuple[str, float]]] = {}
+    seen = set()
+    for d, confidence in picks:
+        day = _bar_date(d.created_at)
+        key = (d.symbol, day)
+        if day is None or key in seen or d.symbol not in bars or day not in bars[d.symbol].index:
+            continue
+        seen.add(key)
+        out.setdefault(day, []).append((d.symbol, confidence))
+    return out
+
+
+def _buy_source(queue: Dict[pd.Timestamp, List[Tuple[str, float]]]) -> BuySource:
+    def source(day: pd.Timestamp, _portfolio) -> List[Tuple[str, float]]:
+        return queue.get(day, [])
+
+    return source
 
 
 @dataclass
@@ -63,22 +89,21 @@ class HoldoutReserve:
             self.initial_cash = float(paper.initial_cash) if paper else 100_000.0
         self.starting_cash = float(self.initial_cash)
 
-    def _approved_buys(self) -> list:
+    def _decisions(self) -> list:
         with self.sessions() as s:
-            decisions = s.scalars(select(DecisionRecord).order_by(DecisionRecord.id)).all()
+            return list(s.scalars(select(DecisionRecord).order_by(DecisionRecord.id)))
+
+    def _approved_buys(self, decisions: Optional[list] = None) -> list:
         return [
-            d for d in decisions if d.final_action == Action.BUY and d.risk_approved and d.final_confidence >= self.min_confidence
+            d
+            for d in (self._decisions() if decisions is None else decisions)
+            if d.final_action == Action.BUY and d.risk_approved and d.final_confidence >= self.min_confidence
         ]
 
-    def mark(self) -> dict:
-        """Replay every stored approved BUY through the simulator and append one HoldoutMark.
-
-        Deterministic: given the same decisions and bars, repeated calls yield the same values (only the
-        timestamped ledger rows accumulate). Never reads or writes the paper account's orders/positions."""
-        buys = self._approved_buys()
+    def _load_bars(self, symbols: Iterable[str]) -> Dict[str, pd.DataFrame]:
+        """Daily bars for each symbol that can be priced; one that cannot is left out, never guessed."""
         bars: Dict[str, pd.DataFrame] = {}
-        signals: SignalTable = {}
-        for sym in sorted({d.symbol for d in buys}):
+        for sym in sorted(set(symbols)):
             try:
                 df = self.fetch_bars(sym)
             except Exception as e:
@@ -86,6 +111,16 @@ class HoldoutReserve:
                 df = None
             if df is not None and not df.empty:
                 bars[sym] = df
+        return bars
+
+    def mark(self) -> dict:
+        """Replay every stored approved BUY through the simulator and append one HoldoutMark.
+
+        Deterministic: given the same decisions and bars, repeated calls yield the same values (only the
+        timestamped ledger rows accumulate). Never reads or writes the paper account's orders/positions."""
+        buys = self._approved_buys()
+        bars = self._load_bars(d.symbol for d in buys)
+        signals: SignalTable = {}
         for d in buys:
             day = _bar_date(d.created_at)
             if day is None or d.symbol not in bars or day not in bars[d.symbol].index:
@@ -131,6 +166,51 @@ class HoldoutReserve:
             "decisions": len(signals),
             "closed_trades": trades,
             "open_positions": open_positions,
+        }
+
+    def compare(self) -> Optional[dict]:
+        """The AI against the plain entry rule, on the same stocks and days: the recorded AI-approved BUYs replayed beside
+        every BUY the rule alone would have made (the first per stock per day, at full confidence), through the same
+        simulator, risk limits, costs and best-first order (the order the bot analysed them in). Nothing is written. None
+        when there is nothing to replay; else each arm's final equity and trades, and the paired difference of their daily
+        returns (AI minus rule): its mean, t statistic and number of days."""
+        decisions = self._decisions()
+        arms = {
+            "ai": [(d, d.final_confidence) for d in self._approved_buys(decisions)],
+            "rule": [(d, 1.0) for d in decisions if (d.rule_action or rule_action_from_snapshot(d.snapshot_json)) == Action.BUY],
+        }
+        bars = self._load_bars(d.symbol for picks in arms.values() for d, _ in picks)
+        queues = {name: _picks_by_day(picks, bars) for name, picks in arms.items()}
+        start = min((day for queue in queues.values() for day in queue), default=None)
+        if start is None:
+            return None
+        limits = RiskLimits(min_confidence=self.min_confidence)
+        results = {
+            name: simulate(
+                bars,
+                {},
+                limits,
+                start_equity=self.starting_cash,
+                fees=self.fees,
+                slippage=self.slippage,
+                cash_yield=self.cash_yield,
+                cash_yield_from=start,
+                buy_source=_buy_source(queue),
+            )
+            for name, queue in queues.items()
+        }
+        daily = {name: r.equity.pct_change().dropna().loc[start:] for name, r in results.items()}  # from the first decision on
+        diff = (daily["ai"] - daily["rule"]).dropna()
+        spread = float(diff.std()) if len(diff) > 1 else 0.0
+        return {
+            **{
+                f"{name}_{key}": value
+                for name, r in results.items()
+                for key, value in (("equity", float(r.equity.iloc[-1])), ("trades", len(r.trades)))
+            },
+            "days": len(diff),
+            "mean_diff": float(diff.mean()) if len(diff) else 0.0,
+            "t": float(diff.mean() / (spread / np.sqrt(len(diff)))) if spread > 1e-12 else 0.0,
         }
 
     def report(self, limit: int = 10) -> dict:

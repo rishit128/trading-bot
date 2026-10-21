@@ -10,10 +10,11 @@ next session's first cycle: this account is meant to be flat every night. With a
 The rule is pluggable (`find_setup`): the opening-range breakout by default, or gap-and-go (`strategy.find_gap_setup`),
 each in its own paper account and database, run side by side by `run_together`.
 
-Broker research calls (`house_calls_fn`, the breakout engine only): the stocks of today's open Intraday BUY calls are added
-to the scan, where they must pass the same breakout rule, and a stock the broker has an open SELL call on is not bought
-(recorded as SKIPPED). Each recorded signal notes the open call on its stock, if any (`house_call`). Without a fresh
-snapshot of calls (no portal session that day) the engine runs exactly as before."""
+Broker research calls (`house_calls_fn`, the breakout engine only): each recorded signal notes the open call on its stock,
+if any (`house_call`). With `act_on_calls` the stocks of today's open Intraday BUY calls are also added to the scan, where
+they must pass the same breakout rule, and a stock the broker has an open SELL call on is not bought (recorded as SKIPPED);
+without it the calls are recorded only, which keeps the breakout engine a clean control. Without a fresh snapshot of calls
+(no portal session that day) the engine runs exactly as before."""
 
 import json
 import logging
@@ -67,6 +68,7 @@ class IntradayEngine:
     record_capped: bool = False  # also record (as SKIPPED) the signals the position limit left out: the gap experiments
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     house_calls_fn: Optional[Callable[[], List[HouseCall]]] = None  # broker research calls; None = not used
+    act_on_calls: bool = True  # False: the calls are only noted on each signal (the live setting is INTRADAY_CALLS_ACT)
     step_deadline: Optional[dtime] = None  # the first step of the day at or after 09:30 must start by this, else an alert
     _day: Optional[str] = field(default=None, init=False)
     _calls: List[HouseCall] = field(default_factory=list, init=False)  # this cycle's snapshot of house calls
@@ -214,8 +216,8 @@ class IntradayEngine:
     def _scan(self, pf, local: datetime) -> str:
         """Look for a fresh breakout in every stock not already held or traded today, and try to buy each one found."""
         self._calls = self._read_house_calls()
-        added = [s for s in intraday_buys(self._calls, local.date()) if s not in self.universe]
-        sells = open_sells(self._calls)
+        added = [s for s in intraday_buys(self._calls, local.date()) if s not in self.universe] if self.act_on_calls else []
+        sells = open_sells(self._calls) if self.act_on_calls else {}
         candidates = [s for s in self.universe + added if s not in pf.positions and s not in self._done_today]
         try:
             bars = self.fetch_bars(candidates)
@@ -440,9 +442,8 @@ class IntradayEngine:
         gone = [s for s in self._known if s not in pf.positions]
         if not gone:
             return
-        recent: Dict[str, dict] = {}
-        for trade in self.broker.trade_history(limit=20):  # newest first: keep each symbol's latest trade, not an older one
-            recent.setdefault(trade["symbol"], trade)
+        # trade_history is newest first; reversed, the last trade per symbol in the comprehension is the newest
+        recent = {t["symbol"]: t for t in reversed(self.broker.trade_history(limit=20))}
         for s in gone:
             t = recent.get(s)
             if t:

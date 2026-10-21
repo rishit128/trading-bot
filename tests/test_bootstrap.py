@@ -125,7 +125,7 @@ def swing(monkeypatch):
     monkeypatch.setattr(bootstrap, "build_pipeline", lambda live: calls.append(("build", live)) or pipeline)
     monkeypatch.setattr(bootstrap, "preflight", lambda p: [])
     monkeypatch.setattr(bootstrap, "build_outcome_labeller", lambda p: lambda: calls.append(("label",)))
-    monkeypatch.setattr(bootstrap, "WeeklyLearningReport", lambda *a: lambda: calls.append(("weekly",)))
+    monkeypatch.setattr(bootstrap, "WeeklyLearningReport", lambda *a, **k: lambda: calls.append(("weekly",)))
     monkeypatch.setattr(bootstrap, "build_holdout_callback", lambda p: lambda: calls.append(("holdout",)))
     monkeypatch.setattr(bootstrap, "run_cycle", lambda p: calls.append(("cycle",)))
     monkeypatch.setattr(bootstrap, "run_loop", fake_loop)

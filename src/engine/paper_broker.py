@@ -341,20 +341,19 @@ class PaperBroker:
             exit_price: Optional[float] = None
             reason: Optional[str] = None
             exit_bar: Optional[datetime] = None
+            sell = 1 - self.slippage  # a stop is a stop-market order: it fills like any market sell; a target is a limit
             for start, bar in bars.iterrows():
                 if bar["Open"] <= stop:
-                    exit_price, reason = float(bar["Open"]), "STOP"
+                    exit_price, reason = float(bar["Open"]) * sell, "STOP"
                 elif bar["Open"] >= target:
                     exit_price, reason = float(bar["Open"]), "TARGET"
                 elif bar["Low"] <= stop:
-                    exit_price, reason = stop, "STOP"
+                    exit_price, reason = stop * sell, "STOP"
                 elif bar["High"] >= target:
                     exit_price, reason = target, "TARGET"
                 if reason:
                     exit_bar = _utc(pd.Timestamp(cast(datetime, start)).to_pydatetime()).astimezone(timezone.utc)
                     break
-            if reason == "STOP" and exit_price is not None:
-                exit_price *= 1 - self.slippage  # a stop is a stop-market order: it fills like any market sell
             if reason is not None and exit_price is not None:
                 log.info("paper %s hit on %s at %.2f", reason, symbol, exit_price)
                 self._close(symbol, qty, exit_price, reason, exit_bar)

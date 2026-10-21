@@ -119,3 +119,48 @@ def test_a_decision_whose_day_has_no_matching_bar_earns_no_fictitious_cash_yield
     reserve = HoldoutReserve(sessions, _fetch, initial_cash=100_000.0, cash_yield=0.20)  # a generous rate to expose it
     m = reserve.mark()
     assert m["decisions"] == 0 and m["closed_trades"] == 0 and m["equity"] == 100_000.0
+
+
+def test_compare_replays_the_rules_buys_beside_the_ais_through_the_same_simulator():
+    """A: both bought it (a winner). D: the rule said BUY, the AI passed (also a winner). C: the rule said HOLD, the AI bought
+    (flat). So the rule-only arm holds A and D, the AI arm A and C; nothing is written."""
+    import json
+
+    sessions = _factory()
+    snapshot = json.dumps({"price": 100.0, "ma50": 98.0, "ma200": 95.0, "rsi": 60.0})  # the rule's BUY, recomputed
+    when = datetime(2026, 9, 10, 5, 30, tzinfo=timezone.utc)
+
+    def add(s, symbol, action, approved, rule_action, snap=None):
+        s.add(
+            DecisionRecord(
+                symbol=symbol,
+                price=100.0,
+                final_action=action,
+                final_confidence=0.8,
+                reasoning="r",
+                risk_approved=approved,
+                risk_quantity=10,
+                risk_reason="ok",
+                created_at=when,
+                rule_action=rule_action,
+                snapshot_json=snap,
+            )
+        )
+
+    with sessions() as s:
+        s.add(PaperAccountRecord(id=1, cash=100_000.0, initial_cash=100_000.0))
+        add(s, "A", "BUY", True, "BUY")
+        add(s, "A", "BUY", True, "BUY")  # a second decision on the same stock and day is one pick
+        add(s, "D", "HOLD", False, None, snapshot)  # an older row: the rule's verdict comes from its snapshot
+        add(s, "C", "BUY", True, "HOLD")
+        s.commit()
+    reserve = HoldoutReserve(sessions, lambda sym: _bars("A" if sym in ("A", "D") else sym))
+    result = reserve.compare()
+    assert result["rule_trades"] == 2 and result["ai_trades"] == 1  # A and D closed at the target; the AI's other buy is flat
+    assert result["rule_equity"] > result["ai_equity"] > 100_000.0
+    assert (
+        1 < result["days"] <= 21 and result["mean_diff"] < 0
+    )  # only the days from the first decision (10 Sep) on count  # the AI trails the rule here, by the winner it passed on
+    with sessions() as s:
+        assert list(s.scalars(select(HoldoutMark))) == []  # a comparison writes nothing
+    assert HoldoutReserve(_factory(), _fetch, initial_cash=100_000.0).compare() is None  # nothing decided: nothing to compare
