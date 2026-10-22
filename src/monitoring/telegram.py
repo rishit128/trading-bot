@@ -19,7 +19,8 @@ HELP = (
     "/status - equity, cash, mode\n/positions - open positions with profit/loss\n/history - closed trades\n/pnl - profit/loss by day and week, both accounts\n"
     "/intraday - intraday account and open positions\n/intraday_history - intraday closed trades\n"
     "/gapgo - gap-and-go paper account\n/gapgo_history - gap-and-go closed trades\n"
-    "/gaponly - gap-only control account\n/gaponly_history - gap-only closed trades\n/pause - stop placing orders\n/resume - allow orders again\n"
+    "/gaponly - gap-only control account\n/gaponly_history - gap-only closed trades\n"
+    "/news - news-catalyst paper account\n/news_history - news-catalyst closed trades\n/pause - stop placing orders\n/resume - allow orders again\n"
     "/rebase - reset the peak-equity baseline (clears a drawdown halt)"
 )
 
@@ -235,6 +236,7 @@ def handle_command(
     extra: Optional[Mapping[str, Tuple[str, Callable[[], str]]]] = None,
     gapgo=None,
     gaponly=None,
+    news=None,
 ) -> str:
     """Turn a command text into a reply, applying pause/resume/rebase as needed. `extra` adds commands:
     {"/name": (help line, handler)}. Anything unknown (or a command this broker cannot answer) gets the help text."""
@@ -254,7 +256,7 @@ def handle_command(
         handlers["/pnl"] = lambda: format_pnl(
             broker.trade_history(), intraday.trade_history() if isinstance(intraday, ListsTrades) else None, cur
         )
-    for name, account in (("intraday", intraday), ("gapgo", gapgo), ("gaponly", gaponly)):
+    for name, account in (("intraday", intraday), ("gapgo", gapgo), ("gaponly", gaponly), ("news", news)):
         if account is not None:
             handlers[f"/{name}"] = partial(_account_view, account, name, False, cur)
             handlers[f"/{name}_history"] = partial(_account_view, account, name, True, cur)
@@ -264,12 +266,17 @@ def handle_command(
 
 
 def _account_view(account, name: str, history: bool, cur: str) -> str:
-    """/intraday, /gapgo and /gaponly (equity, cash, open positions) and their _history variants (closed trades)."""
+    """/intraday, /gapgo, /gaponly and /news (equity, cash, open positions) and their _history variants (closed trades)."""
     if history:
         return format_history(account.trade_history(), cur)
     p, held = account.valuation()  # a view: settles nothing and writes nothing (the engines own the database)
     day = f"{(p.equity / p.start_of_day_equity - 1):+.2%} today" if p.start_of_day_equity else "n/a"
-    title = {"intraday": "INTRADAY account", "gapgo": "GAP-AND-GO paper account", "gaponly": "GAP-ONLY control account"}[name]
+    title = {
+        "intraday": "INTRADAY account",
+        "gapgo": "GAP-AND-GO paper account",
+        "gaponly": "GAP-ONLY control account",
+        "news": "NEWS-CATALYST paper account",
+    }[name]
     head = f"⚡ <b>{title}</b>\n💰 Equity <b>{cur}{p.equity:,.2f}</b> ({day})\n💵 Cash {cur}{p.cash:,.2f}\n\n"
     return Html(head + format_positions(held, cur))
 

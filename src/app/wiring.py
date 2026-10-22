@@ -59,6 +59,11 @@ def gapgo_db_url() -> str:
     return os.getenv("GAPGO_DATABASE_URL", "sqlite:///gapgo.db")
 
 
+def news_db_url() -> str:
+    """The news-catalyst paper strategy's own account and its filing log (src.news)."""
+    return os.getenv("NEWS_DATABASE_URL", "sqlite:///news.db")
+
+
 def gaponly_db_url() -> str:
     """The gap-only control's own account (gap-and-go without waiting for the breakout)."""
     return os.getenv("GAPONLY_DATABASE_URL", "sqlite:///gaponly.db")

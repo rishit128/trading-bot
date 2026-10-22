@@ -2,6 +2,7 @@
 re-exported here, so `from src.database import DecisionRecord, make_session_factory` is all a caller writes."""
 
 from src.database.models import (
+    AngelBarRecord,
     Base,
     ControlFlag,
     DecisionRecord,
@@ -12,6 +13,7 @@ from src.database.models import (
     IntradayBarRecord,
     IntradaySignalRecord,
     IntradayUniverseRecord,
+    NewsFilingRecord,
     OrderRecord,
     OutcomeRecord,
     PaperAccountRecord,
@@ -21,6 +23,7 @@ from src.database.models import (
 from src.database.session import make_session_factory
 
 __all__ = [
+    "AngelBarRecord",
     "Base",
     "ControlFlag",
     "DecisionRecord",
@@ -31,6 +34,7 @@ __all__ = [
     "IntradayBarRecord",
     "IntradaySignalRecord",
     "IntradayUniverseRecord",
+    "NewsFilingRecord",
     "OrderRecord",
     "OutcomeRecord",
     "PaperAccountRecord",

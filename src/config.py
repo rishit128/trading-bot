@@ -8,10 +8,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# Free OpenRouter models that answered on 2026-10-21 (nvidia/nemotron-3-super-120b-a12b:free and nex-agi/nex-n2.5-pro:free,
+# the earlier defaults, are gone). Tried after OPENROUTER_MODEL and OPENROUTER_FALLBACK_MODEL.
 DEFAULT_MODELS = (
-    "nvidia/nemotron-3-super-120b-a12b:free",
     "dots-studio/dots-3-note-preview:free",
-    "nex-agi/nex-n2.5-pro:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/nemotron-3.5-lightning:free",
+)
+# The models that read exchange filings for the news engine, best first. Chosen on 2026-10-21 by labelling 11 real filings
+# (results, orders, routine) against answers checked by hand: nemotron-3-ultra 11/11 in three runs out of three; dots-3-note
+# 9-10/11 (it takes the standalone profit over the consolidated one); nemotron-3.5-lightning 9/11 with every number right.
+# Unusable that day: minimax-m3.1-flash (errors on every call), gemma-4 (Google's free quota always exhausted), inkling (403).
+NEWS_MODELS = (
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "dots-studio/dots-3-note-preview:free",
+    "nvidia/nemotron-3.5-lightning:free",
 )
 
 
@@ -145,6 +156,12 @@ class Settings:
     intraday_calls_act: bool = (
         False  # the breakout engine trades on the broker's calls (False: it only notes them on its signals)
     )
+    angel_stream: bool = True  # stream Angel One's live prices into angel_bars (src.data.angel); needs the ANGEL_* keys
+    angel_bars: str = (
+        "auto"  # who serves the intraday engines' bars: auto (Angel One after 5 sessions that agreed with Yahoo) | on | off
+    )
+    news_engine: bool = True  # the news-catalyst paper account (src.news) runs beside the other intraday engines
+    news_models: tuple = NEWS_MODELS  # the models that label filings for it, best first (NEWS_MODELS, comma list)
     intraday_universe: tuple = ()  # explicit symbols; empty = the Nifty 100 file if saved, else Yahoo's top 100 by traded value
     intraday_archive: bool = True  # save every finished session's 5-minute bars (Yahoo keeps only ~60 sessions)
     heartbeat_file: str = ""  # where the loop records each cycle's outcome for the container health check; empty = off
@@ -229,6 +246,10 @@ def load_settings() -> Settings:
         intraday_max_daily_loss_pct=_float("INTRADAY_MAX_DAILY_LOSS_PCT", 0.02),
         intraday_max_positions=int(_float("INTRADAY_MAX_POSITIONS", 5)),
         intraday_calls_act=os.getenv("INTRADAY_CALLS_ACT", "false").strip().lower() == "true",
+        angel_stream=os.getenv("ANGEL_STREAM", "true").strip().lower() != "false",
+        angel_bars=os.getenv("ANGEL_BARS", "auto").strip().lower(),
+        news_engine=os.getenv("NEWS_ENGINE", "true").strip().lower() != "false",
+        news_models=tuple(m.strip() for m in (os.getenv("NEWS_MODELS") or "").split(",") if m.strip()) or NEWS_MODELS,
         intraday_universe=tuple(x.strip().upper() for x in os.getenv("INTRADAY_UNIVERSE", "").split(",") if x.strip()),
         intraday_archive=os.getenv("INTRADAY_ARCHIVE", "true").strip().lower() != "false",
         heartbeat_file=os.getenv("HEARTBEAT_FILE", "").strip(),

@@ -114,7 +114,8 @@ class BarArchive:
             if (symbol, day) in stored:
                 continue
             stamps = pd.DatetimeIndex(frame.index).tz_convert("UTC").to_pydatetime()
-            prices = zip(stamps, frame["Open"], frame["High"], frame["Low"], frame["Close"], frame["Volume"])
+            sources = frame["Source"] if "Source" in frame else ["yahoo"] * len(frame)  # which feed each bar came from
+            prices = zip(stamps, frame["Open"], frame["High"], frame["Low"], frame["Close"], frame["Volume"], sources)
             rows += [
                 {
                     "symbol": symbol,
@@ -125,8 +126,9 @@ class BarArchive:
                     "low": float(low),
                     "close": float(c),
                     "volume": float(v),
+                    "source": source,
                 }
-                for ts, o, h, low, c, v in prices
+                for ts, o, h, low, c, v, source in prices
             ]
         if rows:
             with self.sessions() as s:

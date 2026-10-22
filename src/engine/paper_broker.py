@@ -204,6 +204,16 @@ class PaperBroker:
                 s.commit()
             return Fill(f"paper-{uuid.uuid4().hex[:12]}", OrderStatus.FILLED, qty, fill_price, quote_bar)
 
+    def move_stop(self, symbol: str, stop: float) -> bool:
+        """Raise a held position's stop (a trailing or break-even rule); never lowers it. False when nothing changed."""
+        with self._lock, self.sessions() as s:
+            pos = s.get(PaperPositionRecord, symbol)
+            if pos is None or stop <= pos.stop:
+                return False
+            pos.stop = round(stop, 2)
+            s.commit()
+            return True
+
     def sell(self, symbol: str, qty: int) -> Fill:
         """Simulated market sell of some or all of a position."""
         with self._lock:

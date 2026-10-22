@@ -114,16 +114,20 @@ def test_a_present_but_unreadable_index_file_raises_nsefilemissing_not_a_raw_par
 
 
 def test_no_code_downloads_from_nse_websites():
-    """NSE's and NSE Indices' terms prohibit automated collection: no module may call their sites (comments may name them)."""
+    """NSE's and NSE Indices' terms prohibit automated collection: no module may call their sites (comments may name them).
+    One exception, decided by the owner on 2026-10-21: NSE's announcements RSS feed, which NSE publishes for subscribers,
+    read only when BSE's feed fails (src/data/filings.py). Any other NSE address, there or anywhere, still fails."""
     import re
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent
-    pattern = re.compile(r"https?://[^\s\"']*(nseindia\.com|niftyindices\.com)")
+    pattern = re.compile(r"https?://[^\s\"']*(nseindia\.com|niftyindices\.com)[^\s\"']*")
+    allowed = {("src/data/filings.py", "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml")}
     offenders = [
-        str(p.relative_to(root))
+        (str(p.relative_to(root)), m.group(0))
         for p in [root / "main.py", *(root / "src").rglob("*.py"), *(root / "scripts").rglob("*.py")]
-        if pattern.search(p.read_text(encoding="utf-8"))
+        for m in pattern.finditer(p.read_text(encoding="utf-8"))
+        if (str(p.relative_to(root)), m.group(0)) not in allowed
     ]
     assert offenders == []
 

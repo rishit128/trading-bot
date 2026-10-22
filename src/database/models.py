@@ -278,6 +278,54 @@ class IntradayUniverseRecord(Base):
     system_version: Mapped[str] = mapped_column(String(16), default="")
 
 
+class NewsFilingRecord(Base):
+    """One exchange filing seen by the news-catalyst engine (src.news), traded or not: where it came from (headline and link
+    only, never the filing's text), the AI's reading of it, whether the entry rule fired and why not, and how the price moved
+    afterwards. Kept for every filing on a stock of the news universe, so two questions can be answered apart: does the AI
+    read news correctly (label against the later move), and does the entry rule add anything (fired against not fired)."""
+
+    __tablename__ = "news_filings"
+    __table_args__ = (Index("ux_news_filings_key", "key", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)  # when the watcher first saw it
+    key: Mapped[str] = mapped_column(String(200))  # the filing's link: one row per filing, whichever feed showed it first
+    source: Mapped[str] = mapped_column(String(8))  # BSE | NSE
+    symbol: Mapped[str] = mapped_column(String(16), index=True)  # NSE symbol
+    company: Mapped[str] = mapped_column(String(120))
+    subject: Mapped[str] = mapped_column(Text)  # the feed's one-line description
+    link: Mapped[str] = mapped_column(Text)
+    published: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # the feed's timestamp (UTC)
+    session: Mapped[str] = mapped_column(String(10), index=True)  # the first session it can be traded in (YYYY-MM-DD, IST)
+    # The AI's label: status ROUTINE (dropped by subject before any AI call) | LABELLED | FAILED (no answer, ignored)
+    label_status: Mapped[str] = mapped_column(String(10), default="PENDING")
+    event_type: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    direction: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)  # up | down | none
+    surprise: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # large | moderate | none | unclear
+    numbers_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # the key numbers, as read from the filing
+    ai_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ai_model: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    material: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    material_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The entry rule: WAITING (not decided yet) | FIRED | NO; why not; and the trade's outcome when it fired
+    rule_status: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    rule_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    entry_kind: Mapped[Optional[str]] = mapped_column(String(2), nullable=True)  # A (overnight) | B (during the session)
+    # The move after the filing, measured after the session's close: from `ref_price` (the last price before the filing; the
+    # previous close for a filing made outside market hours) to the price 5, 30 and 120 minutes later and at the close
+    # (for an overnight filing those minutes are counted from the open).
+    ref_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    move_5m: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    move_30m: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    move_120m: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    move_close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Angel One, record only: the live price when the watcher first saw the filing, and (for a rule that fired) the bid-ask
+    # spread, circuit limits and F&O positioning at the entry, as JSON.
+    seen_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    context_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    system_version: Mapped[str] = mapped_column(String(16), default="")
+
+
 class IntradayBarRecord(Base):
     """One stored 5-minute bar. Yahoo serves only the last ~60 sessions of 5-minute data, so the intraday engine saves every
     finished session here: the archive grows a session a day and is the only way to test an intraday rule on more than
@@ -293,6 +341,24 @@ class IntradayBarRecord(Base):
     low: Mapped[float] = mapped_column(Float)
     close: Mapped[float] = mapped_column(Float)
     volume: Mapped[float] = mapped_column(Float)
+    source: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)  # "angel" | "yahoo"; empty on bars saved before it
+
+
+class AngelBarRecord(Base):
+    """A 5-minute bar built from Angel One's live stream (src.data.angel), kept beside the Yahoo archive (`intraday_bars`) so the
+    two sources can be compared. `seen_at` is when the bar was complete here, to measure how soon after its close."""
+
+    __tablename__ = "angel_bars"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)  # the bar's start time (UTC)
+    day: Mapped[str] = mapped_column(String(10), index=True)
+    open: Mapped[float] = mapped_column(Float)
+    high: Mapped[float] = mapped_column(Float)
+    low: Mapped[float] = mapped_column(Float)
+    close: Mapped[float] = mapped_column(Float)
+    volume: Mapped[float] = mapped_column(Float)
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class HouseCallRecord(Base):

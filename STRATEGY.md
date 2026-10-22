@@ -43,6 +43,8 @@ after 30 days (`DRAWDOWN_PAUSE_DAYS`) or at once with `/rebase`; `/pause` blocks
 on the 09:30 close: gap-and-go's control). Sized by risk (0.5% of equity per trade) under a 20% position cap, 5 positions,
 no new entries after a 2% loss on the day (`INTRADAY_MAX_DAILY_LOSS_PCT`). Stepped gap-only, gap-and-go, ORB (from the next deploy: see "Paper-trading reliability"). ORB also scans
 the day's open Intraday buy calls and skips a stock the broker has an open SELL call on.
+A **fourth** intraday account since 2026-10-21, **news-catalyst** (Rs 25,000, paper, `NEWS_ENGINE`): trades only stocks with a
+material exchange filing read by the AI, by fixed rules; see "News-catalyst intraday (News-Catalyst v1)" at the end.
 
 **Evidence status.** No part of this is a proven edge. The 10-year studies found the entry rule adds little over holding the
 stocks; only the exits and the sizing were shown to matter; the intraday rules lose after costs in every test. The AI is
@@ -900,3 +902,69 @@ pre-declared criteria. **No rule passes, and the round-1/2 results are now firm,
   Both point to the same thing: news-driven gaps continue, ordinary ones do not.
 - **A look-ahead fixed before these runs:** the results flag had counted results dated on the trading day itself, which often come out
   after 15:30. It now counts only the previous session's date. The earlier "+0.33%, 262 trades" slice included that leak.
+
+## News-catalyst intraday (News-Catalyst v1, started 2026-10-21)
+**Why.** On 8 years of 5-minute history every price-pattern rule lost to the ~0.21% round-trip cost; the only setups whose gross
+move beat it were sessions right after a company's results (above). This strategy trades only stocks with real news, read
+from the exchange filing itself. Untested: it starts as a paper account and is judged by the gates below.
+
+**Rules, fixed before any result (src/news/strategy.py, labels.py; NEWS_VERSION news-v1).**
+- *Universe:* the 200 most liquid of the intraday universe, price >= Rs 100, >= Rs 50 crore traded a day (20-session average),
+  refreshed daily. The 2%/5% price-band filter cannot be applied (free data has no bands); as an approximation no entry is
+  taken 9% or more above the previous close.
+- *News:* BSE's official "Latest Corporate Announcements" RSS feed, NSE's announcements feed only when BSE's fails, polled
+  every 60 s from 08:30 to 15:00 and every 5 minutes otherwise (BSE's feed restarts each night, so evening results must be
+  read the same evening). Headlines and links are stored; a filing's PDF is read once for the AI and never stored. No
+  filing, no trade: news articles never trigger one (the Economic Times context feed of the plan is not wired in yet).
+  Both exchanges refuse a client that names itself a bot, so the reader sends a browser's agent string.
+- *AI (reads, never decides):* routine subjects (trading window, transcripts, record dates...) are dropped without a call.
+  For the rest the AI returns event type, direction, surprise and the figures copied from the filing; the code computes the
+  profit change. Material: results with profit >= 20% up or down on the SAME quarter a year earlier, direction agreeing,
+  surprise large or moderate; an order >= 2% of market value; anything else only with a large surprise. Unreadable = unclear
+  = ignored. Two prompt traps found on the first live filings (2026-10-21) and fixed before the start: the AI compared with
+  the previous quarter instead of a year earlier (ADANIGREEN: read -24%, really +16%), and mixed consolidated and standalone
+  figures (ETERNAL). The prompt now names the year-ago column and requires both figures from one table.
+  *Model (2026-10-21):* the configured free models were tested on 11 real filings against answers checked by hand (results
+  with the year-ago column first or second, consolidated against standalone, order wins, routine): nvidia/nemotron-3-ultra
+  -550b got all 11 right in three runs out of three and leads `NEWS_MODELS`; dots-3-note (9-10/11, it prefers the
+  standalone profit) and nemotron-3.5-lightning (9/11) follow as fallbacks. The test also showed the ratings, not the
+  numbers, caused most wrong decisions (a +74% profit rated "no surprise"), so the prompt now defines direction and
+  surprise by fixed measures (results: sign of the change; 40%+ large, 20-40% moderate). Not every company puts the
+  previous quarter second (GALLANTT puts the year-ago quarter there), so the AI must read the column dates and give no
+  figures when it cannot.
+- *Entries (long only):* A, overnight news: gap +2% to +8%, first 5-minute close above the 09:15-09:30 high from 09:30 to
+  10:30 while above VWAP, stop at the 09:15-09:30 low, skipped if that stop is over 3% or under 0.6% away. B, news filed
+  09:15-14:30: the first bar closing after the filing closes >= 0.75% above the price at filing on >= 3x that time of day's
+  normal volume (its average on the earlier sessions of the 5-day download); stop at the filing price. C: no longs when
+  under 40% of the universe is above its previous close at 09:30. Negative news is logged, not traded.
+- *Exits and risk:* stop to the entry after +1R, no target, out at 15:15. 0.5% of equity at risk per trade, <= 20% and
+  >= Rs 3,000 per position, <= 3 trades a day, one per stock, no new entries after a 1.5% loss on the day.
+- *Logging:* every filing on a universe stock (news_filings in news.db): the AI's label, whether the rule fired and why not,
+  and the move 5, 30, 120 minutes after it and at the close (overnight filings: from the previous close, minutes from the open).
+
+**Gates before any real money.** 1) Six weeks of filings: >= 100 material ones whose move in the predicted direction beats
+0.21% on average by the close with t >= 2 (by date), plus 30 AI labels checked by hand: `scripts/news_report.py`.
+2) The history check of rule A was planned on the Angel One data, which was deleted on 2026-10-21: it needs that data again
+(or a licensed source) before it can run. 3) 60 sessions of this paper account landing within what 1 and 2 predict. Only
+then real money, small. Expect 0 to 3 signals a day and many days with none; the hoped-for edge is about +0.25% a trade.
+
+
+### Angel One as the live data source for the intraday and news engines (2026-10-22; no strategy change)
+
+Angel One's feed is the broker's own: faster than Yahoo, and it carries what Yahoo cannot (price limits, the order book, live
+streaming). It serves intraday bars only; Yahoo keeps swing history, fundamentals, results dates, splits, indices and VIX, and is
+the automatic backup. The stream and bars are `src/data/angel.py`, `angel_bars.py`; circuit, spread and F&O data `angel_quotes.py`.
+
+- **Stream and shadow run.** At 08:45 the intraday process logs in (TOTP), subscribes the intraday universe and builds 5-minute
+  bars from the ticks into `angel_bars`, beside the Yahoo archive. A failed login or dropped stream is retried with growing
+  waits and sent to Telegram once a day; after a mid-session reconnect the day's earlier bars are fetched from the candles.
+- **When the engines use it.** `ANGEL_BARS=auto` (default): from the first session after at least 5 sessions on which Angel One
+  had 95%+ of Yahoo's bars and closes within 0.1% on 95%+ of them (`scripts/angel_report.py`). While the stream is down, or for a
+  stock without Angel One bars, the engine reads Yahoo. Each archived bar records its source. Earlier sessions (for the gap rules
+  and rule B's time-of-day volume) come from Angel One's own bars, so a bar and its average share a source.
+- **News account.** The live price is stored when a filing is first seen. At a fired entry: no buy within 1% of the upper circuit
+  (new rule; the old 9%-above-previous-close test remains as the fallback), and the bid-ask spread, circuit limits and the
+  futures put-call ratio and open-interest build-up (F&O stocks) are stored on the filing as record-only context. Stocks Angel One lists
+  only as BE (trade-to-trade) leave the news universe. An Angel One error never stops an entry.
+- **Not done.** Paper fills still use the fixed 0.05% slippage: using the measured spread needs the owner's approval, after the
+  logged spreads have been read. No orders are ever sent to Angel One.

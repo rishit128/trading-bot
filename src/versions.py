@@ -28,6 +28,9 @@ INTRADAY_VERSION = "orb-v3"
 GAPGO_VERSION = "gapgo-v1"
 # The gap-only paper control (its own account): the same gap, bought on the 09:30 close with no breakout.
 GAPONLY_VERSION = "gaponly-v1"
+# The news-catalyst paper strategy (its own account): a material exchange filing, read by the AI, traded long by fixed
+# rules (src.news.strategy).
+NEWS_VERSION = "news-v1"
 
 VERSIONS = {
     "feature": FEATURE_VERSION,

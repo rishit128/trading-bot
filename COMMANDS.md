@@ -27,6 +27,7 @@ days: the bots only trade while it is running. Settings are in `/home/rishit/tra
 /intraday             intraday (breakout) account and open positions; /intraday_history for its closed trades
 /gapgo                gap-and-go paper account and open positions; /gapgo_history for its closed trades
 /gaponly              gap-only control account (gap-and-go without the breakout); /gaponly_history
+/news                 news-catalyst paper account (exchange filings read by the AI); /news_history
 /portfolio            read your real Integrated account (read-only); it will ask for the OTP here
 /research_start       each morning (~9:00): log in once (OTP here); the broker's research calls are read every 10 min until 15:35
                       and used by the swing bot (extra candidates + a line in the AI prompt) and the breakout engine
@@ -53,7 +54,7 @@ python main.py                    # one dry-run cycle: scan + AI + risk check, r
 python main.py --loop 30          # repeat every 30 min while NSE is open (dry run)
 python main.py --loop 30 --live   # same, but trade in the built-in paper simulator
 python main.py --intraday [--live]     # intraday breakout engine, its own paper account
-python main.py --intraday-report       # the intraday accounts (breakout, gap-and-go, gap-only): positions, history, status
+python main.py --intraday-report       # the intraday accounts (breakout, gap-and-go, gap-only, news): positions, history, status
 ```
 **Don't start a second copy while the background bots are running** — they'd fight over the same Telegram bot and databases.
 
@@ -95,6 +96,8 @@ scripts/paper_report.py                    # full history, both accounts: every 
 scripts/analyze_mistakes.py                # judges every analysed stock against what then happened
 scripts/intraday_archive.py status|refresh|import-cache   # the archive of 5-minute bars (fills itself while the engine runs)
 scripts/compare_gap.py                     # gap-and-go vs its gap-only control: per trade, date by date, costs, drawdown
+scripts/angel_report.py [--days 5]          # Angel One vs Yahoo bars per session (timing, agreement) and the clean-session count
+scripts/news_report.py [--sample 30]       # news-catalyst gate 1: do material filings move as the AI said? + labels to check by hand
 scripts/intraday_data_quality.py           # the intraday engines' live data vs the final bars (verdict after 10 sessions)
 scripts/backtest_intraday.py [--strategy gapgo|gaponly] [--bars-file F]   # the LIVE engine replayed over stored sessions (PAPER_INITIAL_CASH by default: Rs 25,000)
 scripts/audit_intraday.py                  # does the intraday rule beat a random entry? which filters add anything?

@@ -24,6 +24,7 @@ from src.app.wiring import (
     intraday_db_url,
     load_settings_or_exit,
     make_paper_broker,
+    news_db_url,
     open_house_calls,
 )
 from src.config import Settings
@@ -62,11 +63,12 @@ def build_pipeline(live: bool) -> TradingPipeline:
     control = Control(sessions)
     kit = build_market_wiring(settings, sessions)
     house_calls = open_house_calls()
-    intraday_broker = gapgo_broker = gaponly_broker = None
+    intraday_broker = gapgo_broker = gaponly_broker = news_broker = None
     try:
         intraday_broker = make_paper_broker(settings, intraday_db_url(), fees=intraday_fees)
         gapgo_broker = make_paper_broker(settings, gapgo_db_url(), fees=intraday_fees)
         gaponly_broker = make_paper_broker(settings, gaponly_db_url(), fees=intraday_fees)
+        news_broker = make_paper_broker(settings, news_db_url(), fees=intraday_fees)
     except Exception as e:  # the intraday views are optional; never stop the swing bot for them
         print(f"intraday status commands unavailable: {type(e).__name__}")
     notify = None
@@ -85,7 +87,7 @@ def build_pipeline(live: bool) -> TradingPipeline:
             token,
             chat_id,
             lambda text: handle_command(
-                text, control, kit.broker, settings, intraday_broker, extra, gapgo_broker, gaponly_broker
+                text, control, kit.broker, settings, intraday_broker, extra, gapgo_broker, gaponly_broker, news_broker
             ),
             intercept=portfolio.inbox.offer,
         ).start()
@@ -215,6 +217,7 @@ def show_intraday_reports(settings: Settings) -> None:
         ("INTRADAY: opening-range breakout", intraday_db_url()),
         ("GAP-AND-GO (paper experiment)", gapgo_db_url()),
         ("GAP-ONLY (paper control for gap-and-go)", gaponly_db_url()),
+        ("NEWS-CATALYST (paper experiment)", news_db_url()),
     ):
         print("=" * 60)
         print(title)

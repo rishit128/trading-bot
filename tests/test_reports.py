@@ -109,11 +109,13 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     monkeypatch.setenv("INTRADAY_MAX_POSITIONS", "4")
     monkeypatch.setenv("INTRADAY_MAX_DAILY_LOSS_PCT", "0.03")
     monkeypatch.setattr(intraday_cli, "Notifier", lambda token, chat: SimpleNamespace(send=alerts.append))
+    news = SimpleNamespace(label="NEWS")  # built and tested on its own (tests/test_news.py): no feeds or AI here
+    monkeypatch.setattr(intraday_cli, "build_news_engine", lambda settings, universe, bars, notify, live, angel=None: news)
     monkeypatch.setattr(
         intraday_cli,
         "run_together",
         lambda engines, heartbeat=None: started.update(
-            engine=engines[2], gapgo=engines[1], gaponly=engines[0], count=len(engines), heartbeat=heartbeat
+            engine=engines[2], gapgo=engines[1], gaponly=engines[0], news=engines[3], count=len(engines), heartbeat=heartbeat
         ),
     )
     intraday_cli.run_intraday(live=True)
@@ -128,10 +130,11 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     assert "3 stocks [Nifty 100 (hand-saved NSE file)]" in out and "PAPER ORDERS" in out and "no edge" in out
     assert "risk 1.00% of equity per trade" in out and "cap 25%" in out
     assert alerts == [
-        f"[{name}] started: PAPER ORDERS (separate intraday accounts)" for name in ("GAP-ONLY", "GAP-GO", "INTRADAY")
-    ]  # stepped in this order: gap-only trades on one step and must not wait behind the others
+        f"[{name}] started: PAPER ORDERS (separate intraday accounts)" for name in ("GAP-ONLY", "GAP-GO", "INTRADAY", "NEWS")
+    ]  # stepped in this order: gap-only trades on one step and must not wait behind the others; the news engine goes last
     # breakouts past the position limit are recorded too, for all three engines
-    assert started["count"] == 3 and started["engine"].record_capped is True
+    assert started["count"] == 4 and started["engine"].record_capped is True and started["news"] is news
+    assert "news-catalyst (own account)" in out
     # gap-and-go: the same universe and sizing, its own rule, label, version and entry window, and no second archive
     from src.intraday.strategy import (
         GAP_ENTRY_UNTIL,
@@ -191,3 +194,11 @@ def test_the_intraday_loop_gets_a_heartbeat_only_when_one_is_configured(monkeypa
     monkeypatch.setenv("HEARTBEAT_FILE", "/data/heartbeat-intraday")
     intraday_cli.run_intraday(live=True)
     assert str(seen["heartbeat"].path).replace("\\", "/") == "/data/heartbeat-intraday"
+
+
+def test_the_news_engine_is_not_started_without_an_ai_model_key(monkeypatch, capsys):
+    from src.config import Settings
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert intraday_cli.build_news_engine(Settings(news_models=("m",)), [], None, None, True) is None
+    assert "needs OPENROUTER_API_KEY" in capsys.readouterr().out
