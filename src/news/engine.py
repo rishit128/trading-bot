@@ -248,8 +248,9 @@ class NewsEngine(IntradayEngine):
             return None
         context = self._entry_context(row.symbol, setup.signal_price)
         self._store_context(row, context)
-        if context.skip:
-            self._verdict(row.id, ns.NO, context.skip, kind, check.ref_price)
+        why = context.skip or ns.book_veto(context.note)
+        if why:
+            self._verdict(row.id, ns.NO, why, kind, check.ref_price)
             return None
         outcome, fill = self._enter(setup, pf.equity, cash)
         self._verdict(row.id, ns.FIRED, f"{check.reason}; {outcome}", kind, check.ref_price)

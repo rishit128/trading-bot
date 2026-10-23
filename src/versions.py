@@ -30,7 +30,7 @@ GAPGO_VERSION = "gapgo-v1"
 GAPONLY_VERSION = "gaponly-v1"
 # The news-catalyst paper strategy (its own account): a material exchange filing, read by the AI, traded long by fixed
 # rules (src.news.strategy).
-NEWS_VERSION = "news-v1"
+NEWS_VERSION = "news-v2"  # v2: gap floor 0% (was +2%) and a live order-book veto
 
 VERSIONS = {
     "feature": FEATURE_VERSION,

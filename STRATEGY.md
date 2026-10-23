@@ -908,7 +908,7 @@ pre-declared criteria. **No rule passes, and the round-1/2 results are now firm,
 move beat it were sessions right after a company's results (above). This strategy trades only stocks with real news, read
 from the exchange filing itself. Untested: it starts as a paper account and is judged by the gates below.
 
-**Rules, fixed before any result (src/news/strategy.py, labels.py; NEWS_VERSION news-v1).**
+**Rules, fixed before any result (src/news/strategy.py, labels.py; NEWS_VERSION news-v2 from 2026-10-23, news-v1 before).**
 - *Universe:* the 200 most liquid of the intraday universe, price >= Rs 100, >= Rs 50 crore traded a day (20-session average),
   refreshed daily. The 2%/5% price-band filter cannot be applied (free data has no bands); as an approximation no entry is
   taken 9% or more above the previous close.
@@ -932,11 +932,12 @@ from the exchange filing itself. Untested: it starts as a paper account and is j
   surprise by fixed measures (results: sign of the change; 40%+ large, 20-40% moderate). Not every company puts the
   previous quarter second (GALLANTT puts the year-ago quarter there), so the AI must read the column dates and give no
   figures when it cannot.
-- *Entries (long only):* A, overnight news: gap +2% to +8%, first 5-minute close above the 09:15-09:30 high from 09:30 to
+- *Entries (long only):* A, overnight news: gap 0% to +8% (v2, 2026-10-23; v1 needed +2%), first 5-minute close above the 09:15-09:30 high from 09:30 to
   10:30 while above VWAP, stop at the 09:15-09:30 low, skipped if that stop is over 3% or under 0.6% away. B, news filed
   09:15-14:30: the first bar closing after the filing closes >= 0.75% above the price at filing on >= 3x that time of day's
   normal volume (its average on the earlier sessions of the 5-day download); stop at the filing price. C: no longs when
-  under 40% of the universe is above its previous close at 09:30. Negative news is logged, not traded.
+  under 40% of the universe is above its previous close at 09:30. D (v2): skip when Angel One's live quote shows a spread over 0.5% or a seller-heavy order book (balance under -0.3). Negative news is logged, not traded.
+  *v2 (2026-10-23, the user's call to trade on the price reaction, not only record it):* the +2% gap floor kept the account out of every filing in a falling market (28 material filings, 0 fired; WELCORP gapped +0.2% and faded 5%). The breakout over the opening range, VWAP and the breadth filter already require the price to confirm, so the floor is now 0%. The thresholds in D are not tested; filings carry the system version, so v1 and v2 results are kept apart in `news_report.py`.
 - *Exits and risk:* stop to the entry after +1R, no target, out at 15:15. 0.5% of equity at risk per trade, <= 20% and
   >= Rs 3,000 per position, <= 3 trades a day, one per stock, no new entries after a 1.5% loss on the day.
 - *Logging:* every filing on a universe stock (news_filings in news.db): the AI's label, whether the rule fired and why not,

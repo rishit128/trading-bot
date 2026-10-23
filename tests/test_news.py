@@ -162,8 +162,8 @@ def test_rule_a_buys_the_first_close_above_the_range_and_vwap_with_the_range_low
     assert check.setup.stop == pytest.approx(102.9) and check.setup.bar_time.time().strftime("%H:%M") == "09:30"
 
 
-def test_rule_a_refuses_a_gap_outside_2_to_8_percent_and_waits_for_the_breakout():
-    assert ns.rule_a("AAA", today(history([101.0, 101.2, 101.1, 102.0])), 100.0).reason.startswith("gap +1.0%")
+def test_rule_a_refuses_a_gap_outside_0_to_8_percent_and_waits_for_the_breakout():
+    assert ns.rule_a("AAA", today(history([99.0, 99.2, 99.1, 99.5])), 100.0).reason.startswith("gap -1.0%")
     assert ns.rule_a("AAA", today(history([109.0, 109.2, 109.1, 110.0])), 100.0).status == ns.NO
     waiting = ns.rule_a("AAA", today(history([103.0, 103.5, 103.3, 103.4])), 100.0)
     assert waiting.status == ns.WAITING  # 09:30 bar closed inside the range: may still break out before 10:30
@@ -495,3 +495,10 @@ def test_the_news_models_default_to_the_benchmarked_list_and_can_be_set(monkeypa
 def test_an_order_win_is_judged_on_its_size_even_when_the_surprise_is_unclear():
     order = label(event_type="order_win", surprise="unclear", order_value_crore=300)
     assert materiality(order, lambda: 10_000.0).material
+
+
+def test_book_veto_refuses_a_wide_spread_or_a_seller_heavy_book_and_passes_when_there_is_no_quote():
+    assert "spread" in ns.book_veto({"spread_pct": 0.8, "book_imbalance": 0.5})
+    assert "sellers" in ns.book_veto({"spread_pct": 0.05, "book_imbalance": -0.6})
+    assert ns.book_veto({"spread_pct": 0.05, "book_imbalance": 0.1}) is None
+    assert ns.book_veto({}) is None

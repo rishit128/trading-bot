@@ -1,13 +1,15 @@
 """News-Catalyst v1 entry rules (long only), on completed 5-minute bars. Pure functions, no I/O. Fixed before any test and
 NOT tuned; the plan is written up in STRATEGY.md ("News-catalyst intraday", 2026-10-21).
 
-  A. News filed overnight (after the previous session's close, before 09:15): the stock gaps up 2% to 8%; buy on the first
+  A. News filed overnight (after the previous session's close, before 09:15): the stock opens flat or up, at most 8%; buy on the first
      5-minute close above the 09:15-09:30 high, from 09:30 to 10:30, while above VWAP. Stop at the 09:15-09:30 low; skip the
      trade when that stop is more than 3% or less than 0.6% below the entry.
   B. News filed during the session (09:15 to 14:30): the first 5-minute bar that closes after the filing must close at least
      0.75% above the price at filing time (the last close before it), on at least 3x that stock's normal volume for that
      time of day (its average at the same bar time on the earlier sessions in hand). Stop at the price at filing time.
   C. Market filter: no long trades when fewer than 40% of the universe trade above their previous close at 09:30.
+  D. (v2) Live order book at the entry: skip when the bid-ask spread is above 0.5% or sellers dominate the book (balance
+     below -0.3). Applied only when Angel One's quote is available.
 Every position: stop to the entry once the trade is up by its original risk (1R); no target; closed at 15:15.
 
 The plan also skips stocks with a 2% or 5% price band and stocks within 1% of the upper circuit. Free data does not give a
@@ -26,7 +28,9 @@ from src.data.india import IST
 from src.engine.ports import BAR
 from src.intraday import strategy as st
 
-GAP_MIN, GAP_MAX = 0.02, 0.08
+GAP_MIN, GAP_MAX = 0.0, 0.08  # v2: v1 needed +2%; the breakout and VWAP below now carry the price confirmation
+SPREAD_MAX = 0.5  # percent: the live bid-ask spread above which the entry costs too much
+BOOK_MIN = -0.3  # order book balance (+1 all buyers): below it sellers dominate and the entry is skipped
 A_FROM, A_UNTIL = dtime(9, 30), dtime(10, 30)  # A's signal bars start in [A_FROM, A_UNTIL)
 STOP_MIN, STOP_MAX = 0.006, 0.03  # A's stop distance as a fraction of the entry
 B_FROM, B_UNTIL = dtime(9, 15), dtime(14, 30)  # B's filings, inclusive
@@ -72,7 +76,7 @@ def rule_a(symbol: str, day: pd.DataFrame, prev_close: Optional[float]) -> RuleC
         return RuleCheck(NO, "opening range incomplete (missing or late first bars)")
     gap = float(day["Open"].iloc[0]) / prev_close - 1
     if not GAP_MIN <= gap <= GAP_MAX:
-        return RuleCheck(NO, f"gap {gap:+.1%} (needs +{GAP_MIN:.0%} to +{GAP_MAX:.0%})", ref_price=prev_close)
+        return RuleCheck(NO, f"gap {gap:+.1%} (needs {GAP_MIN:+.0%} to {GAP_MAX:+.0%})", ref_price=prev_close)
     high, low = day["High"].to_numpy(float), day["Low"].to_numpy(float)
     close, volume = day["Close"].to_numpy(float), day["Volume"].to_numpy(float)
     range_high, range_low = float(high[: st.RANGE_BARS].max()), float(low[: st.RANGE_BARS].min())
@@ -97,6 +101,16 @@ def rule_a(symbol: str, day: pd.DataFrame, prev_close: Optional[float]) -> RuleC
         return RuleCheck(NO, "within 1% of a 10% price band", ref_price=prev_close)
     setup = _setup(symbol, day, i, range_low, range_high, range_low, float(ratio[i]))
     return RuleCheck(FIRED, f"gap {gap:+.1%}, close above {range_high:,.2f} and VWAP", setup, prev_close)
+
+
+def book_veto(note: Dict[str, object]) -> Optional[str]:
+    """Rule D: why Angel One's live quote refuses the entry (a wide spread or a seller-heavy book), else None."""
+    spread, balance = note.get("spread_pct"), note.get("book_imbalance")
+    if isinstance(spread, (int, float)) and spread > SPREAD_MAX:
+        return f"spread {spread:.2f}% (max {SPREAD_MAX}%)"
+    if isinstance(balance, (int, float)) and balance < BOOK_MIN:
+        return f"order book {balance:+.2f}: sellers dominate (needs {BOOK_MIN:+.1f} or better)"
+    return None
 
 
 def normal_volume(history: pd.DataFrame, bar_start: pd.Timestamp, today) -> Optional[float]:
