@@ -995,3 +995,25 @@ The AI's job that is measured to read something price cannot show is the filings
 whether its labels predict the move, down-news included). It now also reads the filings of the stocks the swing account HOLDS
 and warns on Telegram when one is material ("YOU HOLD THIS"). That is an alert only: no order follows. If the report shows the
 AI's "down" labels do predict falls, a veto on swing buys and a warning-to-sell on holdings is the next step, tested the same way.
+
+## Swing improvements after the first live month: pre-declared test, none passed (2026-10-23)
+Why: the account lost about 9% in four weeks (21 live positions: stocks with 3%+ daily volatility lost 12.7% on average,
+the calmer ones 2.1%; 13 of 21 buys went in on two days in a falling market; positions of Rs 760-1,900 pay a fixed Rs 16
+per sale). `scripts/research_swing_v2.py`: the live configuration (Rs 25,000, 15 x 8.8%, 15% stop, MA200 exit) on all NSE
+stocks, 10 years (2,601 stocks, survivorship bias in every row), one change per variant, gate fixed beforehand (Sharpe +0.05
+and drawdown no worse and return within 10% of base in the full period AND the last 3 years, both halves positive).
+
+| Variant | Full: return / Sharpe / maxDD | Last 3y: return / Sharpe / maxDD |
+|---|---|---|
+| base (live) | +349% / 0.93 / -44.7% | +177% / 1.09 / -38.7% |
+| volatility cap 3% | +404% / 1.12 / -33.9% | +106% / 0.66 / -36.9% |
+| inverse-volatility size | +390% / 1.02 / -45.4% | +169% / 1.04 / -33.8% |
+| max 2 buys a day | +245% / 0.80 / -50.6% | +267% / 1.36 / -32.7% |
+| max 1 buy a day | +410% / 1.01 / -44.6% | +166% / 0.97 / -37.1% |
+| half size while Nifty < 200-day | +374% / 1.02 / -42.9% | +158% / 1.08 / -34.5% |
+| 8 positions x 11% | +366% / 0.96 / -44.3% | +209% / 1.26 / -36.3% |
+
+All variants FAILED the gate. The volatility and pacing results flip sign between the windows (noise, not an effect);
+8 x 11% is the nearest (better in both windows on return, Sharpe and drawdown, fees 33% -> 20% of capital over the run),
+missing only the Sharpe margin in the full period (+0.03 against +0.05). The base itself lost 27% in 2018 and 23% in 2025,
+so a -9% month is inside what this strategy does.
