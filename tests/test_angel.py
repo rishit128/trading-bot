@@ -280,3 +280,11 @@ def test_the_price_feed_uses_a_recent_angel_bar_and_falls_back_to_yahoo(tmp_path
 def test_the_trust_check_follows_the_mode(tmp_path):
     sessions = make_session_factory(f"sqlite:///{tmp_path / 'x.db'}")
     assert AngelTrust(sessions, "on")() and not AngelTrust(sessions, "off")() and not AngelTrust(sessions, "auto")()
+
+
+def test_the_login_is_announced_once_a_day(tmp_path):
+    sent = []
+    stream = AngelStream(make_session_factory(f"sqlite:///{tmp_path / 'x.db'}"), ["SBIN"], {"SBIN": "3045"}, notify=sent.append)
+    stream._tell_login()
+    stream._tell_login()
+    assert len(sent) == 1 and "logged in" in sent[0] and "1 stocks" in sent[0]

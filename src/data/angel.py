@@ -187,6 +187,7 @@ class AngelStream:
         self.last_tick = 0.0
         self.backfilled = False
         self.alerted_on = ""
+        self.logged_in_on = ""
 
     def ready(self) -> bool:
         """True while ticks are arriving and the day's earlier bars are in."""
@@ -293,10 +294,18 @@ class AngelStream:
             self.alerted_on = today
             self.notify(f"[ANGEL] ⚠️ {text}; Yahoo is used instead")
 
+    def _tell_login(self) -> None:
+        """Telegram: the day's first successful login (a dropped stream that reconnects is not announced again)."""
+        today = datetime.now(IST).date().isoformat()
+        if self.notify and self.logged_in_on != today:
+            self.logged_in_on = today
+            self.notify(f"[ANGEL] ✅ logged in at {datetime.now(IST):%H:%M}; streaming {len(self.symbol_of)} stocks")
+
     def _stream(self) -> None:
         from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 
         self.api, jwt, feed = login()
+        self._tell_login()
         ws = SmartWebSocketV2(jwt, os.environ["ANGEL_API_KEY"], os.environ["ANGEL_CLIENT_CODE"], feed)
         ws.on_open = lambda _w: ws.subscribe("bars", QUOTE_MODE, [{"exchangeType": 1, "tokens": list(self.symbol_of)}])
         ws.on_data = self.on_tick
