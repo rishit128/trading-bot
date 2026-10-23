@@ -1017,3 +1017,21 @@ All variants FAILED the gate. The volatility and pacing results flip sign betwee
 8 x 11% is the nearest (better in both windows on return, Sharpe and drawdown, fees 33% -> 20% of capital over the run),
 missing only the Sharpe margin in the full period (+0.03 against +0.05). The base itself lost 27% in 2018 and 23% in 2025,
 so a -9% month is inside what this strategy does.
+
+**Position-count sweep (`scripts/research_swing_v3.py`, same day, pre-declared gate: Sharpe at least the 15-position run's in both windows, drawdown no worse, and both neighbouring counts also at least as good): no count passed.** n positions of 0.90/n each:
+
+| n | Full: return / Sharpe / maxDD | Last 3y: return / Sharpe / maxDD |
+|---|---|---|
+| 5 | +233% / 0.72 / -52% | +202% / 1.09 / -42% |
+| 8 | +297% / 0.87 / -42% | +211% / 1.19 / -40% |
+| 10 | +250% / 0.82 / -51% | +176% / 1.28 / -35% |
+| 12 | +325% / 0.95 / -46% | +185% / 1.16 / -38% |
+| 15 | +274% / 0.89 / -42% | +186% / 1.17 / -34% |
+| 20 | +270% / 0.89 / -47% | +105% / 0.76 / -36% |
+
+No ordering holds across both windows; neighbouring counts differ by 50-75 points of return with no trend, and the live
+setting (15 slots x 8.8% under the 90% cap, in practice about 10 positions) gave +349% in the first test against +250% for
+10 x 9% here, so differences of this size are path noise. Only the extremes are consistently worse (5-6 positions: deeper
+drawdowns; 20: fee drag, fees 14% of capital in 3 years). The position count stays as it is. Conclusion for the swing
+account: its parameters sit on a flat, noisy plateau, so more parameter changes will not help; a gain has to come from
+information the prices do not contain (results dates, delivery, F&O positioning), tested forward.
