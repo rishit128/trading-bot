@@ -62,12 +62,23 @@ def load_tokens(cache_dir: Path) -> Dict[str, str]:
     return tokens
 
 
+def _silence_sdk_log() -> None:
+    """The SDK logs every failed request with its headers, which carry the login token and key, to the console and to
+    logs/<date>/app.log; our own code logs the failures without them."""
+    import logzero
+
+    logzero.logger.setLevel(logging.CRITICAL)
+    for handler in list(logzero.logger.handlers):
+        logzero.logger.removeHandler(handler)
+
+
 def login():
     """A logged-in SmartConnect session (raises when the broker refuses)."""
     import pyotp
     from SmartApi import SmartConnect
 
     api = SmartConnect(api_key=os.environ["ANGEL_API_KEY"])
+    _silence_sdk_log()
     totp = pyotp.TOTP(os.environ["ANGEL_TOTP_SECRET"]).now()
     reply = api.generateSession(os.environ["ANGEL_CLIENT_CODE"], os.environ["ANGEL_PIN"], totp)
     if not reply.get("status"):
