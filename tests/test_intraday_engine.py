@@ -1,12 +1,14 @@
 """The intraday engine against the real paper broker: entries, exits from the 5-minute bars, the position cap, the daily-loss
 halt, a restart mid-day, what it records and refuses, stale positions, and archiving each finished session."""
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
 from sqlalchemy import select
 
+from src.data.angel_quotes import EntryContext
 from src.data.india import IST
 from src.database import IntradaySignalRecord, IntradayUniverseRecord, PaperTradeRecord, make_session_factory
 from src.engine.paper_broker import PaperBroker
@@ -70,6 +72,28 @@ def test_engine_sizes_from_its_own_risk_and_cap_settings(tmp_path):
     eng, broker, *_ = engine(tmp_path, bars, at(9, 45), risk_pct=0.0005, db="risk.db")
     eng.step()  # a tighter risk budget: Rs 500 / Rs 1.60
     assert broker.holdings()[0]["qty"] == int(1_000_000 * 0.0005 / 1.6)
+
+
+def test_angel_one_context_is_recorded_with_the_entry_and_a_buy_near_the_upper_circuit_is_refused(tmp_path):
+    bars = {"AAA": make_bars(BREAKOUT, volumes=VOLS)}
+    eng, broker, *_ = engine(tmp_path, bars, at(9, 45), context_fn=lambda s, p: EntryContext(None, {"spread_pct": 0.02}))
+    eng.step()
+    [row] = signals(broker)
+    assert row.outcome == "ENTERED" and json.loads(row.context_json) == {"spread_pct": 0.02}
+    eng, broker, *_ = engine(
+        tmp_path, bars, at(9, 45), db="c.db", context_fn=lambda s, p: EntryContext("near the upper circuit", {})
+    )
+    assert "entered 0" in eng.step() and broker.holdings() == []
+    [row] = signals(broker)
+    assert (row.outcome, row.reason) == ("SKIPPED", "near the upper circuit")
+
+
+def test_a_failing_angel_one_quote_does_not_stop_the_entry(tmp_path):
+    def broken(symbol, price):
+        raise RuntimeError("rate limit")
+
+    eng, broker, *_ = engine(tmp_path, {"AAA": make_bars(BREAKOUT, volumes=VOLS)}, at(9, 45), context_fn=broken)
+    assert "entered 1" in eng.step()
 
 
 def test_dry_run_only_reports_the_signal(tmp_path):

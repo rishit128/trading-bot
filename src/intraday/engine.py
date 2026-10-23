@@ -27,6 +27,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 import pandas as pd
 from sqlalchemy import func, select
 
+from src.data.angel_quotes import EntryContext
 from src.data.house_calls import HouseCall, intraday_buys, open_sells
 from src.data.india import IST
 from src.data.intraday_bars import BarArchive, fetch_today_bars, session_rows
@@ -69,8 +70,12 @@ class IntradayEngine:
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     house_calls_fn: Optional[Callable[[], List[HouseCall]]] = None  # broker research calls; None = not used
     act_on_calls: bool = True  # False: the calls are only noted on each signal (the live setting is INTRADAY_CALLS_ACT)
+    # Angel One's circuit limits, spread, order book and F&O data for a symbol about to be bought; a buy within 1% of the upper
+    # circuit is refused and the rest is stored on the signal. None, or an error from it, leaves the entry on Yahoo's data alone.
+    context_fn: Optional[Callable[[str, float], EntryContext]] = None
     step_deadline: Optional[dtime] = None  # the first step of the day at or after 09:30 must start by this, else an alert
     _day: Optional[str] = field(default=None, init=False)
+    _contexts: Dict[str, EntryContext] = field(default_factory=dict, init=False)  # today's, by symbol: one request per entry
     _calls: List[HouseCall] = field(default_factory=list, init=False)  # this cycle's snapshot of house calls
     _done_today: Set[str] = field(default_factory=set, init=False)
     _known: Dict[str, int] = field(default_factory=dict, init=False)
@@ -102,6 +107,7 @@ class IntradayEngine:
         Positions already open (a restart) are remembered before anything is settled, so their exits are still reported."""
         _, held = self.broker.valuation()
         self._day, self._done_today, self._known = today, set(), {h["symbol"]: h["qty"] for h in held}
+        self._contexts = {}
         self._with_data = 0
         for t in self.broker.trade_history():
             if t["closed_at"].astimezone(IST).date().isoformat() == today:
@@ -128,6 +134,18 @@ class IntradayEngine:
         except Exception:
             log.exception("could not record %s", type(row).__name__)
 
+    def _entry_context(self, symbol: str, price: float) -> EntryContext:
+        """Angel One's checks for buying `symbol` now (see `context_fn`); asked once per symbol a day."""
+        if self.context_fn is None:
+            return EntryContext()
+        if symbol not in self._contexts:
+            try:
+                self._contexts[symbol] = self.context_fn(symbol, price)
+            except Exception as e:
+                log.warning("Angel One quote failed for %s (%s: %s); entering without it", symbol, type(e).__name__, e)
+                self._contexts[symbol] = EntryContext()
+        return self._contexts[symbol]
+
     def _record(self, setup: st.Setup, outcome: SignalOutcome, qty: int = 0, reason: Optional[str] = None) -> None:
         self._store(
             IntradaySignalRecord(
@@ -148,6 +166,7 @@ class IntradayEngine:
                 house_call=self._house_tag(setup.symbol),
                 step_at=self._step_at,
                 seen_volume=self._seen_volume.get(setup.symbol),
+                context_json=json.dumps(self._contexts[setup.symbol].note) if setup.symbol in self._contexts else None,
             )
         )
 
@@ -286,6 +305,10 @@ class IntradayEngine:
             self._say("DRY RUN signal: " + text)
             self._record(setup, SignalOutcome.DRY_RUN, qty)
             return SignalOutcome.DRY_RUN, None
+        context = self._entry_context(setup.symbol, setup.signal_price)
+        if context.skip:
+            self._record(setup, SignalOutcome.SKIPPED, 0, context.skip)
+            return SignalOutcome.SKIPPED, None
         try:
             fill = self.broker.buy_with_bracket(
                 setup.symbol, qty, setup.signal_price, 1 - setup.stop / setup.signal_price, setup.target / setup.signal_price - 1

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from src.data.angel import AngelStream, BarBuilder, bar_row, eq_tokens
-from src.data.angel_bars import MIN_CLEAN_DAYS, AngelBars, agreement, clean_days
+from src.data.angel_bars import MIN_CLEAN_DAYS, AngelBars, AngelPriceFeed, AngelTrust, agreement, clean_days
 from src.data.angel_quotes import AngelQuotes
 from src.data.india import IST
 from src.database import AngelBarRecord, IntradayBarRecord, make_session_factory
@@ -165,7 +165,15 @@ def test_auto_mode_waits_for_enough_clean_sessions(tmp_path):
 
 
 def full_quote(upper=110.0, bid=99.9, ask=100.1):
-    return {"upperCircuit": upper, "lowerCircuit": 90.0, "depth": {"buy": [{"price": bid}], "sell": [{"price": ask}]}}
+    return {
+        "upperCircuit": upper,
+        "lowerCircuit": 90.0,
+        "totBuyQuan": 300,
+        "totSellQuan": 100,
+        "52WeekLow": 50.0,
+        "52WeekHigh": 150.0,
+        "depth": {"buy": [{"price": bid}], "sell": [{"price": ask}]},
+    }
 
 
 def make_quotes(upper=110.0, fno_fails=False):
@@ -175,28 +183,29 @@ def make_quotes(upper=110.0, fno_fails=False):
         return {"status": True, "data": [{"pcr": 0.8, "tradingSymbol": "SBIN27OCT26FUT"}]}
 
     api = SimpleNamespace(
-        getMarketData=lambda mode, tokens: {"status": True, "data": {"fetched": [full_quote(upper)]}},
+        getMarketData=lambda mode, tokens: {"status": True, "data": {"fetched": [{**full_quote(upper), "symbolToken": "3045"}]}},
         putCallRatio=put_call,
         oIBuildup=lambda p: {
             "status": True,
             "data": [{"tradingSymbol": "SBIN27OCT26FUT", "percentChange": "4.5"}] if p["datatype"] == "Long Built Up" else [],
         },
     )
-    quotes = AngelQuotes(SimpleNamespace(api=api), {"SBIN": "3045"}, clock=lambda: 1e9)
+    quotes = AngelQuotes(lambda: api, {"SBIN": "3045"}, clock=lambda: 1e9)
     return quotes
 
 
 def test_context_logs_spread_and_fno_and_skips_near_the_upper_circuit(monkeypatch):
     monkeypatch.setattr("src.data.angel_quotes.time.sleep", lambda s: None)
-    ok = make_quotes().news_context("SBIN", 100.0)
+    ok = make_quotes().entry_context("SBIN", 100.0)
     assert ok.skip is None and ok.note["spread_pct"] == 0.2
+    assert ok.note["book_imbalance"] == 0.5 and ok.note["range_52w"] == 0.5
     assert ok.note["fno"] == {"pcr": 0.8, "build_up": "Long Built Up", "oi_change_pct": 4.5}
-    assert "upper circuit" in make_quotes(upper=100.5).news_context("SBIN", 100.0).skip
+    assert "upper circuit" in make_quotes(upper=100.5).entry_context("SBIN", 100.0).skip
 
 
 def test_context_survives_an_fno_failure(monkeypatch):
     monkeypatch.setattr("src.data.angel_quotes.time.sleep", lambda s: None)
-    context = make_quotes(fno_fails=True).news_context("SBIN", 100.0)
+    context = make_quotes(fno_fails=True).entry_context("SBIN", 100.0)
     assert context.skip is None and "unavailable" in context.note["fno"]
 
 
@@ -220,3 +229,54 @@ def test_backfill_fetches_a_week_for_a_stock_with_no_history_and_only_today_for_
     assert stream.backfilled
     with sessions() as s:
         assert s.query(AngelBarRecord).filter_by(symbol="NEW").count() == 2
+
+
+def test_quotes_are_fetched_fifty_to_a_request_and_shared(monkeypatch):
+    monkeypatch.setattr("src.data.angel_quotes.time.sleep", lambda s: None)
+    symbols = [f"S{i}" for i in range(120)]
+    tokens = {s: str(i) for i, s in enumerate(symbols)}
+    calls = []
+
+    def market(mode, request):
+        calls.append(len(request["NSE"]))
+        return {"status": True, "data": {"fetched": [{**full_quote(), "symbolToken": t} for t in request["NSE"]]}}
+
+    api = SimpleNamespace(
+        getMarketData=market, putCallRatio=lambda: {"status": True, "data": []}, oIBuildup=lambda p: {"status": True, "data": []}
+    )
+    quotes = AngelQuotes(lambda: api, tokens, symbols, clock=lambda: 1e9)
+    quotes.entry_context("S3", 100.0)
+    quotes.entry_context("S99", 100.0)  # served from the refresh the first one caused
+    assert calls == [50, 50, 20]
+
+
+class Yahoo:
+    def last_price(self, symbol):
+        return 1.0
+
+    def last_quote(self, symbol):
+        return 1.0, at(9, 0)
+
+    def bars_since(self, symbol, since):
+        return pd.DataFrame(
+            {"Open": [1.0], "High": [1.0], "Low": [1.0], "Close": [1.0], "Volume": [1.0]}, index=pd.DatetimeIndex([at(9, 0)])
+        )
+
+
+def test_the_price_feed_uses_a_recent_angel_bar_and_falls_back_to_yahoo(tmp_path):
+    sessions = make_session_factory(f"sqlite:///{tmp_path / 'x.db'}")
+    put_bars(sessions, DAY, ["A"])  # bars 09:15 to 09:30, the last one closing at 09:35
+    feed = AngelPriceFeed(sessions, Yahoo(), lambda: True, now_fn=lambda: at(9, 40))
+    assert feed.last_price("A") == 100.0 and feed.last_quote("A")[1] == at(9, 30)
+    assert feed.last_price("B") == 1.0  # no Angel One bars for it
+    late = AngelPriceFeed(sessions, Yahoo(), lambda: True, now_fn=lambda: at(11, 0))
+    assert late.last_price("A") == 1.0  # the newest bar is stale
+    assert AngelPriceFeed(sessions, Yahoo(), lambda: False, now_fn=lambda: at(9, 40)).last_price("A") == 1.0
+    bars = feed.bars_since("A", at(9, 20))
+    assert len(bars) == 2 and bars.index[0] == at(9, 25).astimezone(IST)
+    assert len(feed.bars_since("A", at(9, 20) - timedelta(days=2))) == 1  # reaching back before today: Yahoo's
+
+
+def test_the_trust_check_follows_the_mode(tmp_path):
+    sessions = make_session_factory(f"sqlite:///{tmp_path / 'x.db'}")
+    assert AngelTrust(sessions, "on")() and not AngelTrust(sessions, "off")() and not AngelTrust(sessions, "auto")()

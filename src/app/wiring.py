@@ -1,5 +1,6 @@
 """Wiring shared by the command-line entry point and the reports: the market wiring and the paper-broker factory."""
 
+import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from src.data.intraday_bars import BarArchive
 from src.data.market_data import cached_per_session, fetch_snapshot
 from src.data.universe import ScreenConfig, UniverseScreener
 from src.engine.ports import Broker
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -90,13 +93,49 @@ def open_bar_archive() -> BarArchive:
     return BarArchive(make_session_factory(intraday_db_url()))
 
 
-def make_paper_broker(settings: Settings, database_url: Optional[str] = None, fees: Optional[Callable] = None):
+def price_feed(settings: Settings, stream=None):
+    """Yahoo's 5-minute feed, or Angel One's bars (read from the intraday database, where the intraday process saves them) with
+    Yahoo as the backup, unless ANGEL_BARS is off or there are no Angel One keys."""
+    from src.data.angel import credentials_set
+    from src.data.angel_bars import AngelPriceFeed, AngelTrust
+    from src.data.india import IntradayFeed
+    from src.database import make_session_factory
+
+    yahoo = IntradayFeed()
+    if settings.angel_bars == "off" or not credentials_set():
+        return yahoo
+    sessions = make_session_factory(intraday_db_url())
+    return AngelPriceFeed(sessions, yahoo, AngelTrust(sessions, settings.angel_bars), stream)
+
+
+def swing_entry_context(settings: Settings):
+    """Angel One's circuit and spread checks for the swing bot's BUYs (it has no stream; it logs in on first use), or None when
+    Angel One is off, has no keys or has no instrument list."""
+    from src.data.angel import CACHE_DIR, AngelSession, credentials_set, load_tokens
+    from src.data.angel_quotes import AngelQuotes
+
+    if not settings.angel_stream or not credentials_set():
+        return None
+    from src.data.market_context import MarketContextProvider
+    from src.data.market_regime import RegimeProvider, with_regime
+    from src.database import make_session_factory
+
+    try:
+        quotes = AngelQuotes(AngelSession().api, load_tokens(CACHE_DIR))
+        return with_regime(quotes.entry_context, RegimeProvider(MarketContextProvider(), make_session_factory(intraday_db_url())))
+    except Exception:
+        log.exception("no Angel One instrument list: the swing bot's buys go without the circuit check")
+        return None
+
+
+def make_paper_broker(settings: Settings, database_url: Optional[str] = None, fees: Optional[Callable] = None, stream=None):
     """A PaperBroker on the given database (default: the swing account) with live NSE prices and the IST market clock.
 
     Only the swing account sweeps idle cash (CASH_YIELD_PCT): the intraday account is flat every night, so a liquid-fund
     sweep does not describe it. The report commands build the swing broker through here too, so they credit interest
-    the same way the running bot does."""
-    from src.data.india import IndiaClock, IntradayFeed, yahoo_corporate_actions
+    the same way the running bot does. Prices come from Angel One's bars (see `price_feed`), Yahoo being the backup;
+    `stream` is the running Angel One stream when the caller has one."""
+    from src.data.india import IndiaClock, yahoo_corporate_actions
     from src.database import make_session_factory
     from src.engine.costs import india_delivery_fees
     from src.engine.paper_broker import PaperBroker
@@ -105,7 +144,7 @@ def make_paper_broker(settings: Settings, database_url: Optional[str] = None, fe
     swing = url == settings.database_url  # the intraday account is flat every night: no sweep, no ex-dates to cross
     return PaperBroker(
         make_session_factory(url),
-        IntradayFeed(),
+        price_feed(settings, stream),
         IndiaClock(),
         initial_cash=settings.paper_initial_cash,
         fees=fees or india_delivery_fees,
@@ -116,10 +155,10 @@ def make_paper_broker(settings: Settings, database_url: Optional[str] = None, fe
 
 def build_market_wiring(settings: Settings, sessions) -> MarketWiring:
     """Assemble the broker and data functions for the configured market."""
-    from src.data.india import SUFFIX, IndiaClock, IntradayFeed, yahoo_corporate_actions
+    from src.data.india import SUFFIX, IndiaClock, yahoo_corporate_actions
     from src.engine.paper_broker import PaperBroker
 
-    clock, feed = IndiaClock(), IntradayFeed()
+    clock, feed = IndiaClock(), price_feed(settings)
     broker = PaperBroker(
         sessions,
         feed,

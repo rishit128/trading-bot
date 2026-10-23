@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from src.agents.base import Agent, AgentContext
 from src.config import Settings
+from src.data.angel_quotes import EntryContext
 from src.data.fundamentals import Fundamentals
 from src.data.house_calls import HouseCall, call_for, open_sells, recently_ended, swing_buys
 from src.data.indicators import Snapshot
@@ -82,6 +83,7 @@ class TradingPipeline:
         house_calls_fn: Optional[Callable[[], List[HouseCall]]] = None,
         screen_verdict_fn: Optional[Callable[[str, float], str]] = None,
         pulse: Optional[MarketPulse] = None,
+        context_fn: Optional[Callable[[str, float], EntryContext]] = None,
     ):
         names = [a.name for a in agents]
         if len(set(names)) != len(names):
@@ -101,6 +103,7 @@ class TradingPipeline:
         self.house_calls_fn = house_calls_fn  # the broker's research calls (src.data.house_calls); None = not wired
         self.screen_verdict_fn = screen_verdict_fn  # the screener's verdict on one stock (recorded for research-only ones)
         self.pulse = pulse  # today's surging sectors (src.data.market_pulse); None = not wired
+        self.context_fn = context_fn  # Angel One's circuit limits, spread and F&O data for a BUY; None = not wired
         self._hot: Dict[str, HotStock] = {}  # the day's surging stocks by symbol, read once per cycle
         self._announced: Optional[tuple] = None  # the (day, sectors) last told to the user
         self._pulse_bought: Optional[Set[str]] = None  # per cycle: stocks whose latest filled BUY came from the pulse
@@ -499,6 +502,7 @@ class TradingPipeline:
         status: str
         broker_id: Optional[str]
         error: Optional[str]
+        context = EntryContext()
         if self.control and self.control.is_paused():
             status, broker_id, error = OrderStatus.PAUSED, None, None
         elif action == Action.BUY and self._in_cooldown(symbol):
@@ -508,7 +512,12 @@ class TradingPipeline:
         elif not self.broker.is_market_open():
             status, broker_id, error = OrderStatus.MARKET_CLOSED, None, None
         else:
-            status, broker_id, error, filled_qty, fill_price = self._submit(symbol, action, qty, price)
+            if action == Action.BUY:
+                context = self._buy_context(symbol, price)
+            if context.skip:
+                status, broker_id, error = OrderStatus.SKIPPED_CIRCUIT, None, context.skip
+            else:
+                status, broker_id, error, filled_qty, fill_price = self._submit(symbol, action, qty, price)
         with self.sessions() as s:
             s.add(
                 OrderRecord(
@@ -521,6 +530,7 @@ class TradingPipeline:
                     error=error,
                     filled_qty=filled_qty,
                     fill_price=fill_price,
+                    context_json=json.dumps(context.note) if context.note else None,
                 )
             )
             s.commit()
@@ -532,6 +542,16 @@ class TradingPipeline:
                 f"PARTIAL/UNFILLED {action} {symbol}: ordered {qty}, broker filled {filled_qty} ({status}). Check the position."
             )
         return status
+
+    def _buy_context(self, symbol: str, price: float) -> EntryContext:
+        """Angel One's checks for a BUY; with none wired, or an error from it, the order goes ahead without them."""
+        if self.context_fn is None:
+            return EntryContext()
+        try:
+            return self.context_fn(symbol, price)
+        except Exception as e:
+            log.warning("Angel One quote failed for %s (%s: %s); ordering without it", symbol, type(e).__name__, e)
+            return EntryContext()
 
     def _submit(self, symbol: str, action: str, qty: int, price: float):
         try:

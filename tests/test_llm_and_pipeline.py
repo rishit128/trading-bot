@@ -193,6 +193,25 @@ def test_live_buy_skipped_when_order_already_open(tmp_path):
     assert r.order_status == "SKIPPED_OPEN_ORDER" and broker.buys == []
 
 
+def test_a_buy_near_the_upper_circuit_is_refused_and_a_failing_quote_does_not_stop_it(tmp_path):
+    from src.data.angel_quotes import EntryContext
+
+    pipe, broker, sessions = make_pipeline(tmp_path, dry_run=False)
+    pipe.context_fn = lambda s, p: EntryContext("near the upper circuit", {"spread_pct": 0.1})
+    [r] = pipe.run_once()
+    assert r.order_status == "SKIPPED_CIRCUIT" and broker.buys == []
+    with sessions() as s:
+        assert s.scalar(select(OrderRecord.context_json)) == '{"spread_pct": 0.1}'
+    pipe, broker, _ = make_pipeline(tmp_path / "x" if (tmp_path / "x").mkdir() is None else tmp_path, dry_run=False)
+
+    def broken(symbol, price):
+        raise RuntimeError("rate limit")
+
+    pipe.context_fn = broken
+    pipe.run_once()
+    assert len(broker.buys) == 1  # SKIPPED_CIRCUIT starts no cooldown, and an Angel error never blocks a buy
+
+
 def test_live_sell_closes_held_shares(tmp_path):
     broker = FakeBroker(Portfolio(90_000.0, 100_000.0, {"AAPL": 10_000.0}, {"AAPL": 100}, 100_000.0))
     pipe, broker, _ = make_pipeline(tmp_path, technical_action="SELL", dry_run=False, broker=broker)

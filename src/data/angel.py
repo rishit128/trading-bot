@@ -20,6 +20,7 @@ from src.data.india import IST
 log = logging.getLogger(__name__)
 
 BAR = timedelta(minutes=5)
+CACHE_DIR = Path("research_cache")  # the BSE -> NSE symbol map and the Angel One token list (git-ignored)
 TOKEN_FILE = "angel_tokens.json"
 TOKEN_MAX_AGE = 86400  # the instrument list is refreshed daily
 SWEEP = 2.0  # seconds between checks for bars whose five minutes have passed
@@ -72,6 +73,24 @@ def login():
     if not reply.get("status"):
         raise RuntimeError(f"Angel One login refused: {reply.get('message')}")
     return api, reply["data"]["jwtToken"], reply["data"]["feedToken"]
+
+
+class AngelSession:
+    """A logged-in session for quote calls from a process that does not stream (the swing bot): it logs in at first use and
+    again on each new day, as the broker's tokens last one day."""
+
+    def __init__(self):
+        self._api: Any = None
+        self._day = ""
+        self._lock = threading.Lock()
+
+    def api(self) -> Any:
+        today = datetime.now(IST).date().isoformat()
+        with self._lock:
+            if self._api is None or self._day != today:
+                self._api, _, _ = login()
+                self._day = today
+            return self._api
 
 
 def bar_start(when: datetime) -> datetime:
@@ -164,6 +183,12 @@ class AngelStream:
 
     def last_price(self, symbol: str) -> Optional[float]:
         return self.prices.get(symbol)
+
+    def forming(self, symbol: str) -> Optional[dict]:
+        """The bar being built for `symbol` (its highs and lows so far are real prints), or None."""
+        with self.lock:
+            bar = self.builder.building.get(symbol)
+            return dict(bar) if bar else None
 
     def on_tick(self, _ws, message) -> None:
         if not isinstance(message, dict):

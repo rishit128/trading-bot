@@ -51,11 +51,12 @@ class FilingWatcher:
         market_cap_crore: Callable[[str], Optional[float]] = yahoo_market_cap_crore,
         notify: Optional[Callable[[str], object]] = None,
         price_fn: Callable[[str], Optional[float]] = lambda symbol: None,
+        held_fn: Callable[[], Set[str]] = lambda: set(),
         now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ):
         self.sessions, self.reader, self.llm, self.universe = sessions, reader, llm, universe
         self.is_session_day, self.market_cap_crore, self.notify = is_session_day, market_cap_crore, notify
-        self.price_fn, self.now_fn = price_fn, now_fn
+        self.price_fn, self.held_fn, self.now_fn = price_fn, held_fn, now_fn
         self.failures = 0  # feed reads failed in a row
 
     def poll_once(self) -> int:
@@ -66,7 +67,7 @@ class FilingWatcher:
         return added
 
     def _store(self, filings) -> int:
-        wanted = self.universe()
+        wanted = self.universe() | self.held_fn()  # the swing account's holdings are read too, to warn about them
         added = 0
         with self.sessions() as s:
             for f in filings:
@@ -132,8 +133,9 @@ class FilingWatcher:
                 setattr(stored, k, v)
             s.commit()
         if fields.get("material") and self.notify:
+            held = " ⚠️ YOU HOLD THIS (swing account)" if row.symbol in self.held_fn() else ""
             self.notify(
-                f"[NEWS] material filing: {row.symbol} {fields['event_type']} ({fields['direction']}, surprise "
+                f"[NEWS] material filing{held}: {row.symbol} {fields['event_type']} ({fields['direction']}, surprise "
                 f"{fields['surprise']}): {fields['material_reason']}. {row.subject[:120]}"
             )
 

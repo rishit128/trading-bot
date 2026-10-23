@@ -99,8 +99,12 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     broker = SimpleNamespace(clock=FakeClock(), sessions=make_session_factory("sqlite://"))
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
+    monkeypatch.setattr(intraday_cli, "make_session_factory", lambda url: broker.sessions)
+    monkeypatch.setenv("ANGEL_STREAM", "false")
     urls = []
-    monkeypatch.setattr(intraday_cli, "make_paper_broker", lambda settings, url, fees=None: urls.append(url) or broker)
+    monkeypatch.setattr(
+        intraday_cli, "make_paper_broker", lambda settings, url, fees=None, stream=None: urls.append(url) or broker
+    )
     monkeypatch.setattr(
         intraday_cli, "select_universe", lambda explicit: (["AAA", "BBB", "CCC"], "Nifty 100 (hand-saved NSE file)")
     )
@@ -184,9 +188,11 @@ def test_equity_risk_reports_the_worst_peak_to_trough_fall_and_the_start():
 def test_the_intraday_loop_gets_a_heartbeat_only_when_one_is_configured(monkeypatch):
     seen = {}
     broker = SimpleNamespace(clock=FakeClock(), sessions=make_session_factory("sqlite://"))
-    monkeypatch.setattr(intraday_cli, "make_paper_broker", lambda settings, url, fees=None: broker)
+    monkeypatch.setattr(intraday_cli, "make_paper_broker", lambda settings, url, fees=None, stream=None: broker)
     monkeypatch.setattr(intraday_cli, "select_universe", lambda explicit: (["AAA"], "a list"))
     monkeypatch.setattr(intraday_cli, "run_together", lambda engines, heartbeat=None: seen.update(heartbeat=heartbeat))
+    monkeypatch.setattr(intraday_cli, "make_session_factory", lambda url: broker.sessions)
+    monkeypatch.setenv("ANGEL_STREAM", "false")
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("HEARTBEAT_FILE", raising=False)
     intraday_cli.run_intraday(live=True)

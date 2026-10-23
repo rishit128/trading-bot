@@ -106,6 +106,7 @@ class OrderRecord(Base):
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     filled_qty: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # what the broker says was actually filled
     fill_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    context_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Angel One's spread, circuit etc. at a BUY (JSON)
 
 
 class EquityRecord(Base):
@@ -261,6 +262,9 @@ class IntradaySignalRecord(Base):
     final_close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     final_volume: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     final_signal: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    context_json: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # Angel One's spread, circuit etc. at the entry (JSON)
 
 
 class IntradayUniverseRecord(Base):

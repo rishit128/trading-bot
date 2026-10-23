@@ -14,7 +14,7 @@ from typing import Callable, Dict, List, Optional
 import pandas as pd
 from sqlalchemy import select
 
-from src.data.angel import HISTORY_DAYS, AngelStream
+from src.data.angel import BAR, HISTORY_DAYS, AngelStream
 from src.data.india import IST
 from src.database import AngelBarRecord, IntradayBarRecord
 
@@ -68,6 +68,30 @@ def clean_days(sessions) -> List[str]:
     return clean
 
 
+class AngelTrust:
+    """Whether Angel One may be used: ANGEL_BARS "on", or "auto" once enough sessions agreed with Yahoo (checked once a day)."""
+
+    def __init__(self, sessions, mode: str = "auto", now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)):
+        self.sessions, self.mode, self.now_fn = sessions, mode, now_fn
+        self._trusted = False
+        self._checked_on: Optional[str] = None
+
+    def __call__(self) -> bool:
+        if self.mode in ("on", "off"):
+            return self.mode == "on"
+        today = self.now_fn().astimezone(IST).date().isoformat()
+        if self._checked_on != today:
+            clean = clean_days(self.sessions)
+            self._trusted, self._checked_on = len(clean) >= MIN_CLEAN_DAYS, today
+            log.info(
+                "Angel One bars: %d clean sessions of %d needed -> %s",
+                len(clean),
+                MIN_CLEAN_DAYS,
+                "in use" if self._trusted else "Yahoo",
+            )
+        return self._trusted
+
+
 class AngelBars:
     def __init__(
         self,
@@ -77,27 +101,8 @@ class AngelBars:
         mode: str = "auto",
         now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ):
-        self.sessions, self.stream, self.yahoo, self.mode, self.now_fn = sessions, stream, yahoo, mode, now_fn
-        self._trusted: Optional[bool] = None
-        self._trusted_on: Optional[str] = None
-
-    def trusted(self) -> bool:
-        """Whether Angel One may serve the engines: "on", or "auto" with enough clean sessions (checked once a day)."""
-        if self.mode == "off":
-            return False
-        if self.mode == "on":
-            return True
-        today = self.now_fn().astimezone(IST).date().isoformat()
-        if self._trusted_on != today:
-            clean = clean_days(self.sessions)
-            self._trusted, self._trusted_on = len(clean) >= MIN_CLEAN_DAYS, today
-            log.info(
-                "Angel One bars: %d clean sessions of %d needed -> %s",
-                len(clean),
-                MIN_CLEAN_DAYS,
-                "in use" if self._trusted else "Yahoo",
-            )
-        return bool(self._trusted)
+        self.sessions, self.stream, self.yahoo, self.now_fn = sessions, stream, yahoo, now_fn
+        self.trusted = AngelTrust(sessions, mode, now_fn)
 
     def __call__(self, symbols: List[str]) -> Dict[str, pd.DataFrame]:
         if not (self.trusted() and self.stream.ready()):
@@ -145,3 +150,60 @@ class AngelBars:
                 frame["Source"] = "angel"
                 out[str(symbol)] = frame
         return out
+
+
+class AngelPriceFeed:
+    """The paper brokers' price feed (fills, valuation, and the replay of stops and targets) on Angel One's bars, with the
+    Yahoo feed as the backup. Angel One's latest bar is used while it is recent; the bar still forming is added when this
+    process runs the stream, so a stop is seen as soon as a real print crosses it, as with Yahoo. Any stock or moment Angel One
+    does not cover is read from Yahoo."""
+
+    FRESH = timedelta(minutes=10)  # a latest bar older than this (before the open, after a gap) is not "the price now"
+
+    def __init__(self, sessions, yahoo, trusted: Callable[[], bool], stream: Optional[AngelStream] = None, now_fn=None):
+        self.sessions, self.yahoo, self.trusted, self.stream = sessions, yahoo, trusted, stream
+        self.now_fn = now_fn or (lambda: datetime.now(timezone.utc))
+
+    def _latest(self, symbol: str) -> Optional[tuple]:
+        """(bar start, close) of the newest finished Angel One bar if it is recent, else None."""
+        now = self.now_fn()
+        with self.sessions() as s:
+            row = s.execute(
+                select(AngelBarRecord.ts, AngelBarRecord.close)
+                .where(AngelBarRecord.symbol == symbol)
+                .order_by(AngelBarRecord.ts.desc())
+                .limit(1)
+            ).first()
+        if row is None:
+            return None
+        start = row[0].replace(tzinfo=timezone.utc) if row[0].tzinfo is None else row[0]
+        return (start, float(row[1])) if now - (start + BAR) < self.FRESH else None
+
+    def last_price(self, symbol: str) -> float:
+        hit = self._latest(symbol) if self.trusted() else None
+        return hit[1] if hit else self.yahoo.last_price(symbol)
+
+    def last_quote(self, symbol: str):
+        hit = self._latest(symbol) if self.trusted() else None
+        return (hit[1], hit[0]) if hit else self.yahoo.last_quote(symbol)
+
+    def bars_since(self, symbol: str, since: datetime) -> pd.DataFrame:
+        """Today's bars after `since`; anything reaching back before today's open, or with no Angel One bar yet, is Yahoo's."""
+        now = self.now_fn()
+        if not self.trusted() or since.astimezone(IST).date() != now.astimezone(IST).date():
+            return self.yahoo.bars_since(symbol, since)
+        cutoff = since.astimezone(timezone.utc).replace(tzinfo=None)  # SQLite holds naive UTC
+        with self.sessions() as s:
+            rows = s.execute(
+                select(AngelBarRecord.ts, *[getattr(AngelBarRecord, c.lower()) for c in COLUMNS])
+                .where(AngelBarRecord.symbol == symbol, AngelBarRecord.ts > cutoff)
+                .order_by(AngelBarRecord.ts)
+            ).all()
+        forming = self.stream.forming(symbol) if self.stream else None
+        if forming and forming["ts"] > since:
+            rows.append((forming["ts"], forming["open"], forming["high"], forming["low"], forming["close"], 0.0))
+        if not rows:
+            return self.yahoo.bars_since(symbol, since)
+        frame = pd.DataFrame(rows, columns=["ts"] + COLUMNS)
+        frame.index = pd.DatetimeIndex(pd.to_datetime(frame.pop("ts"), utc=True)).tz_convert(IST)
+        return frame

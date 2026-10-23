@@ -26,6 +26,7 @@ from src.app.wiring import (
     make_paper_broker,
     news_db_url,
     open_house_calls,
+    swing_entry_context,
 )
 from src.config import Settings
 from src.control import Control
@@ -34,6 +35,7 @@ from src.data.india import SUFFIX
 from src.data.market_context import MarketContextProvider
 from src.data.market_data import fetch_daily_bars
 from src.data.market_pulse import MarketPulse
+from src.data.market_regime import RegimeProvider
 from src.database import make_session_factory
 from src.engine.costs import intraday_fees
 from src.learning.jobs import DailyOutcomeLabelling, WeeklyLearningReport
@@ -63,6 +65,12 @@ def build_pipeline(live: bool) -> TradingPipeline:
     control = Control(sessions)
     kit = build_market_wiring(settings, sessions)
     house_calls = open_house_calls()
+    regime = RegimeProvider(MarketContextProvider(), make_session_factory(intraday_db_url()))
+
+    def market_report() -> str:
+        current = regime.current()
+        return current.text() if current else "The market regime is unavailable (no index data)."
+
     intraday_broker = gapgo_broker = gaponly_broker = news_broker = None
     try:
         intraday_broker = make_paper_broker(settings, intraday_db_url(), fees=intraday_fees)
@@ -82,6 +90,7 @@ def build_pipeline(live: bool) -> TradingPipeline:
             "/portfolio": (PortfolioCommand.HELP, portfolio),
             "/research_start": (PortfolioCommand.RESEARCH_START_HELP, portfolio.research_start),
             "/research_stop": (PortfolioCommand.RESEARCH_STOP_HELP, portfolio.research_stop),
+            "/market": ("the market now: trend, risk (VIX) and today's breadth", market_report),
         }
         CommandListener(
             token,
@@ -120,6 +129,7 @@ def build_pipeline(live: bool) -> TradingPipeline:
         house_calls_fn=house_calls.current,
         screen_verdict_fn=kit.screener.verdict if kit.screener else None,
         pulse=MarketPulse(kit.screener.movers) if kit.screener and settings.market_pulse else None,
+        context_fn=swing_entry_context(settings),
     )
     return pipeline
 

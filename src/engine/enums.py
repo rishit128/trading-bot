@@ -29,6 +29,7 @@ class OrderStatus(StrEnum):
     MARKET_CLOSED = "MARKET_CLOSED"
     SKIPPED_COOLDOWN = "SKIPPED_COOLDOWN"
     SKIPPED_OPEN_ORDER = "SKIPPED_OPEN_ORDER"
+    SKIPPED_CIRCUIT = "SKIPPED_CIRCUIT"  # within 1% of the stock's upper circuit limit (Angel One)
     FAILED = "FAILED"
 
 
@@ -36,6 +37,7 @@ class OrderStatus(StrEnum):
 NOT_A_PLACED_BUY = (
     OrderStatus.SKIPPED_OPEN_ORDER,
     OrderStatus.SKIPPED_COOLDOWN,
+    OrderStatus.SKIPPED_CIRCUIT,
     OrderStatus.FAILED,
     OrderStatus.PAUSED,
     OrderStatus.MARKET_CLOSED,

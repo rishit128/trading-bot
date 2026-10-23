@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 from sqlalchemy import select
 
-from src.data.angel_quotes import NewsContext
+from src.data.angel_quotes import EntryContext
 from src.data.filings import Filing, bse_nse_map, excerpt, nse_symbol_from_link, parse_bse, parse_nse
 from src.data.india import IST
 from src.database import IntradaySignalRecord, NewsFilingRecord, make_session_factory
@@ -262,11 +262,27 @@ def test_the_watcher_stores_each_universe_filing_once_marks_routine_ones_and_lab
     assert any("material filing: AAA results" in n for n in notes)
 
 
+def test_a_filing_on_a_stock_outside_the_news_universe_is_never_traded(tmp_path):
+    eng, broker, *_ = engine(tmp_path, {"BBB": history(GAP_UP)}, at(9, 35))
+    row = add_filing(broker, symbol="BBB")
+    assert "no material filings" in eng.step() and broker.holdings() == []
+    assert "not in the news universe" in filing_row(broker, row).rule_reason
+
+
 def test_the_live_price_is_stored_when_a_filing_is_first_seen(tmp_path):
     w, sessions, _ = watcher(tmp_path, [filing()], FakeLLM())
     w.price_fn = lambda symbol: 123.4
     w.poll_once()
     assert rows(sessions)[0].seen_price == 123.4
+
+
+def test_a_swing_holding_is_read_and_its_material_news_warns_that_you_hold_it(tmp_path):
+    llm = FakeLLM(label(profit_quarter=130, profit_year_ago=100, raw_model="m1"))
+    w, sessions, notes = watcher(tmp_path, [filing(symbol="HELD")], llm, universe=("AAA",))
+    assert w.poll_once() == 0  # not in the news universe, not held: ignored
+    w.held_fn = lambda: {"HELD"}
+    assert w.poll_once() == 1
+    assert any("material filing ⚠️ YOU HOLD THIS (swing account): HELD" in n for n in notes)
 
 
 def test_the_same_filing_from_the_other_exchange_is_a_duplicate_and_an_ai_failure_is_recorded(tmp_path):
@@ -360,14 +376,14 @@ def test_overnight_news_with_a_gap_and_a_breakout_is_bought_with_the_range_low_a
 
 def test_angel_one_context_is_stored_and_a_buy_near_the_upper_circuit_is_refused(tmp_path):
     eng, broker, *_ = engine(
-        tmp_path, {"AAA": history(GAP_UP)}, at(9, 35), context_fn=lambda s, p: NewsContext(None, {"spread_pct": 0.1})
+        tmp_path, {"AAA": history(GAP_UP)}, at(9, 35), context_fn=lambda s, p: EntryContext(None, {"spread_pct": 0.1})
     )
     row = add_filing(broker)
     assert "entered 1" in eng.step()
     assert json.loads(filing_row(broker, row).context_json) == {"spread_pct": 0.1}
     (tmp_path / "x").mkdir()
     eng, broker, *_ = engine(
-        tmp_path / "x", {"AAA": history(GAP_UP)}, at(9, 35), context_fn=lambda s, p: NewsContext("near the upper circuit")
+        tmp_path / "x", {"AAA": history(GAP_UP)}, at(9, 35), context_fn=lambda s, p: EntryContext("near the upper circuit")
     )
     row = add_filing(broker)
     assert "entered 0" in eng.step() and broker.holdings() == []

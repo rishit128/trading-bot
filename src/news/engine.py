@@ -17,7 +17,6 @@ from typing import Callable, Dict, List, Optional, Tuple
 import pandas as pd
 from sqlalchemy import func, select
 
-from src.data.angel_quotes import NewsContext
 from src.data.india import IST
 from src.data.intraday_bars import session_rows
 from src.database import IntradaySignalRecord, NewsFilingRecord
@@ -80,7 +79,6 @@ class NewsEngine(IntradayEngine):
     version: str = NEWS_VERSION
     max_daily_loss_pct: float = 0.015
     universe_fn: Optional[Callable[[], List[str]]] = None
-    context_fn: Optional[Callable[[str, float], NewsContext]] = None  # Angel One's circuit limits, spread and F&O data
     max_trades_per_day: int = MAX_TRADES_PER_DAY
     min_position_value: float = MIN_POSITION_VALUE
     _breadth: Optional[float] = field(default=None, init=False)
@@ -201,6 +199,8 @@ class NewsEngine(IntradayEngine):
 
     def _not_tradable(self, row: NewsFilingRecord) -> Optional[str]:
         """Why a filing can never be traded (a final NO), or None while it may still be."""
+        if row.symbol not in self.universe:
+            return "not in the news universe (a swing holding: read for the warning only)"
         if row.label_status == "PENDING":
             return None  # the AI has not read it yet: decided on a later step
         if row.label_status == "ROUTINE":
@@ -246,7 +246,8 @@ class NewsEngine(IntradayEngine):
         if self._trades_today(today) >= self.max_trades_per_day:
             self._verdict(row.id, ns.NO, f"fired, but {self.max_trades_per_day} trades already today", kind)
             return None
-        context = self._context(row, setup.signal_price)
+        context = self._entry_context(row.symbol, setup.signal_price)
+        self._store_context(row, context)
         if context.skip:
             self._verdict(row.id, ns.NO, context.skip, kind, check.ref_price)
             return None
@@ -254,20 +255,12 @@ class NewsEngine(IntradayEngine):
         self._verdict(row.id, ns.FIRED, f"{check.reason}; {outcome}", kind, check.ref_price)
         return fill if outcome == SignalOutcome.ENTERED else None
 
-    def _context(self, row: NewsFilingRecord, price: float) -> NewsContext:
-        """Angel One's checks for this entry, stored on the filing; with no Angel One (or an error from it) the entry goes ahead
-        on the rule's own approximation of the circuit."""
-        if self.context_fn is None:
-            return NewsContext()
-        try:
-            context = self.context_fn(row.symbol, price)
-        except Exception as e:
-            log.warning("Angel One quote failed for %s (%s: %s); entering without it", row.symbol, type(e).__name__, e)
-            return NewsContext()
-        with self.broker.sessions() as s:
-            s.get(NewsFilingRecord, row.id).context_json = json.dumps(context.note)
-            s.commit()
-        return context
+    def _store_context(self, row: NewsFilingRecord, context) -> None:
+        """Keep Angel One's record of this entry (spread, circuit limits, F&O data) on the filing."""
+        if context.note:
+            with self.broker.sessions() as s:
+                s.get(NewsFilingRecord, row.id).context_json = json.dumps(context.note)
+                s.commit()
 
     def _enter(self, setup: st.Setup, equity: float, cash: float) -> Tuple[SignalOutcome, Optional[Fill]]:
         qty, _ = st.position_size(equity, setup.signal_price, setup.stop, self.risk_pct, self.max_position_pct, cash)

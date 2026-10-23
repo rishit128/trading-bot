@@ -966,5 +966,31 @@ the automatic backup. The stream and bars are `src/data/angel.py`, `angel_bars.p
   (new rule; the old 9%-above-previous-close test remains as the fallback), and the bid-ask spread, circuit limits and the
   futures put-call ratio and open-interest build-up (F&O stocks) are stored on the filing as record-only context. Stocks Angel One lists
   only as BE (trade-to-trade) leave the news universe. An Angel One error never stops an entry.
+- **Every account (added 2026-10-22).** The same Angel One data now reaches all five paper accounts, not only the news one:
+  fills, valuation and the replay of stops come from Angel One's bars (the bar still forming included, so a stop is seen as soon
+  as a real print crosses it), with Yahoo for any stock or moment it does not cover; and every BUY, swing or intraday, is
+  refused within 1% of the stock's upper circuit (swing status `SKIPPED_CIRCUIT`) and stores a record: bid-ask spread, how lopsided
+  the order book is (+1 all buyers), where the price sits in its 52-week range, and the futures put-call ratio and OI build-up. Only
+  the circuit check acts on anything. The records are for a later pre-declared test of whether any of them separates winners from
+  losers; until that test passes none of them may be used as a rule.
 - **Not done.** Paper fills still use the fixed 0.05% slippage: using the measured spread needs the owner's approval, after the
   logged spreads have been read. No orders are ever sent to Angel One.
+
+
+### Market regime (record-only) and where the AI reads (2026-10-22)
+
+**Market regime.** `src/data/market_regime.py` states the market in three fixed words: trend (Nifty 50 against its 50- and
+200-day averages and its 20-session return: BULL, BEAR or SIDEWAYS), risk (India VIX level and its place in its year: CALM,
+ELEVATED or STRESS) and today's tone (the share of the streamed stocks above yesterday's close: STRONG at 60%+, WEAK at 40% or
+less). Rules are fixed and untuned. It is shown by `/market` on Telegram and stored with every entry (the `market` field of the
+entry record on all five accounts). It gates nothing: the pre-declared "no new buys below the 200-day average" test FAILED
+(2026-10-09, it halved the all-NSE return), and the daily-type filters tried on intraday (2026-10-19..21) did not help either.
+A regime rule is adopted only if a later test, fixed before looking at the recorded entries (for example: net return of entries
+made in a BEAR or WEAK market against the rest, 300+ entries, t >= 2.6, both halves), passes. The swing AI already sees the index
+and VIX context in its prompt.
+
+**Where the AI is used.** The swing AI re-judging a chart added nothing (2026-10-09), so it is kept to what a chart cannot show.
+The AI's job that is measured to read something price cannot show is the filings (news account; `scripts/news_report.py` gates
+whether its labels predict the move, down-news included). It now also reads the filings of the stocks the swing account HOLDS
+and warns on Telegram when one is material ("YOU HOLD THIS"). That is an alert only: no order follows. If the report shows the
+AI's "down" labels do predict falls, a veto on swing buys and a warning-to-sell on holdings is the next step, tested the same way.

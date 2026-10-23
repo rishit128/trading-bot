@@ -97,6 +97,14 @@ class MarketContextProvider:
             self._memo[ticker] = (time.monotonic(), series)
             return series
 
+    def index_series(self) -> Optional[pd.Series]:
+        """The Nifty 50's daily closes (raises when they cannot be loaded)."""
+        return self._series(self._index_ticker)
+
+    def vix_series(self) -> Optional[pd.Series]:
+        """India VIX daily closes, or None when unavailable."""
+        return self._series(self._vix_ticker)
+
     def context(self, symbol: str, snapshot: Snapshot) -> Optional[MarketContext]:
         """The market context for one stock, or None when the index cannot be loaded (analysis continues unchanged)."""
         try:
