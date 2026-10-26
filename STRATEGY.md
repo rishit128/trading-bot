@@ -1080,3 +1080,34 @@ cost is missed entries, so both are counted forward: after 100 skipped entries, 
 next 5 sessions with the entered ones; remove a check that skipped winners (average above the entered stocks' by 1%, t >= 2).
 Delivery percentage is NOT available from Angel One (the market-data quote has no such field; checked 2026-10-26) and the
 portal's pages the bot reads are only Research and holdings; the delivery filter still needs NSE's bhavcopy files saved by hand.
+
+### Swing exits and robustness (2026-10-26, `scripts/research_swing_v4.py`; ideas from the skills.sh backtesting skills)
+Same live configuration, all NSE stocks, 10 years. Exits, pre-declared gate (Sharpe +0.05 and drawdown no worse in the full
+period and the last 3 years, return within 10%, both halves positive, neighbouring trail also at least as good): **none
+passed.** Trailing stops (20/25/30% below the high) and break-even locks (after +10%/+20%) cut the winners the strategy
+lives on: full-period returns +220% to +302% against +349% for the live exits, Sharpe 0.75-0.89 against 0.93. Only trail30
+beat the base in the last 3 years (+198%, Sharpe 1.24) and lost in the full period. Exits stay as they are.
+
+Robustness of the live base (it makes 34% winners; the median trade is -8.1% and the mean +8.1%, so a few large winners carry
+it): shifting every entry one session later changes little (+340% against +349%, Sharpe 0.92 against 0.93; last 3 years
++146% against +177%), so the result does not depend on precise timing. On random halves of the stocks it holds (full period
+Sharpe 0.95 and 1.03; last 3 years 0.93 and 1.16). A trade-order Monte Carlo (2,000 draws of 150 trades at 8.8%): total
+return 5th/50th/95th percentile +40% / +172% / +429%, worst drawdown median -15%, 5th percentile -26%. For the first 21 trades
+(what the live account has made): 5th/50th/95th percentile -9.4% / +13.9% / +48.5%, so the live account's roughly -9% sits
+at about the 5th percentile: unlucky or an unfavourable market, not evidence that the strategy has stopped working.
+
+### Loss limits and alpha attribution (2026-10-26; `scripts/research_swing_v5.py`; skills.sh drawdown-circuit-breaker and residual-edge-analyzer)
+**Account drawdown halt** (live: 20% from the peak, 30-day pause; the daily 2% limit unchanged): 8%, 10%, 12%, 15% and two other
+pauses, pre-declared gate as before. None passed, and the results zigzag with the threshold (full-period Sharpe 1.05 at 15%,
+0.87 at 12%, 0.83 at 10%, 1.05 at 8%; live 0.93), which is noise, not a dose-response. dd8 passed its own gate but its
+neighbour dd10 did not, so no plateau. The 20% / 30-day halt stays.
+
+**Residual edge** of the live swing strategy against equal-weight baselines (daily returns, OLS with Newey-West errors, 10
+years, all NSE stocks; today's listings only, so survivorship flatters both sides): against the all-NSE equal-weight basket,
+alpha +5.3% a year (t = 0.97, not significant) with beta 0.81; against Nifty 50 alone alpha +12.9% (t = 1.96) with beta 0.61, which
+disappears once the basket is included (Nifty beta -0.02 beside the basket's 0.82). First half of the period alpha -1.4% (t = -0.2),
+second half +12.0% (t = 1.6). CAGR 18.6% against 16.8% for the basket and 9.3% for Nifty, at 20.5% against 18.6% volatility.
+Reading: nearly all of the return is exposure to the broad NSE (mostly small and mid-cap) market, which explains why a falling
+small-cap market produced the live loss; stock selection has not been shown to add anything, matching the earlier finding that
+the entry rule adds little over holding the stocks (STRATEGY.md, 2026-09-26). The exits and the sizing are what the evidence
+supports; the ranking is not.

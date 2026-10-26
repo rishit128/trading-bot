@@ -61,6 +61,8 @@ def simulate(
     buy_source: Optional[BuySource] = None,
     cash_yield: float = 0.0,
     cash_yield_from: Optional[pd.Timestamp] = None,
+    trail_pct: Optional[float] = None,
+    lock_at: Optional[float] = None,
 ) -> Result:
     """Replay signals through the real risk engine: next-open fills, stop/target levels off the signal-day close.
 
@@ -71,6 +73,10 @@ def simulate(
 
     `slippage` is charged adversarially (buy higher, sell lower) on market fills only; stop/target exits hit at their
     exact levels. `fees` mirrors the paper broker's schedule (india_delivery_fees) for net-of-cost parity (D1/D2).
+
+    `trail_pct` raises each position's stop to that fraction below its highest high since entry (never lowers it);
+    `lock_at` (a gain such as 0.20) first moves the stop to the entry price once the high has gained that much.
+    Both apply from the next day's open, like the live broker-side stop moves. Research only: the live bot does neither.
 
     `trend_exit` (the live exit, on by default) sells at the next open after a close below the 200-day average, so a
     simulation tests the strategy that is actually running.
@@ -204,6 +210,17 @@ def simulate(
                 close_position(sym, day, pos["stop"], "STOP")
             elif row.High >= pos["target"]:
                 close_position(sym, day, pos["target"], "TARGET")
+
+        if trail_pct is not None or lock_at is not None:
+            for sym, pos in positions.items():
+                if not has_bar(sym, day):
+                    continue
+                high = float(bars[sym].at[day, "High"])
+                pos["peak"] = max(pos.get("peak", pos["entry_price"]), high)
+                if trail_pct is not None:
+                    pos["stop"] = max(pos["stop"], pos["peak"] * (1 - trail_pct))
+                if lock_at is not None and pos["peak"] >= pos["entry_price"] * (1 + lock_at):
+                    pos["stop"] = max(pos["stop"], pos["entry_price"])
 
         equity = cash + sum(p["qty"] * price_at(s, day, "Close") for s, p in positions.items())
         curve[day] = equity
