@@ -2,7 +2,7 @@
 
 Fixed 2026-10-26, before the first frozen session (2026-10-27). Enforced by `scripts/forward_test_report.py`. Written
 after a review against the skills `paper-trading-and-forward-test-protocol`, `live-vs-backtest-drift-monitoring`,
-`backtest-vs-broker-fill-reconciliation`, `ml4t-deflated-sharpe` and `ml4t-meta-labels` (in `.claude/skills/`).
+`backtest-vs-broker-fill-reconciliation`, `ml4t-deflated-sharpe` and `ml4t-meta-labels` (skills.sh: kryhr/26-quant-trading-skills, ml4t/skills; not kept in the repo).
 
 ## Why
 Until now every account's rules changed during its paper run (orb-v3 on 10-15, the 500-stock universe on 10-19, entry

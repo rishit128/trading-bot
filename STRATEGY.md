@@ -1136,7 +1136,7 @@ its own; neither fills nor slippage explain it. Rules unchanged.
 
 ### Review against the skills.sh research skills, and the fixes (2026-10-26; no rule changed)
 Checked against `paper-trading-and-forward-test-protocol`, `live-vs-backtest-drift-monitoring`, `ml4t-deflated-sharpe`,
-`ml4t-meta-labels` and others (`.claude/skills/`). Found and fixed:
+`ml4t-meta-labels` and others (skills.sh, not kept in the repo). Found and fixed:
 - **Rule changes went live without a version bump:** the 500-stock universe (10-19), the upper-circuit skip (10-23) and the
   F&O short build-up skip (10-26) ran under orb-v3 / gapgo-v1 / gaponly-v1, and the results-date and F&O checks and the
   core sleeve under swing-v3. Bumped to **orb-v4, gapgo-v2, gaponly-v2, swing-v4** (labels only; nothing trades differently).
