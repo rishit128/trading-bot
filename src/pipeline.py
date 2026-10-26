@@ -18,6 +18,7 @@ from src.data.market_context import MarketContext
 from src.data.market_pulse import MAX_OPEN as MAX_PULSE_OPEN
 from src.data.market_pulse import HotStock, MarketPulse
 from src.data.market_pulse import summary as pulse_summary
+from src.data.sector_watch import OIL_GAS
 from src.database import DecisionRecord, EquityRecord, OrderRecord
 from src.engine.agent_signal import AgentSignal, SignalDetails
 from src.engine.enums import NOT_A_PLACED_BUY, SILENT_STATUSES, Action, OrderStatus
@@ -332,6 +333,8 @@ class TradingPipeline:
         found = "screener" if self.universe_fn is not None else "watchlist"
         for s in scanned:
             self._sources[s] = "held" if s in portfolio.positions else (f"{found}+research" if s in research else found)
+            if s in OIL_GAS and self._sources[s] == found:
+                self._sources[s] = f"{found}+oilgas"
         for s in research:
             self._sources.setdefault(s, "research")
         self._screened = {s: v for s in research if self._sources[s] == "research" and (v := self._screen(s, portfolio))}
@@ -515,7 +518,7 @@ class TradingPipeline:
             if action == Action.BUY:
                 context = self._buy_context(symbol, price)
             if context.skip:
-                status, broker_id, error = OrderStatus.SKIPPED_CIRCUIT, None, context.skip
+                status, broker_id, error = OrderStatus.SKIPPED_CONTEXT, None, context.skip
             else:
                 status, broker_id, error, filled_qty, fill_price = self._submit(symbol, action, qty, price)
         with self.sessions() as s:

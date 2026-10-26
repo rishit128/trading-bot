@@ -29,6 +29,8 @@ log = logging.getLogger(__name__)
 
 INDEX_TICKER = "^NSEI"  # Nifty 50
 VIX_TICKER = "^INDIAVIX"
+CRUDE_TICKER = "BZ=F"  # Brent crude futures, US dollars a barrel
+CRUDE_DAYS = 21  # about a month of trading days
 CACHE_MAX_AGE_HOURS = 12.0  # the live bot re-downloads the index/VIX series at most this stale
 
 
@@ -46,6 +48,8 @@ class MarketContext:
     vix: Optional[float] = None
     vix_percentile: Optional[float] = None  # 0-1, where today's VIX sits in the last year's range
     vs_index_6m: Optional[float] = None  # the stock's 6-month return minus the index's (stock price data available)
+    crude: Optional[float] = None  # Brent, US dollars a barrel
+    crude_1m: Optional[float] = None  # its change over the last month
 
 
 class MarketContextProvider:
@@ -105,6 +109,20 @@ class MarketContextProvider:
         """India VIX daily closes, or None when unavailable."""
         return self._series(self._vix_ticker)
 
+    def crude_series(self) -> Optional[pd.Series]:
+        """Brent crude daily closes, or None when unavailable."""
+        return self._series(CRUDE_TICKER)
+
+    def crude_move(self) -> Optional[tuple]:
+        """(Brent now, its change over the last month), or None when the series is missing or too short."""
+        try:
+            crude = self.crude_series()
+        except Exception:
+            return None
+        if crude is None or len(crude) <= CRUDE_DAYS:
+            return None
+        return float(crude.iloc[-1]), float(crude.iloc[-1] / crude.iloc[-1 - CRUDE_DAYS] - 1)
+
     def context(self, symbol: str, snapshot: Snapshot) -> Optional[MarketContext]:
         """The market context for one stock, or None when the index cannot be loaded (analysis continues unchanged)."""
         try:
@@ -122,6 +140,7 @@ class MarketContextProvider:
         vix_pct = None
         if vix is not None and len(vix) >= 30:
             vix_pct = float(vix.tail(252).rank(pct=True).iloc[-1])  # the last year, as the prompt says
+        crude = self.crude_move()
         stock_mom = snapshot.momentum_6m
         index_mom = float(nifty.iloc[-1] / nifty.iloc[-127] - 1) if len(nifty) > 126 else None
         return MarketContext(
@@ -134,4 +153,6 @@ class MarketContextProvider:
             vix=vix_last,
             vix_percentile=vix_pct,
             vs_index_6m=(stock_mom - index_mom) if stock_mom is not None and index_mom is not None else None,
+            crude=crude[0] if crude else None,
+            crude_1m=crude[1] if crude else None,
         )

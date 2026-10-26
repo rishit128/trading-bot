@@ -25,7 +25,7 @@ def test_members_are_the_old_strings_so_nothing_stored_or_sent_changes():
         "MARKET_CLOSED",
         "SKIPPED_COOLDOWN",
         "SKIPPED_OPEN_ORDER",
-        "SKIPPED_CIRCUIT",
+        "SKIPPED_CONTEXT",
         "FAILED",
     }
     assert {d.value for d in DecisionSource} == {"agents", "trend_exit"}

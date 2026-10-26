@@ -6,7 +6,7 @@ rules change. The decisions table stores these per-decision (columns added by th
 can answer "why did behaviour change on that date" by comparing stamps instead of guessing."""
 
 FEATURE_VERSION = "indicators-v4"  # v3 + 12-1 month momentum (the scanner's ranking signal) in the snapshot
-PROMPT_VERSION = "technical-v12"  # v11 + the market pulse (a surging sector) and its own baseline, when the stock has one
+PROMPT_VERSION = "technical-v13"  # v12 + Brent crude and its monthly change in the market line
 SCHEMA_VERSION = "signal-v1"  # the llm.SIGNAL_SCHEMA output contract, frozen for replay compatibility
 # swing-v1: mechanical BUY filter + trend exit + 15% protective stop, sized and gated by the risk engine, paper broker.
 # swing-v2: the same, with the stocks of open broker Swing/Momentum/Stellar Pick buy calls added to the candidates.
@@ -30,7 +30,7 @@ GAPGO_VERSION = "gapgo-v1"
 GAPONLY_VERSION = "gaponly-v1"
 # The news-catalyst paper strategy (its own account): a material exchange filing, read by the AI, traded long by fixed
 # rules (src.news.strategy).
-NEWS_VERSION = "news-v2"  # v2: gap floor 0% (was +2%) and a live order-book veto
+NEWS_VERSION = "news-v3"  # v2: gap floor 0% (was +2%), live order-book veto; v3: rule A until 12:00, filings after 14:30 roll over
 
 VERSIONS = {
     "feature": FEATURE_VERSION,

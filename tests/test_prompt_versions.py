@@ -22,6 +22,7 @@ FINGERPRINTS = {
     "technical-v10": "2b025ee232b16e3f959e75a3c53a1d44dfce2c9991b626d275d8840b1098d06e",
     "technical-v11": "be59a29a6f2a4ec570e8043432657ec9a5ec2f38e3b6aa4ef06b8de025d37ab5",
     "technical-v12": "bc29cd47022acf18b728bc5bade85e783a839f3ccb7606ebd3211031ccef70b1",
+    "technical-v13": "2d8c5569a7c12f17ee66d215e0df7515905a32b77627169b952329d06321d61d",
 }  # earlier versions' texts live in git history
 
 
@@ -40,7 +41,7 @@ HOUSE = HouseCall(
 )
 
 
-def fingerprint(with_house: bool = True, with_pulse: bool = True) -> str:
+def fingerprint(with_house: bool = True, with_pulse: bool = True, with_crude: bool = True) -> str:
     snaps = [
         Snapshot(
             "UP",
@@ -76,6 +77,8 @@ def fingerprint(with_house: bool = True, with_pulse: bool = True) -> str:
         vix=18.0,
         vix_percentile=0.85,
         vs_index_6m=0.05,
+        crude=85.0 if with_crude else None,
+        crude_1m=0.062 if with_crude else None,
     )
     company = Fundamentals(
         sector="Industrials",
@@ -122,12 +125,17 @@ def test_the_prompt_text_matches_the_recorded_version():
 
 def test_a_stock_without_a_house_call_gets_exactly_the_v10_prompt():
     """v11 only ADDS the research line when there is a call: every other prompt is byte-for-byte what v10 sent."""
-    assert fingerprint(with_house=False, with_pulse=False) == FINGERPRINTS["technical-v10"]
+    assert fingerprint(with_house=False, with_pulse=False, with_crude=False) == FINGERPRINTS["technical-v10"]
 
 
 def test_a_stock_without_a_pulse_gets_exactly_the_v11_prompt():
     """v12 only ADDS the market-pulse line and baseline when the stock's sector is surging."""
-    assert fingerprint(with_pulse=False) == FINGERPRINTS["technical-v11"]
+    assert fingerprint(with_pulse=False, with_crude=False) == FINGERPRINTS["technical-v11"]
+
+
+def test_a_market_without_crude_data_gets_exactly_the_v12_prompt():
+    """v13 only ADDS the Brent crude clause to the market line when the price could be read."""
+    assert fingerprint(with_crude=False) == FINGERPRINTS["technical-v12"]
 
 
 def test_a_surging_sector_stock_above_its_50_day_average_is_a_mechanical_buy():

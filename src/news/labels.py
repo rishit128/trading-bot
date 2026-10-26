@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from src.data.filings import Filing
 from src.data.india import IST
+from src.news.strategy import B_UNTIL
 
 EventType = Literal[
     "results",
@@ -249,11 +250,12 @@ def as_utc(when: datetime) -> datetime:
 
 
 def first_session(published: datetime, is_session_day: Callable[[datetime], bool]) -> str:
-    """The first session (YYYY-MM-DD) a filing can be traded in: a filing after 15:30 or on a closed day belongs to the next
-    trading day; one before 09:15 to the same day if it trades."""
+    """The first session (YYYY-MM-DD) a filing can be traded in: a filing after the last time of day rule B takes news
+    (14:30) or on a closed day belongs to the next trading day, where rule A treats it as overnight news; one before that to
+    the same day if it trades. (Until 2026-10-23 the cut-off was 15:30, which left filings from 14:30 to 15:30 undecided.)"""
     local = published.astimezone(IST)
     day = local.date()
-    if local.time() >= dtime(15, 30):
+    if local.time() > B_UNTIL:
         day += timedelta(days=1)
     for _ in range(10):
         if is_session_day(datetime.combine(day, dtime(12, 0), IST)):

@@ -970,7 +970,7 @@ the automatic backup. The stream and bars are `src/data/angel.py`, `angel_bars.p
 - **Every account (added 2026-10-22).** The same Angel One data now reaches all five paper accounts, not only the news one:
   fills, valuation and the replay of stops come from Angel One's bars (the bar still forming included, so a stop is seen as soon
   as a real print crosses it), with Yahoo for any stock or moment it does not cover; and every BUY, swing or intraday, is
-  refused within 1% of the stock's upper circuit (swing status `SKIPPED_CIRCUIT`) and stores a record: bid-ask spread, how lopsided
+  refused within 1% of the stock's upper circuit (swing status `SKIPPED_CONTEXT`) and stores a record: bid-ask spread, how lopsided
   the order book is (+1 all buyers), where the price sits in its 52-week range, and the futures put-call ratio and OI build-up. Only
   the circuit check acts on anything. The records are for a later pre-declared test of whether any of them separates winners from
   losers; until that test passes none of them may be used as a rule.
@@ -1035,3 +1035,48 @@ setting (15 slots x 8.8% under the 90% cap, in practice about 10 positions) gave
 drawdowns; 20: fee drag, fees 14% of capital in 3 years). The position count stays as it is. Conclusion for the swing
 account: its parameters sit on a flat, noisy plateau, so more parameter changes will not help; a gain has to come from
 information the prices do not contain (results dates, delivery, F&O positioning), tested forward.
+
+**Recorded at every swing entry from 2026-10-23 (no decision uses it; swing-v3 trades are unchanged).** Each BUY's
+`context_json` already carried Angel One's spread, order-book balance, circuit limits, 52-week range, F&O put-call and open-interest
+build-up, and the market regime. It now also says how near the stock's results are: `results_in_days` (the nearest board
+meeting announced in BSE's feed, whose notice gives the date) and `results_filed_days_ago`. The watcher keeps every
+results-related notice for every stock (table `filing_notices` in news.db), so the history builds from today; no free
+history of results dates exists (2026-10-07). Delivery percentage still needs NSE files downloaded by hand and is not
+recorded. Forward test (pre-declared): after >= 100 swing entries, compare entries within 5 days of results with the rest;
+adopt a "no buy within N days of results" rule only if the former lose by at least 1% a trade (t >= 2) in both halves.
+
+## Crude oil in the market line, and an oil and gas watch (2026-10-23, swing, technical-v13; NOT backtested)
+At the owner's request. (1) Brent crude (Yahoo BZ=F) and its change over the last month are now in the market line the
+technical agent reads (PROMPT_VERSION technical-v13; unchanged text when the price cannot be read), in `/market`, and as
+`crude_1m` in every entry record (swing and intraday). Whether it helps is judged forward: after >= 100 swing entries, oil-
+and gas-linked entries made with crude rising against falling (pre-declared: a difference of 1% a trade, t >= 2).
+(2) `src/data/sector_watch.py`: 20 oil and gas stocks that pass the screener but rank below its top 15 are now analysed as
+well (tagged `screener+oilgas`). They keep every filter (liquidity, volatility, price above the 50- and 200-day averages,
+RSI), the same AI, risk engine and 15% stop; a stock in a downtrend is not added. Reason for caution: the oil and gas
+basket returned +477% over ten years against +424% for all NSE stocks, and it lagged by 15 to 44 points in the strong years
+(2017, 2020, 2021) while leading by 12 to 19 in weak ones (2018, 2019, 2025), so it is not a free edge. The first
+candidates this affects: CHENNPETRO and CASTROLIND, the only two oil stocks above both averages today.
+
+### News-catalyst v3 (2026-10-26): two fixes after three sessions with no entry
+52 material filings over 23 and 26 Oct, none traded. Reading each against the day's bars: most good-news stocks really did
+fade (SWIGGY -17%, ADANIENSOL -6%, WELCORP -2% by the close), so the gap, breakout and breadth rules were right to refuse
+them. Two things were wrong. (1) Rule A's window ended at 10:30, but APOLLO broke out at 11:35 and closed +11.4% (high
++14.8%) and CHENNPETRO broke out at 10:35 (high +5.5%); the window is now 09:30 to 12:00. (2) A filing between 14:30 and 15:30
+was assigned to the same session, where rule B no longer takes news and rule A needs news from before the open, so it was
+never decided (JSWSTEEL's results, +226% profit, filed at 14:46 on 23 Oct, among them); it now belongs to the next
+session and is traded as overnight news. The breadth filter (40% of stocks above yesterday's close at 09:30) is unchanged:
+on 23 Oct it read 21% and the stocks it blocked drifted lower. NEWS_VERSION news-v3; judged forward like v1 and v2.
+Lesson for the swing account: CASTROLIND was bought directly on 23 Oct and its results (net profit -22.8%) came out on 26 Oct;
+a direct purchase has no entry record and no results-date check. It was sold on 26 Oct at the owner's request to fix things.
+
+### Results dates and F&O positioning now refuse entries (2026-10-26, at the owner's request; NOT backtested)
+Both were record-only. Each is now a pre-trade check on every long entry that goes through the entry context (status
+`SKIPPED_CONTEXT`, renamed from `SKIPPED_CIRCUIT`, reason stored on the order or signal): (1) swing: no new buy when the BSE
+feed has announced the stock's results meeting within 3 days (`results_calendar.BLOCK_DAYS`; the CASTROLIND case: bought 23 Oct,
+results 26 Oct, profit -22.8%); (2) all five accounts: no long entry while the stock's near-month futures show a short
+build-up (open interest rising as the price falls, Angel One `oIBuildup`), which only F&O stocks have. Neither is a prediction:
+the first avoids an event the 15% stop cannot protect against (a gap), the second declines to buy into fresh shorting. The
+cost is missed entries, so both are counted forward: after 100 skipped entries, compare what the skipped stocks did over the
+next 5 sessions with the entered ones; remove a check that skipped winners (average above the entered stocks' by 1%, t >= 2).
+Delivery percentage is NOT available from Angel One (the market-data quote has no such field; checked 2026-10-26) and the
+portal's pages the bot reads are only Research and holdings; the delivery filter still needs NSE's bhavcopy files saved by hand.

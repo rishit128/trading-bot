@@ -19,7 +19,8 @@ MIN_GAP = 1.2  # seconds between requests
 BATCH = 50  # stocks per quote request
 QUOTE_TTL = 60.0  # seconds a quote is reused
 FNO_MAX_AGE = 600.0  # seconds a put-call ratio / build-up listing is reused
-BUILD_UPS = ("Long Built Up", "Short Built Up", "Short Covering", "Long Unwinding")
+SHORT_BUILD_UP = "Short Built Up"  # open interest rising as the price falls: new shorts, a bearish reading for a long entry
+BUILD_UPS = ("Long Built Up", SHORT_BUILD_UP, "Short Covering", "Long Unwinding")
 FUTURE = re.compile(r"^(.+?)\d{2}[A-Z]{3}\d{2}FUT$")  # 'INDHOTEL27OCT26FUT' -> INDHOTEL
 
 
@@ -123,9 +124,14 @@ class AngelQuotes:
         except Exception as e:
             note["fno"] = f"unavailable ({type(e).__name__})"
         upper = q["upperCircuit"]
+        fno = note.get("fno")
         skip = (
             f"price {price:,.2f} within 1% of the upper circuit {upper:,.2f}"
             if upper and price >= upper * (1 - CIRCUIT_MARGIN)
-            else None
+            else (
+                f"F&O short build-up: futures open interest {fno['oi_change_pct']:+.1f}% with the price falling"
+                if isinstance(fno, dict) and fno.get("build_up") == SHORT_BUILD_UP
+                else None
+            )
         )
         return EntryContext(skip, note)

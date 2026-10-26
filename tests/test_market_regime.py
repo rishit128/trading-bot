@@ -56,6 +56,9 @@ class Market:
     def vix_series(self):
         return self.vix
 
+    def crude_move(self):
+        return (85.0, 0.062)
+
 
 def series(values):
     return pd.Series(values, index=pd.date_range("2025-01-01", periods=len(values), freq="B"))
@@ -69,7 +72,8 @@ def test_the_provider_labels_a_falling_market_bear_and_caches_for_five_minutes()
     regime = provider.current()
     assert regime.trend == "BEAR" and regime.risk == "STRESS" and regime.tone is None
     assert regime.short() == "BEAR/STRESS" and "BEAR" in regime.text()
-    provider.market = SimpleNamespace(index_series=lambda: calls.append(1) or falling, vix_series=lambda: None)
+    assert "Brent crude $85, +6.2%" in regime.text()
+    provider.market = SimpleNamespace(index_series=lambda: calls.append(1) or falling, vix_series=lambda: None, crude_move=lambda: None)
     provider.current()
     assert calls == []  # cached
     now[0] = 400.0
@@ -88,9 +92,10 @@ def test_the_provider_gives_none_when_the_index_cannot_be_read():
 
 
 def test_with_regime_adds_the_label_to_the_record_without_touching_the_decision():
-    provider = SimpleNamespace(current=lambda: SimpleNamespace(short=lambda: "BEAR/CALM/WEAK"))
+    regime = SimpleNamespace(short=lambda: "BEAR/CALM/WEAK", facts={"crude_1m": 0.0623})
+    provider = SimpleNamespace(current=lambda: regime)
     wrapped = with_regime(lambda s, p: EntryContext("near the circuit", {"spread_pct": 0.1}), provider)
     out = wrapped("AAA", 100.0)
-    assert out.skip == "near the circuit" and out.note == {"spread_pct": 0.1, "market": "BEAR/CALM/WEAK"}
+    assert out.skip == "near the circuit" and out.note == {"spread_pct": 0.1, "market": "BEAR/CALM/WEAK", "crude_1m": 0.0623}
     none = with_regime(lambda s, p: EntryContext(None, {"a": 1}), SimpleNamespace(current=lambda: None))("AAA", 1.0)
     assert none.note == {"a": 1}

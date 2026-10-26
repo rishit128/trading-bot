@@ -29,7 +29,7 @@ class OrderStatus(StrEnum):
     MARKET_CLOSED = "MARKET_CLOSED"
     SKIPPED_COOLDOWN = "SKIPPED_COOLDOWN"
     SKIPPED_OPEN_ORDER = "SKIPPED_OPEN_ORDER"
-    SKIPPED_CIRCUIT = "SKIPPED_CIRCUIT"  # within 1% of the stock's upper circuit limit (Angel One)
+    SKIPPED_CONTEXT = "SKIPPED_CONTEXT"  # a pre-trade check refused it: upper circuit, F&O short build-up, results due (Angel One, BSE feed)
     FAILED = "FAILED"
 
 
@@ -37,7 +37,7 @@ class OrderStatus(StrEnum):
 NOT_A_PLACED_BUY = (
     OrderStatus.SKIPPED_OPEN_ORDER,
     OrderStatus.SKIPPED_COOLDOWN,
-    OrderStatus.SKIPPED_CIRCUIT,
+    OrderStatus.SKIPPED_CONTEXT,
     OrderStatus.FAILED,
     OrderStatus.PAUSED,
     OrderStatus.MARKET_CLOSED,

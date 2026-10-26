@@ -19,6 +19,7 @@ from src.data.filings import FeedReader, Filing
 from src.data.india import IST, SUFFIX
 from src.database import NewsFilingRecord
 from src.news.labels import as_utc, ask_label, first_session, label_fields, materiality, routine_subject
+from src.news.results_calendar import record_notices
 from src.versions import NEWS_VERSION
 
 log = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ class FilingWatcher:
         wanted = self.universe() | self.held_fn()  # the swing account's holdings are read too, to warn about them
         added = 0
         with self.sessions() as s:
+            record_notices(s, filings)  # results dates of every stock, for the swing bot's entry record
             for f in filings:
                 if f.symbol not in wanted or s.scalar(select(NewsFilingRecord.id).where(NewsFilingRecord.key == f.key)):
                     continue

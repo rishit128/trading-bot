@@ -75,7 +75,8 @@ class DecisionRecord(Base):
     # Per-decision universe snapshot: how many symbols were in the scanned universe when this call was made.
     universe_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Why the stock was analysed: "held", "screener", "research" (an open broker research call put it on the list) or
-    # "screener+research". None on rows written before the research integration.
+    # "screener+research"; "screener+oilgas" is a watched oil or gas stock (src.data.sector_watch) that passed the screener
+    # below its top N. None on rows written before the research integration.
     candidate_source: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
     # For a stock only a research call put on the list: what the screener's own filters made of it (UniverseScreener.
     # verdict: candidate / below the top N / unaffordable / filtered out). Recorded only; nothing is blocked on it. None
@@ -280,6 +281,21 @@ class IntradayUniverseRecord(Base):
     size: Mapped[int] = mapped_column(Integer)
     symbols_json: Mapped[str] = mapped_column(Text)
     system_version: Mapped[str] = mapped_column(String(16), default="")
+
+
+class FilingNoticeRecord(Base):
+    """A results-related exchange filing of ANY stock (not only the news universe): a board-meeting notice that names the
+    meeting date, or the results themselves. The swing bot reads it at each entry to record how near its results were."""
+
+    __tablename__ = "filing_notices"
+    __table_args__ = (Index("ux_filing_notices_key", "key", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(200))  # the filing's link
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    kind: Mapped[str] = mapped_column(String(8))  # MEETING (a notice with the meeting date) | RESULT
+    published: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # UTC
+    meeting_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # YYYY-MM-DD, MEETING only
 
 
 class NewsFilingRecord(Base):

@@ -147,6 +147,8 @@ def test_a_filing_after_the_close_or_on_a_closed_day_belongs_to_the_next_session
     assert first_session(friday_evening, weekday) == "2026-09-21"  # Monday
     assert first_session(datetime(2026, 9, 21, 8, 0, tzinfo=IST), weekday) == "2026-09-21"
     assert first_session(datetime(2026, 9, 21, 15, 45, tzinfo=IST), weekday) == "2026-09-22"
+    assert first_session(datetime(2026, 9, 21, 14, 46, tzinfo=IST), weekday) == "2026-09-22"  # too late for rule B: overnight news
+    assert first_session(datetime(2026, 9, 21, 14, 30, tzinfo=IST), weekday) == "2026-09-21"  # the last minute rule B takes
 
 
 # ------------------------------------------------------------------ rules
@@ -166,7 +168,15 @@ def test_rule_a_refuses_a_gap_outside_0_to_8_percent_and_waits_for_the_breakout(
     assert ns.rule_a("AAA", today(history([99.0, 99.2, 99.1, 99.5])), 100.0).reason.startswith("gap -1.0%")
     assert ns.rule_a("AAA", today(history([109.0, 109.2, 109.1, 110.0])), 100.0).status == ns.NO
     waiting = ns.rule_a("AAA", today(history([103.0, 103.5, 103.3, 103.4])), 100.0)
-    assert waiting.status == ns.WAITING  # 09:30 bar closed inside the range: may still break out before 10:30
+    assert waiting.status == ns.WAITING  # 09:30 bar closed inside the range: may still break out before 12:00
+
+
+def test_rule_a_takes_a_breakout_after_10_30_until_noon():
+    late = [103.0, 103.5, 103.3] + [103.3] * 14 + [104.2]  # the 10:30 bar is the 16th; this close is the 18th, at 10:40
+    check = ns.rule_a("AAA", today(history(late)), 100.0)
+    assert check.status == ns.FIRED and check.setup.bar_time.time().strftime("%H:%M") == "10:40"
+    too_late = [103.0, 103.5, 103.3] + [103.3] * 33 + [104.2]  # the 36th bar starts at 12:10
+    assert ns.rule_a("AAA", today(history(too_late)), 100.0).status == ns.NO
 
 
 def test_rule_a_skips_a_stop_too_far_or_too_close():

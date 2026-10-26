@@ -2,7 +2,7 @@
 NOT tuned; the plan is written up in STRATEGY.md ("News-catalyst intraday", 2026-10-21).
 
   A. News filed overnight (after the previous session's close, before 09:15): the stock opens flat or up, at most 8%; buy on the first
-     5-minute close above the 09:15-09:30 high, from 09:30 to 10:30, while above VWAP. Stop at the 09:15-09:30 low; skip the
+     5-minute close above the 09:15-09:30 high, from 09:30 to 12:00, while above VWAP. Stop at the 09:15-09:30 low; skip the
      trade when that stop is more than 3% or less than 0.6% below the entry.
   B. News filed during the session (09:15 to 14:30): the first 5-minute bar that closes after the filing must close at least
      0.75% above the price at filing time (the last close before it), on at least 3x that stock's normal volume for that
@@ -31,7 +31,7 @@ from src.intraday import strategy as st
 GAP_MIN, GAP_MAX = 0.0, 0.08  # v2: v1 needed +2%; the breakout and VWAP below now carry the price confirmation
 SPREAD_MAX = 0.5  # percent: the live bid-ask spread above which the entry costs too much
 BOOK_MIN = -0.3  # order book balance (+1 all buyers): below it sellers dominate and the entry is skipped
-A_FROM, A_UNTIL = dtime(9, 30), dtime(10, 30)  # A's signal bars start in [A_FROM, A_UNTIL)
+A_FROM, A_UNTIL = dtime(9, 30), dtime(12, 0)  # v3: v1/v2 stopped at 10:30; APOLLO and CHENNPETRO broke out at 11:35 and 10:35  # A's signal bars start in [A_FROM, A_UNTIL)
 STOP_MIN, STOP_MAX = 0.006, 0.03  # A's stop distance as a fraction of the entry
 B_FROM, B_UNTIL = dtime(9, 15), dtime(14, 30)  # B's filings, inclusive
 B_MOVE, B_VOLUME = 0.0075, 3.0
@@ -89,7 +89,7 @@ def rule_a(symbol: str, day: pd.DataFrame, prev_close: Optional[float]) -> RuleC
     if len(hits) == 0:
         if minutes[-1] < st.minute_of_day(A_UNTIL) - 5:
             return RuleCheck(WAITING, "no close above the 09:15-09:30 high and VWAP yet", ref_price=prev_close)
-        return RuleCheck(NO, "no close above the 09:15-09:30 high and VWAP by 10:30", ref_price=prev_close)
+        return RuleCheck(NO, f"no close above the 09:15-09:30 high and VWAP by {A_UNTIL:%H:%M}", ref_price=prev_close)
     i = int(hits[0])
     entry = float(close[i])
     distance = (entry - range_low) / entry

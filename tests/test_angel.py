@@ -176,7 +176,7 @@ def full_quote(upper=110.0, bid=99.9, ask=100.1):
     }
 
 
-def make_quotes(upper=110.0, fno_fails=False):
+def make_quotes(upper=110.0, fno_fails=False, kind="Long Built Up"):
     def put_call():
         if fno_fails:
             raise RuntimeError("rate")
@@ -187,7 +187,7 @@ def make_quotes(upper=110.0, fno_fails=False):
         putCallRatio=put_call,
         oIBuildup=lambda p: {
             "status": True,
-            "data": [{"tradingSymbol": "SBIN27OCT26FUT", "percentChange": "4.5"}] if p["datatype"] == "Long Built Up" else [],
+            "data": [{"tradingSymbol": "SBIN27OCT26FUT", "percentChange": "4.5"}] if p["datatype"] == kind else [],
         },
     )
     quotes = AngelQuotes(lambda: api, {"SBIN": "3045"}, clock=lambda: 1e9)
@@ -201,6 +201,13 @@ def test_context_logs_spread_and_fno_and_skips_near_the_upper_circuit(monkeypatc
     assert ok.note["book_imbalance"] == 0.5 and ok.note["range_52w"] == 0.5
     assert ok.note["fno"] == {"pcr": 0.8, "build_up": "Long Built Up", "oi_change_pct": 4.5}
     assert "upper circuit" in make_quotes(upper=100.5).entry_context("SBIN", 100.0).skip
+
+
+def test_a_futures_short_build_up_refuses_the_long_entry(monkeypatch):
+    monkeypatch.setattr("src.data.angel_quotes.time.sleep", lambda s: None)
+    context = make_quotes(kind="Short Built Up").entry_context("SBIN", 100.0)
+    assert "short build-up" in context.skip and context.note["fno"]["build_up"] == "Short Built Up"
+    assert make_quotes(kind="Short Covering").entry_context("SBIN", 100.0).skip is None  # only new shorts count
 
 
 def test_context_survives_an_fno_failure(monkeypatch):

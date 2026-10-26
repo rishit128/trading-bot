@@ -49,6 +49,8 @@ class Regime:
         ]
         if f.get("vix") is not None:
             lines.append(f"India VIX {f['vix']:.1f} ({f['vix_percentile']:.0%} of its year's readings are lower) -> {self.risk}")
+        if f.get("crude") is not None:
+            lines.append(f"Brent crude ${f['crude']:,.0f}, {f['crude_1m']:+.1%} over the last month")
         if self.tone:
             lines.append(
                 f"Today: {f['advancers']} stocks up, {f['decliners']} down ({f['breadth']:.0%} above yesterday's close) -> {self.tone}"
@@ -138,6 +140,9 @@ class RegimeProvider:
         if vix_series is not None and len(vix_series) >= 30:
             vix, percentile = float(vix_series.iloc[-1]), float(vix_series.tail(252).rank(pct=True).iloc[-1])
         facts.update(vix=vix, vix_percentile=percentile)
+        crude = self.market.crude_move()
+        if crude:
+            facts.update(crude=crude[0], crude_1m=crude[1])
         tone = None
         breadth = live_breadth(self.sessions, self.now_fn()) if self.sessions is not None else None
         if breadth:
@@ -153,6 +158,10 @@ def with_regime(
 
     def wrapped(symbol: str, price: float) -> EntryContext:
         context, regime = context_fn(symbol, price), provider.current()
-        return EntryContext(context.skip, {**context.note, "market": regime.short()} if regime else context.note)
+        if not regime:
+            return context
+        crude = regime.facts.get("crude_1m")
+        extra = {"market": regime.short(), **({"crude_1m": round(crude, 4)} if isinstance(crude, float) else {})}
+        return EntryContext(context.skip, {**context.note, **extra})
 
     return wrapped

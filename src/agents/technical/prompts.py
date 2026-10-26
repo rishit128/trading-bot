@@ -97,11 +97,13 @@ def market_text(m) -> str:
             f" ({get('vix_percentile'):.0%} of the past year's range)" if get("vix_percentile") is not None else ""
         )
     rsi = f"{get('index_rsi'):.0f}" if get("index_rsi") is not None else "n/a"
+    crude = get("crude")
+    oil = f"; Brent crude ${crude:,.0f} ({_pct(get('crude_1m'))} in a month)" if crude is not None else ""
     return (
         (
             f"Nifty 50 {get('index_price'):,.0f}, {trend} its 200-day average {get('index_ma200'):,.0f}; index RSI(14) {rsi}; "
             f"6-month index return {_pct(get('index_mom_6m'))}; India VIX {vix}; this stock vs the index over 6 months "
-            f"{_pct(get('vs_index_6m'))}"
+            f"{_pct(get('vs_index_6m'))}{oil}"
         )
         if get("index_price") is not None
         else "no market data available"

@@ -229,3 +229,12 @@ def test_screener_ignores_the_delivery_filter_by_default_and_when_data_is_unavai
         delivery_loader=boom,
     )
     assert [c.symbol for c in s2.candidates()] == ["GOOD"]  # fails open: screening still works
+
+
+def test_a_watched_oil_stock_that_passes_every_filter_is_added_below_the_top_n():
+    bars = pd.concat([frame("GOOD", series([1.01, 0.994], 50)), frame("ONGC", series([1.007, 0.9965], 50)), frame("DOWN", series([0.99, 1.004], 100))])
+    s = UniverseScreener(lambda: ["GOOD", "ONGC", "DOWN"], lambda symbols: bars, ScreenConfig(max_candidates=1), today=lambda: date(2026, 9, 21))
+    assert [c.symbol for c in s.candidates()] == ["GOOD"]  # ONGC passes but ranks below the top 1
+    assert s.symbols_for(Portfolio(cash=1, equity=1_000_000)) == ["GOOD", "ONGC"]
+    held = Portfolio(cash=1, equity=1_000_000, positions={"ONGC": 5.0}, position_qty={"ONGC": 1})
+    assert s.symbols_for(held) == ["ONGC", "GOOD"]  # held first, not listed twice
