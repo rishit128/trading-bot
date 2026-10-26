@@ -1,0 +1,26 @@
+date,id,variants,family,description,data,trades,net_pct,t,result,source
+2026-09-25,ORB-tune,6,orb,"ORB variants: entries to 11:00, 1R target, narrow range, 3x volume, breadth gate, no extended breakouts",59 days Nifty 100,,-0.25,,fail,STRATEGY.md Intraday ORB: can it be fixed?
+2026-09-28,H1-H5,5,mixed,"ORB short, gap-and-go, gap fade, first-hour momentum, last-half-hour momentum",58 sessions archive,,,,fail,STRATEGY.md Intraday Phase 2
+2026-10-10,H6-H8,3,orb,"ORB in momentum leaders, ORB held to close, one trade a day strongest volume",2y 1-min community data,,-0.128..-0.233,,fail,STRATEGY.md Intraday on 2 years of data
+2026-10-10,ML1,1,orb,ML filter (gradient boosting) on 16 entry features,2y 1-min community data,2164,-0.211,,fail,STRATEGY.md Machine-learning filter
+2026-10-10,Y1-explore,19,mixed,"5 families explored on year 1 (gap-and-go by gap size and leaders, reversal, cross-sectional momentum, market momentum, leader drift); best (gap >= 2% gap-and-go) confirmed once on year 2",2y 1-min community data,345,0.091,-0.2,fail,STRATEGY.md Searching for a better intraday signal
+2026-10-19,I1,2,orb,Stocks in play (top-10 relative opening volume) ORB on 5- and 15-minute ranges,58 sessions archive,95/78,-0.12/-0.20,,fail,STRATEGY.md Intraday improvement tests
+2026-10-19,I3b,1,orb,Cost filter: skip setups whose round trip exceeds a quarter of the stop distance,58 sessions archive,9304,-0.20,,fail,STRATEGY.md Intraday improvement tests
+2026-10-19,R1-rank,2,orb,Rank ORB signals by time-of-day relative volume (best 5 and first 5),58 sessions archive,220,-0.22/-0.24,0.3..0.6,fail,STRATEGY.md Intraday improvement tests
+2026-10-19,I2a,1,gapgo,Largest gap first,58 sessions archive,,,,fail,STRATEGY.md Intraday improvement tests
+2026-10-19,segments,8,orb,"ORB segments: entry time, range width, stop distance, volume surge, price, gap, liquidity, breadth",58 sessions archive,,,,fail,STRATEGY.md Intraday improvement tests
+2026-10-19,VIX,1,mixed,VIX day filter,58 sessions archive,,,0.6/-0.7,fail,STRATEGY.md Intraday improvement tests
+2026-10-21,I2b,1,gapgo,Skip weak-gap days,8y Angel + archive,,-0.117,-0.6,fail,logs/research_history.log
+2026-10-21,I2c,1,gapgo,Break-even stop after +1R,8y Angel + archive,,-0.053,-0.5,fail,logs/research_history.log
+2026-10-21,DT1,2,mixed,Day-type (share of universe opening up) filter for ORB and gap-and-go,8y Angel + archive,,-0.211/-0.011,-22.7/-0.1,fail,logs/research_history.log
+2026-10-21,R1,1,orb,Stocks-in-play ORB,8y Angel + archive,28686,-0.164,-19.4,fail,logs/research_round3.log
+2026-10-21,R2,1,gap,Big-gap fade,8y Angel + archive,,-0.278,-6.1,fail,logs/research_round3.log
+2026-10-21,R3,1,mixed,Leaders on a weak tape,8y Angel + archive,,-0.261,-6.2,fail,logs/research_round3.log
+2026-10-21,R4,1,results,Gap-and-go the session after results (the lead),8y Angel + archive,231,0.354,1.5,fail (lead),logs/research_round3.log
+2026-10-21,R5,1,mixed,VWAP stretch reversion,8y Angel + archive,,-0.199,-4.9,fail,logs/research_round3.log
+2026-10-21,T1,1,orb,ORB on stocks with a good walk-forward record,8y Angel + archive,,-0.209,-5.5,fail,logs/research_round3.log
+2026-10-21,T2,1,gapgo,Gap-and-go on stocks with a good walk-forward record,8y Angel + archive,79,0.198,0.3,fail,logs/research_round3.log
+2026-10-21,E1,1,results,Results gap-follow,8y Angel + archive,,0.029,-0.1,fail,logs/research_round4.log
+2026-10-21,E2,1,results,Results gap-and-go both sides,8y Angel + archive,375,0.247,1.6,fail (lead),logs/research_round4.log
+2026-10-21,E3,1,results,Results first-hour trend,8y Angel + archive,,0.082,1.7,fail,logs/research_round4.log
+2026-10-21,P1-P6,6,popular,"EMA 9/21 + VWAP, Supertrend, RSI 30/70, Bollinger, 30-min ORB both sides, previous-day high/low break",8y Angel + archive,,-0.161..-0.254,-93.5..-19.8,fail,logs/research_round4.log

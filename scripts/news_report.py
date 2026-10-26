@@ -43,6 +43,31 @@ def line(name: str, frame: pd.DataFrame) -> str:
     )
 
 
+def ai_filter_check(df: pd.DataFrame) -> None:
+    """Is the AI a useful filter (meta-label)? The rule only acts on what the AI calls material, so the AI earns its place
+    if those filings move more, and more in its direction, than the ones it set aside. One row per stock and session."""
+    moved = df[df["move_close"].notna()].sort_values("published")
+    groups = {
+        "material": moved[moved["material"] == True],  # noqa: E712
+        "labelled, not material": moved[(moved["label_status"] == "LABELLED") & (moved["material"] != True)],  # noqa: E712
+        "routine (no AI call)": moved[moved["label_status"] == "ROUTINE"],
+    }
+    groups = {name: g.drop_duplicates(["symbol", "session"]) for name, g in groups.items()}
+    print("\ndoes the AI pick the filings that move? (|move| to the close; 'in AI direction' only where it gave one)")
+    print(f"{'':<26}{'n':>6}{'|close|':>10}{'|120 min|':>11}{'in AI direction':>17}{'right side':>12}")
+    for name, g in groups.items():
+        if g.empty:
+            print(f"{name:<26} none yet")
+            continue
+        signed = g["signed_close"].dropna()
+        direction = f"{signed.mean():>+17.3%}{(signed > 0).mean():>12.0%}" if len(signed) else f"{'-':>17}{'-':>12}"
+        print(f"{name:<26}{len(g):>6}{g['move_close'].abs().mean():>10.3%}{g['move_120m'].abs().mean():>11.3%}{direction}")
+    a, b = groups["material"]["move_close"].abs(), groups["labelled, not material"]["move_close"].abs()
+    if len(a) >= 2 and len(b) >= 2:
+        t = (a.mean() - b.mean()) / np.sqrt(a.var(ddof=1) / len(a) + b.var(ddof=1) / len(b))
+        print(f"material minus not material, |close|: {a.mean() - b.mean():+.3%} (t {t:+.1f}, by filing, not by date)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--sample", type=int, default=30, help="AI labels to list for the hand spot-check")
@@ -80,6 +105,7 @@ def main():
         f"\nGATE 1: {'PASS' if passed else 'not yet'} ({n} of {MIN_FILINGS} material filings, mean {mean:+.3%} against "
         f"{COST:.2%}, t {t:.1f} of {T_BAR})"
     )
+    ai_filter_check(df)
     pool = labelled.to_dict("records")
     random.Random(0).shuffle(pool)
     print(f"\nAI labels to check by hand ({min(args.sample, len(pool))} of {len(pool)}):")

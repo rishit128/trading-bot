@@ -9,6 +9,7 @@ import pytest
 
 from src.data.india import IST
 from src.research.intraday_replay import ReplayConfig, ReplayFeed, format_summary, replay, session_days, summarise
+from src.versions import GAPGO_VERSION, GAPONLY_VERSION
 from tests.test_intraday_audit import DAY0, scripted_session
 
 D1 = datetime(2026, 9, 21, tzinfo=IST)  # a Monday
@@ -206,7 +207,7 @@ def test_gap_and_go_replays_through_the_same_engine_with_the_previous_close_and_
     assert trade["entry_price"] == pytest.approx(101 * 1.0005) and trade["reason"] == "SIGNAL"  # no target: squared off
     assert trade["exit_price"] == pytest.approx(104.5 * (1 - 0.0005))
     [signal] = result.signals.to_dict("records")
-    assert signal["system_version"] == "gapgo-v1" and signal["outcome"] == "ENTERED"
+    assert signal["system_version"] == GAPGO_VERSION and signal["outcome"] == "ENTERED"
     orb = replay(bars, ReplayConfig(capital=20_000.0))  # the breakout rule on the same bars takes its target
     assert [t["reason"] for t in orb.trades.to_dict("records")] == ["TARGET"]
     with pytest.raises(ValueError, match="strategy"):
@@ -226,4 +227,4 @@ def test_gap_only_replays_buying_the_gap_at_0930_without_waiting_for_the_breakou
     result = replay(bars, ReplayConfig(capital=20_000.0), strategy="gaponly")
     [trade] = result.trades.to_dict("records")
     assert trade["entry_price"] == pytest.approx(100 * 1.0005) and trade["reason"] == "SIGNAL"  # bought at 09:30, held
-    assert result.signals.to_dict("records")[0]["system_version"] == "gaponly-v1"
+    assert result.signals.to_dict("records")[0]["system_version"] == GAPONLY_VERSION

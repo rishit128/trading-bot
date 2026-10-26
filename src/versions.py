@@ -12,7 +12,9 @@ SCHEMA_VERSION = "signal-v1"  # the llm.SIGNAL_SCHEMA output contract, frozen fo
 # swing-v2: the same, with the stocks of open broker Swing/Momentum/Stellar Pick buy calls added to the candidates.
 # swing-v3: stocks of surging sectors (the market pulse) are also candidates, bought while above MA50 and sold on a
 #           close below MA50 (the other stocks keep the MA200 exit).
-STRATEGY_VERSION = "swing-v3"
+# swing-v4 (2026-10-26): no new buy within 3 days of an announced results meeting, none into an F&O short build-up
+#           (both refuse entries through the entry context), and the core index sleeve (CORE_SLEEVE).
+STRATEGY_VERSION = "swing-v4"
 
 # The intraday engine (a separate paper account). Recorded with every signal so results can be split by system version.
 #   orb-v1: sizing borrowed from the swing settings (5% of equity), stop/target replay dropped each bar's tail, no record
@@ -22,15 +24,20 @@ STRATEGY_VERSION = "swing-v3"
 #           finished session's bars archived (no change to what trades: the vectorised rule is pinned to the old one).
 #   orb-v3: the stocks of today's open broker Intraday buy calls are added to the scan, and a stock the broker has an
 #           open SELL call on is not bought (the breakout rule itself is unchanged).
-INTRADAY_VERSION = "orb-v3"
+#   orb-v4: the universe is the explicit 500-stock INTRADAY_UNIVERSE (was Yahoo's top 100, since 2026-10-19), and Angel One's
+#           entry checks refuse a buy within 1% of the upper circuit (since 2026-10-23) or into an F&O short build-up
+#           (since 2026-10-26). Bumped 2026-10-26: those changes had gone live under orb-v3.
+INTRADAY_VERSION = "orb-v4"
 # The gap-and-go paper strategy (its own account): gap >= 2% then a close above the opening range by 10:30, stop at
 # the range low, held to the square-off.
-GAPGO_VERSION = "gapgo-v1"
+# gapgo-v2: v1 plus the universe and Angel One entry checks of orb-v4 (bumped 2026-10-26, live since 2026-10-19..26).
+GAPGO_VERSION = "gapgo-v2"
 # The gap-only paper control (its own account): the same gap, bought on the 09:30 close with no breakout.
-GAPONLY_VERSION = "gaponly-v1"
+# gaponly-v2: v1 plus the universe and Angel One entry checks of orb-v4 (bumped 2026-10-26).
+GAPONLY_VERSION = "gaponly-v2"
 # The news-catalyst paper strategy (its own account): a material exchange filing, read by the AI, traded long by fixed
 # rules (src.news.strategy).
-NEWS_VERSION = "news-v3"  # v2: gap floor 0% (was +2%), live order-book veto; v3: rule A until 12:00, filings after 14:30 roll over
+NEWS_VERSION = "news-v3"  # v2: gap floor 0% (was +2%), live order-book veto; v3: rule A until 12:00, filings after 14:30 roll over, no entry into an F&O short build-up
 
 VERSIONS = {
     "feature": FEATURE_VERSION,

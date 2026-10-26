@@ -1111,3 +1111,44 @@ Reading: nearly all of the return is exposure to the broad NSE (mostly small and
 small-cap market produced the live loss; stock selection has not been shown to add anything, matching the earlier finding that
 the entry rule adds little over holding the stocks (STRATEGY.md, 2026-09-26). The exits and the sizing are what the evidence
 supports; the ranking is not.
+
+### Paper accounts against a replay of the same sessions (2026-10-26; `scripts/reconcile_paper_replay.py`, read only)
+Question: are the intraday paper losses the rule's, or the execution's? The live engine and paper broker were replayed over
+the archived final 5-minute bars, one session at a time on that session's live universe in its live order (the engine
+takes breakouts in download order and stops at 5 positions, so order decides which stocks are bought), and each paper
+trade was matched to the replay's by date and stock. Thresholds were written in the script before the first run (skills:
+backtest-vs-broker-fill-reconciliation, order-book-and-intrabar-price-path-modeling).
+
+**ORB, 18 sessions (2026-09-29 .. 10-26), 122 paper trades:** 92 matched, 30 paper only, 28 replay only.
+- *Prices are not the problem.* Matched trades: median entry difference 0.000%, mean net difference -0.007% a trade (t -0.6
+  by date), same exit reason 99%. E1 and E2: no. No exit bar touched both the stop and the target (0 of 46).
+- *Decisions are.* 39% of distinct entries were taken by only one side (E3, pre-declared limit 10%: MATERIAL). The live
+  engine decides on bars as served during the session; the replay on the final, revised bars. A signal that exists in one
+  version of the bars and not the other, plus the 5-position limit filled in download order, changes which stocks are
+  bought. Rate before the Angel One switch 36% (44 of 122), after it 50% (14 of 28): no improvement yet (small sample).
+- *Not pre-declared, a lead only:* the matched trades lose -0.067% a trade (Rs -367 over 92); the trades only one side took
+  lose -0.64% (paper, 30) and -0.47% (replay, 28). Breakouts that do not survive a bar revision look like the worst ones.
+  58 trades, untested: to be checked as a pre-declared test once more sessions accumulate (the engine already records
+  `seen_volume`, `final_volume` and `final_signal` per signal).
+**Gap-and-go (7 trades) and gap-only (25):** 6 and 19 matched, too few for a verdict (< 30); rerun as trades accumulate.
+Reading: the ORB loss is the rule's (matched trades lose with identical prices), and the live/replay split adds noise of
+its own; neither fills nor slippage explain it. Rules unchanged.
+
+### Review against the skills.sh research skills, and the fixes (2026-10-26; no rule changed)
+Checked against `paper-trading-and-forward-test-protocol`, `live-vs-backtest-drift-monitoring`, `ml4t-deflated-sharpe`,
+`ml4t-meta-labels` and others (`.claude/skills/`). Found and fixed:
+- **Rule changes went live without a version bump:** the 500-stock universe (10-19), the upper-circuit skip (10-23) and the
+  F&O short build-up skip (10-26) ran under orb-v3 / gapgo-v1 / gaponly-v1, and the results-date and F&O checks and the
+  core sleeve under swing-v3. Bumped to **orb-v4, gapgo-v2, gaponly-v2, swing-v4** (labels only; nothing trades differently).
+- **No forward-test protocol:** every account changed rules mid-run, and only news had go/no-go criteria. Now
+  `docs/trading/forward-tests.md`: versions frozen from 2026-10-27, test length from a power calculation, GO / REDESIGN /
+  INVESTIGATE decided in advance, enforced by `scripts/forward_test_report.py`. Intraday paper keeps running whatever the verdict.
+- **Variants tried were not counted:** `docs/trading/research-trials.csv` registers 69 intraday variants since 2026-09-25.
+  Read against them (`src/research/significance.py`), the results-day lead R4 (t 1.5) has a deflated probability of 0.20
+  (69 trials as independent) to 0.47 (10 really different ideas): not evidence of an edge yet, only a lead.
+- **The news AI was never judged as a filter:** `scripts/news_report.py` now compares what it calls material with what it
+  sets aside. First 4 sessions (29 material filings): material filings move about twice as much (|close| 3.9% against
+  2.1%, t 2.7 by filing) but the AI's direction is a coin flip (52% right, -0.71% in its direction). It finds the news
+  that matters; it does not yet know which way it goes. Too few to act on; rerun as filings accumulate.
+- **Signals that vanish on the final bars were recorded but never watched:** the forward report flags more than 10%
+  (ORB since 10-19: 8 of 37, 22%). Data limits that no code fixes are listed in the protocol.
