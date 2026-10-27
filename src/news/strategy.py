@@ -67,7 +67,7 @@ def _setup(symbol: str, day: pd.DataFrame, i: int, stop: float, range_high: floa
 
 
 def rule_a(symbol: str, day: pd.DataFrame, prev_close: Optional[float]) -> RuleCheck:
-    """Overnight news: gap 2-8%, then the first close above the opening-range high and VWAP from 09:30 to 10:30."""
+    """Overnight news: gap 0-8%, then the first close above the opening-range high and VWAP from 09:30 to 12:00."""
     if prev_close is None:
         return RuleCheck(NO, "no previous close")
     if len(day) < st.RANGE_BARS:

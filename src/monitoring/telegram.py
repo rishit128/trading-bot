@@ -137,7 +137,7 @@ def _telegram_reply(exc: BaseException) -> dict:
         try:
             body = exc.response.json()
             return body if isinstance(body, dict) else {}
-        except Exception:
+        except ValueError:  # the body is not JSON
             return {}
     return {}
 

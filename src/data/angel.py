@@ -273,9 +273,13 @@ class AngelStream:
                     )
                     candles = reply.get("data") or []
                     break
-                except Exception:
+                except Exception as e:
+                    log.debug(
+                        "candles for %s failed (try %d of %d): %s: %s", symbol, attempt + 1, CANDLE_TRIES, type(e).__name__, e
+                    )
                     time.sleep(CANDLE_PACE * 3 * (attempt + 1))
             else:
+                log.warning("candles for %s: gave up after %d tries", symbol, CANDLE_TRIES)
                 failed += 1
             seen = datetime.now(timezone.utc)
             rows = []
@@ -347,13 +351,13 @@ class AngelStream:
 
 
 def make_stream(sessions, universe: List[str], cache_dir: Path, notify) -> Optional[Tuple[AngelStream, Dict[str, str]]]:
-    """The stream and the full token map, or None (with the reason printed) when Angel One cannot be used."""
+    """The stream and the full token map, or None (with the reason logged) when Angel One cannot be used."""
     if not credentials_set():
-        print("angel: ANGEL_* credentials missing, Yahoo only")
+        log.warning("angel: ANGEL_* credentials missing, Yahoo only")
         return None
     try:
         tokens = load_tokens(cache_dir)
     except Exception as e:
-        print(f"angel: no instrument list ({type(e).__name__}: {e}), Yahoo only")
+        log.warning("angel: no instrument list (%s: %s), Yahoo only", type(e).__name__, e)
         return None
     return AngelStream(sessions, universe, tokens, notify), tokens

@@ -4,7 +4,8 @@ Rules (literature-default parameters, fixed before any backtest and NOT tuned):
   * Opening range = high/low of the first 3 five-minute bars (09:15-09:30 IST).
   * Signal: a 5-minute bar closes above the range high, above the day's VWAP, with volume >= 1.5x the average volume of the
     bars so far, between 09:30 and 14:00, and the range is 0.3%-2.5% of price (too narrow = noise, too wide = poor risk).
-  * Entry: the next bar's open (the caller supplies the live price). Stop: the range low. Target: 2 x the risk.
+  * Entry: at the signal bar's close, the price `Setup.signal_price` the engine passes to the broker (the paper broker adds
+    slippage; the live and replay runs enter at the same price). Stop: the range low. Target: 2 x the risk.
   * One trade per stock per day. Every position is closed at 15:15 IST at the latest.
   * The opening range must really be the 09:15-09:30 bars: a stock whose first bar is missing or late (thin trading, a
     data gap) has no valid range and is skipped rather than given one built from whichever bars happen to exist.

@@ -117,7 +117,8 @@ class MarketContextProvider:
         """(Brent now, its change over the last month), or None when the series is missing or too short."""
         try:
             crude = self.crude_series()
-        except Exception:
+        except Exception as e:  # a data-source failure means no crude line, never a failed cycle
+            log.debug("crude series unavailable: %s: %s", type(e).__name__, e)
             return None
         if crude is None or len(crude) <= CRUDE_DAYS:
             return None

@@ -41,5 +41,5 @@ def retry_after(exc) -> Optional[float]:
     try:
         value = exc.response.headers.get("retry-after")
         return float(value) if value is not None else None
-    except Exception:
+    except (AttributeError, TypeError, ValueError):  # no response or headers on this exception, or a non-numeric value
         return None

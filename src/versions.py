@@ -30,7 +30,8 @@ STRATEGY_VERSION = "swing-v4"
 INTRADAY_VERSION = "orb-v4"
 # The gap-and-go paper strategy (its own account): gap >= 2% then a close above the opening range by 10:30, stop at
 # the range low, held to the square-off.
-# gapgo-v2: v1 plus the universe and Angel One entry checks of orb-v4 (bumped 2026-10-26, live since 2026-10-19..26).
+# gapgo-v2: v1 plus the 500-stock universe (live since 2026-10-19) and the Angel One entry checks (2026-10-23, 10-26) that
+# orb-v4 also carries (bumped 2026-10-26).
 GAPGO_VERSION = "gapgo-v2"
 # The gap-only paper control (its own account): the same gap, bought on the 09:30 close with no breakout.
 # gaponly-v2: v1 plus the universe and Angel One entry checks of orb-v4 (bumped 2026-10-26).

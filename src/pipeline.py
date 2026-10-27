@@ -33,6 +33,9 @@ from src.workflow import build_analysis_graph, build_cycle_graph, build_decision
 
 log = logging.getLogger(__name__)
 
+# The core sleeve is bought through the bracket-order API with a stop and a target that can never trigger: -90% and +1000%.
+CORE_STOP_PCT, CORE_TARGET_PCT = 0.90, 10.0
+
 __all__ = ["TradingPipeline", "SymbolResult", "NOT_A_PLACED_BUY"]  # the last is re-exported for callers of the old name
 
 
@@ -213,7 +216,7 @@ class TradingPipeline:
         try:
             prices = {s: self._quote(s, 0.0) for s in weights}
             for symbol, qty in core_sleeve.buys(weights, portfolio.positions, prices, portfolio.equity, portfolio.cash):
-                fill = self.broker.buy_with_bracket(symbol, qty, prices[symbol], 0.90, 10.0)  # no practical stop or target
+                fill = self.broker.buy_with_bracket(symbol, qty, prices[symbol], CORE_STOP_PCT, CORE_TARGET_PCT)
                 self.notify(f"CORE sleeve: bought {qty} {symbol} @ ~{self.settings.currency}{fill.avg_price or prices[symbol]:,.2f}")
         except Exception:
             log.exception("core sleeve top-up failed; the cycle goes on without it")

@@ -1,5 +1,6 @@
 """Read-only command-line reports: scanner candidates, workflow graphs, account summary, positions and trade history."""
 
+import logging
 from types import SimpleNamespace
 from typing import Optional
 
@@ -7,6 +8,8 @@ from src.app.wiring import build_india_screener, make_paper_broker
 from src.config import Settings
 from src.data.india import IST
 from src.workflow import build_analysis_graph, build_cycle_graph, build_decision_graph
+
+log = logging.getLogger(__name__)
 
 
 def print_graphs(settings: Settings) -> None:
@@ -55,7 +58,8 @@ def _nifty_return_since(since) -> Optional[float]:
         df = yf.download("^NSEI", start=since.date().isoformat(), progress=False, auto_adjust=True, timeout=15)
         close = df["Close"].squeeze().dropna()
         return float(close.iloc[-1] / close.iloc[0] - 1) if len(close) > 1 else None
-    except Exception:
+    except Exception as e:  # best effort: the report goes on without the benchmark
+        log.debug("Nifty return unavailable: %s: %s", type(e).__name__, e)
         return None
 
 
