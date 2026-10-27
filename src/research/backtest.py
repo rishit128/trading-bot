@@ -215,7 +215,7 @@ def simulate(
             for sym, pos in positions.items():
                 if not has_bar(sym, day):
                     continue
-                high = float(bars[sym].at[day, "High"])
+                high = float(bars[sym].loc[day, "High"])
                 pos["peak"] = max(pos.get("peak", pos["entry_price"]), high)
                 if trail_pct is not None:
                     pos["stop"] = max(pos["stop"], pos["peak"] * (1 - trail_pct))

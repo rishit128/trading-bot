@@ -1112,6 +1112,28 @@ small-cap market produced the live loss; stock selection has not been shown to a
 the entry rule adds little over holding the stocks (STRATEGY.md, 2026-09-26). The exits and the sizing are what the evidence
 supports; the ranking is not.
 
+### Core index sleeve in the swing account (2026-10-26, owner's decision; `scripts/research_core_sleeve.py`, `src/engine/core_sleeve.py`)
+Reason: the residual-edge test found no significant stock-selection alpha, only broad-market exposure. Test: the strategy's
+10-year equity curve blended with index ETFs (NIFTYBEES + JUNIORBEES, Yahoo's NIFTYBEES carries a bad split adjustment in
+Dec 2019 that was filtered), monthly rebalanced, rebalancing costs ignored. **The pre-declared gate failed** (Sharpe +0.05 and
+drawdown no worse in both windows): the blend does not improve risk-adjusted return. What it does is cut risk for less return:
+
+| Core weight | Full 10y: return / Sharpe / maxDD | Last 3y: return / Sharpe / maxDD |
+|---|---|---|
+| 0% (live) | +344% / 0.93 / -45.3% | +71% / 0.89 / -37.4% |
+| 25% | +294% / 0.96 / -41.8% | +64% / 0.93 / -31.3% |
+| 40% | +263% / 0.96 / -39.8% | +60% / 0.95 / -27.5% |
+| 60% | +222% / 0.93 / -37.1% | +52% / 0.96 / -23.1% |
+| 100% | +144% / 0.74 / -34.9% | +37% / 0.84 / -20.5% |
+
+With a midcap core (NIFTYBEES + MID150BEES, since 2019): Sharpe 1.22 -> 1.26 at 25-40%, drawdown -37.5% -> -29%, return +425% ->
++323%. The sleeve was added anyway as a risk preference, not as an improvement: `CORE_SLEEVE=NIFTYBEES:0.10,MID150BEES:0.15` (25%
+of equity; the stock-picking sleeve keeps at least 40%). The ETFs are bought toward their share whenever cash allows (not
+within 25% of target, 3% cash reserve, at least Rs 1,500 a buy), never analysed and never sold (no AI, no trend exit, a 90%
+stop and 10x target that cannot trigger). Judged forward against the swing account's own picks; remove it with an empty
+`CORE_SLEEVE`. `scripts/context_report.py` splits the swing entries by the recorded context fields (market regime, crude, results
+timing, F&O, order book, 52-week position, spread) for the forward tests; it prints no verdict under 100 entries.
+
 ### Paper accounts against a replay of the same sessions (2026-10-26; `scripts/reconcile_paper_replay.py`, read only)
 Question: are the intraday paper losses the rule's, or the execution's? The live engine and paper broker were replayed over
 the archived final 5-minute bars, one session at a time on that session's live universe in its live order (the engine

@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from types import SimpleNamespace
 
@@ -511,3 +512,30 @@ def test_the_production_client_uses_the_settings_temperature():
     fake = FakeOpenAI({"a": GOOD})
     LLMClient.from_settings(Settings(models=("a",), llm_temperature=0.0), client=fake).signal("p")
     assert fake.calls[0][1]["temperature"] == 0.0
+
+
+def test_the_core_sleeve_buys_etfs_toward_their_share_and_is_never_analysed(tmp_path):
+    from src.engine import core_sleeve
+
+    assert core_sleeve.parse("NIFTYBEES:0.15, mid150bees:0.15") == {"NIFTYBEES": 0.15, "MID150BEES": 0.15}
+    assert core_sleeve.parse("") == {}
+    for bad in ("NIFTYBEES", "NIFTYBEES:0.7", "A:0.4,B:0.4", "A:0"):
+        with pytest.raises(ValueError):
+            core_sleeve.parse(bad)
+    # 100,000 account, 15% target = 15,000: 100-rupee ETF -> 150 units; cash 100,000 minus the 3% reserve is plenty
+    assert core_sleeve.buys({"ETF": 0.15}, {}, {"ETF": 100.0}, 100_000.0, 100_000.0) == [("ETF", 150)]
+    assert core_sleeve.buys({"ETF": 0.15}, {"ETF": 12_000.0}, {"ETF": 100.0}, 100_000.0, 100_000.0) == []  # within 25% of target
+    assert core_sleeve.buys({"ETF": 0.15}, {}, {"ETF": 100.0}, 100_000.0, 3_500.0) == []  # cash barely above the reserve
+    assert core_sleeve.buys({"ETF": 0.15}, {}, {}, 100_000.0, 100_000.0) == []  # no price
+
+    broker = FakeBroker(Portfolio(100_000.0, 100_000.0, {"ETF": 15_000.0}, {"ETF": 150}, 100_000.0))
+    pipe, broker, _ = make_pipeline(tmp_path, dry_run=False, broker=broker, watchlist=("AAPL", "ETF"))
+    pipe.core = {"ETF": 0.15}
+    pipe.quote_fn = lambda symbol: 100.0
+    assert "ETF" not in pipe.select_symbols(broker.portfolio())  # held, yet never analysed or sold
+    pipe.settings = dataclasses.replace(pipe.settings, core_sleeve="ETF:0.15")
+    pipe.open_cycle()
+    assert broker.buys == []  # already at its target
+    broker._portfolio = Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)
+    pipe.open_cycle()
+    assert broker.buys[0][:2] == ("ETF", 150) and broker.buys[0][3:] == (0.90, 10.0)

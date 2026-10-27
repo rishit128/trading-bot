@@ -20,6 +20,7 @@ from src.data.market_pulse import HotStock, MarketPulse
 from src.data.market_pulse import summary as pulse_summary
 from src.data.sector_watch import OIL_GAS
 from src.database import DecisionRecord, EquityRecord, OrderRecord
+from src.engine import core_sleeve
 from src.engine.agent_signal import AgentSignal, SignalDetails
 from src.engine.enums import NOT_A_PLACED_BUY, SILENT_STATUSES, Action, OrderStatus
 from src.engine.ports import Broker, ChargesFees
@@ -92,6 +93,7 @@ class TradingPipeline:
         self.settings = settings
         self.agents: Dict[str, Agent] = {a.name: a for a in agents}
         self.broker = broker
+        self.core = core_sleeve.parse(settings.core_sleeve)  # index ETFs held outside the stock logic (src.engine.core_sleeve)
         self.sessions = session_factory
         self.snapshot_fn = snapshot_fn
         self.broker_label = broker_label  # a human name for the broker, shown in the start-up banner
@@ -199,7 +201,22 @@ class TradingPipeline:
         self._calls = self._read_house_calls()
         self._read_pulse()
         self._warn_on_held(portfolio)
+        self._top_up_core(portfolio)
         return portfolio
+
+    def _top_up_core(self, portfolio: Portfolio) -> None:
+        """Buy the index ETFs of the core sleeve toward their share of equity (see src.engine.core_sleeve). Not while paused,
+        in a dry run or with the market closed; a failure is logged and never stops the cycle."""
+        weights = self.core
+        if not weights or self.settings.dry_run or (self.control and self.control.is_paused()) or not self.broker.is_market_open():
+            return
+        try:
+            prices = {s: self._quote(s, 0.0) for s in weights}
+            for symbol, qty in core_sleeve.buys(weights, portfolio.positions, prices, portfolio.equity, portfolio.cash):
+                fill = self.broker.buy_with_bracket(symbol, qty, prices[symbol], 0.90, 10.0)  # no practical stop or target
+                self.notify(f"CORE sleeve: bought {qty} {symbol} @ ~{self.settings.currency}{fill.avg_price or prices[symbol]:,.2f}")
+        except Exception:
+            log.exception("core sleeve top-up failed; the cycle goes on without it")
 
     def _read_pulse(self) -> None:
         """Read today's surging stocks (computed once a day from the scan) and tell the user when the surging sectors
@@ -340,7 +357,7 @@ class TradingPipeline:
         self._screened = {s: v for s in research if self._sources[s] == "research" and (v := self._screen(s, portfolio))}
         for h in self._pulse_picks(portfolio):
             self._sources.setdefault(h.symbol, "pulse")
-        return list(self._sources)
+        return [s for s in self._sources if s not in self.core]  # the core sleeve's ETFs are never analysed, so never sold
 
     def _pulse_picks(self, portfolio: Portfolio) -> List[HotStock]:
         """Stocks of surging sectors that the screener did not pick: they skip the screener's long-term filters and go
