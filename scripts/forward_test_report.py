@@ -30,7 +30,7 @@ from src.research.significance import units_needed  # noqa: E402
 from src.versions import GAPGO_VERSION, GAPONLY_VERSION, INTRADAY_VERSION, NEWS_VERSION, STRATEGY_VERSION  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-FREEZE = "2026-10-27"  # the first session under the frozen versions
+FREEZE = "2026-10-28"  # the first full session under the frozen versions (10-27 opened on the old code)
 MIN_DATES, T_GO, DRIFT_Z, VANISH_SHARE = 30, 2.0, -2.0, 0.10
 
 

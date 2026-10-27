@@ -1,6 +1,7 @@
 # Forward-test protocol for the paper accounts
 
-Fixed 2026-10-26, before the first frozen session (2026-10-27). Enforced by `scripts/forward_test_report.py`. Written
+Fixed 2026-10-26, before the first frozen session (2026-10-28; the bots were restarted on the new versions mid-session on
+10-27, so that day is history). Enforced by `scripts/forward_test_report.py`. Written
 after a review against the skills `paper-trading-and-forward-test-protocol`, `live-vs-backtest-drift-monitoring`,
 `backtest-vs-broker-fill-reconciliation`, `ml4t-deflated-sharpe` and `ml4t-meta-labels` (skills.sh: kryhr/26-quant-trading-skills, ml4t/skills; not kept in the repo).
 
@@ -10,7 +11,7 @@ checks on 10-23 and 10-26; news v1 to v3 in five days; swing-v3, technical-v13 a
 some changes went live without a version bump. A paper result that mixes rules is not evidence for any of them.
 
 ## Rules
-1. **Frozen versions.** orb-v4, gapgo-v2, gaponly-v2, news-v3, swing-v4, from 2026-10-27. Trades before that are history,
+1. **Frozen versions.** orb-v4, gapgo-v2, gaponly-v2, news-v3, swing-v4, from 2026-10-28. Trades before that are history,
    not evidence.
 2. **Any rule change** (entry, exit, sizing, universe, a new skip) bumps its version in `src/versions.py` in the same
    commit, and moves `FREEZE` in the report: the test restarts. The report refuses to judge a test that mixes versions.
