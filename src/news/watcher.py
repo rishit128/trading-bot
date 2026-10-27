@@ -37,7 +37,8 @@ def yahoo_market_cap_crore(symbol: str) -> Optional[float]:
     try:
         cap = yf.Ticker(symbol + SUFFIX).fast_info["marketCap"]
         return float(cap) / 1e7 if cap else None
-    except Exception:
+    except Exception as e:  # Yahoo gives no value for many symbols
+        log.debug("no market cap for %s: %s: %s", symbol, type(e).__name__, e)
         return None
 
 

@@ -31,7 +31,10 @@ from src.intraday import strategy as st
 GAP_MIN, GAP_MAX = 0.0, 0.08  # v2: v1 needed +2%; the breakout and VWAP below now carry the price confirmation
 SPREAD_MAX = 0.5  # percent: the live bid-ask spread above which the entry costs too much
 BOOK_MIN = -0.3  # order book balance (+1 all buyers): below it sellers dominate and the entry is skipped
-A_FROM, A_UNTIL = dtime(9, 30), dtime(12, 0)  # v3: v1/v2 stopped at 10:30; APOLLO and CHENNPETRO broke out at 11:35 and 10:35  # A's signal bars start in [A_FROM, A_UNTIL)
+A_FROM, A_UNTIL = (
+    dtime(9, 30),
+    dtime(12, 0),
+)  # v3: v1/v2 stopped at 10:30; APOLLO and CHENNPETRO broke out at 11:35 and 10:35  # A's signal bars start in [A_FROM, A_UNTIL)
 STOP_MIN, STOP_MAX = 0.006, 0.03  # A's stop distance as a fraction of the entry
 B_FROM, B_UNTIL = dtime(9, 15), dtime(14, 30)  # B's filings, inclusive
 B_MOVE, B_VOLUME = 0.0075, 3.0

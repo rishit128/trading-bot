@@ -23,7 +23,7 @@ from src.database import DecisionRecord, EquityRecord, OrderRecord
 from src.engine import core_sleeve
 from src.engine.agent_signal import AgentSignal, SignalDetails
 from src.engine.enums import NOT_A_PLACED_BUY, SILENT_STATUSES, Action, OrderStatus
-from src.engine.ports import Broker, ChargesFees
+from src.engine.ports import Broker, ChargesFees, ListsTrades
 from src.engine.risk_engine import Portfolio, RiskDecision, RiskEngine, drawdown_pause
 from src.engine.rules import rule_verdict
 from src.engine.strategy import Decision, combine_signals, trend_exit_decision
@@ -35,6 +35,7 @@ log = logging.getLogger(__name__)
 
 # The core sleeve is bought through the bracket-order API with a stop and a target that can never trigger: -90% and +1000%.
 CORE_STOP_PCT, CORE_TARGET_PCT = 0.90, 10.0
+STOP_LOOKBACK = 100  # the newest closed trades searched for a recent stop-out (the cooldown is hours, far fewer trades)
 
 __all__ = ["TradingPipeline", "SymbolResult", "NOT_A_PLACED_BUY"]  # the last is re-exported for callers of the old name
 
@@ -505,7 +506,13 @@ class TradingPipeline:
         self._llm_down = down
 
     def _in_cooldown(self, symbol: str) -> bool:
+        """True when `symbol` was bought, or stopped out, within the cooldown (STRATEGY.md: a stop-out is not re-bought for 24
+        hours). The broker closes a stop on its own, so a stop-out is read from its trade history, not from our orders."""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=self.settings.rebuy_cooldown_hours)
+        if isinstance(self.broker, ListsTrades):
+            stopped = (t for t in self.broker.trade_history(limit=STOP_LOOKBACK) if t["closed_at"] >= cutoff)
+            if any(t["symbol"] == symbol and t["reason"] == "STOP" for t in stopped):
+                return True
         with self.sessions() as s:
             recent = s.scalar(
                 select(OrderRecord.id)

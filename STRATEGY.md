@@ -1174,3 +1174,13 @@ Checked against `paper-trading-and-forward-test-protocol`, `live-vs-backtest-dri
   that matters; it does not yet know which way it goes. Too few to act on; rerun as filings accumulate.
 - **Signals that vanish on the final bars were recorded but never watched:** the forward report flags more than 10%
   (ORB since 10-19: 8 of 37, 22%). Data limits that no code fixes are listed in the protocol.
+
+### Code review fixes (2026-10-27)
+A two-axis review of the whole code base against the docs (standards, and STRATEGY.md) found one rule the code did not keep:
+- **Stop-out cooldown (swing-v5):** STRATEGY.md says a stop-out is not re-bought for 24 hours, but the code only blocked a
+  second buy within 24 hours of our own last BUY order. The paper broker closes a stop by itself and writes no order, so a
+  stock stopped out after more than a day in the position could be bought straight back. `_in_cooldown` now also reads the
+  broker's closed trades for a STOP within the cooldown. Bumped before the 2026-10-28 freeze, so no forward-test time is lost.
+- Not rule changes: swallowed errors in the candle retry, the results-date check and two best-effort helpers are now logged;
+  stale comments (rule A's window, gapgo-v2, the ORB entry price) corrected. The results and F&O checks still fail open when
+  Angel One is down, as the entry-context design intends; the results check now logs that it did not run.

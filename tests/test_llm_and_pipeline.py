@@ -539,3 +539,32 @@ def test_the_core_sleeve_buys_etfs_toward_their_share_and_is_never_analysed(tmp_
     broker._portfolio = Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0)
     pipe.open_cycle()
     assert broker.buys[0][:2] == ("ETF", 150) and broker.buys[0][3:] == (0.90, 10.0)
+
+
+class BrokerWithHistory(FakeBroker):
+    def __init__(self, portfolio, history):
+        super().__init__(portfolio)
+        self.history = history
+
+    def trade_history(self, limit=None):
+        return self.history
+
+
+@pytest.mark.parametrize(
+    "symbol, reason, hours_ago, buys",
+    [
+        ("AAPL", "STOP", 3, 0),  # stopped out 3 hours ago: refused, though no buy order was placed in the last 24 hours
+        ("AAPL", "STOP", 30, 1),  # more than the cooldown ago: allowed again
+        ("AAPL", "SIGNAL", 3, 1),  # a trend exit is not a stop-out
+        ("MSFT", "STOP", 3, 1),  # another stock
+    ],
+)
+def test_a_stop_out_is_not_bought_back_within_the_cooldown(tmp_path, symbol, reason, hours_ago, buys):
+    from datetime import datetime, timedelta, timezone
+
+    closed = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+    history = [{"symbol": symbol, "reason": reason, "closed_at": closed}]
+    broker = BrokerWithHistory(Portfolio(100_000.0, 100_000.0, {}, {}, 100_000.0), history)
+    pipe, broker, _ = make_pipeline(tmp_path, dry_run=False, broker=broker)
+    pipe.run_once()
+    assert len(broker.buys) == buys

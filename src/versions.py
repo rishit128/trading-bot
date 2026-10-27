@@ -14,7 +14,9 @@ SCHEMA_VERSION = "signal-v1"  # the llm.SIGNAL_SCHEMA output contract, frozen fo
 #           close below MA50 (the other stocks keep the MA200 exit).
 # swing-v4 (2026-10-26): no new buy within 3 days of an announced results meeting, none into an F&O short build-up
 #           (both refuse entries through the entry context), and the core index sleeve (CORE_SLEEVE).
-STRATEGY_VERSION = "swing-v4"
+# swing-v5 (2026-10-27): the 24-hour re-buy cooldown also covers a stop-out (it only looked at our own buy orders, so a stock
+#           stopped out after more than a day in the position could be bought straight back, against STRATEGY.md).
+STRATEGY_VERSION = "swing-v5"
 
 # The intraday engine (a separate paper account). Recorded with every signal so results can be split by system version.
 #   orb-v1: sizing borrowed from the swing settings (5% of equity), stop/target replay dropped each bar's tail, no record

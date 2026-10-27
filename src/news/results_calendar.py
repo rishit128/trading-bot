@@ -5,6 +5,7 @@ Unaudited Financial Results"). The watcher keeps every such notice and every res
 bot's entry record then says how close the stock's results are, so a later forward test can ask whether entries just
 before results do worse. Free history of results dates does not exist (STRATEGY.md, 2026-10-07), so this builds it."""
 
+import logging
 import re
 from datetime import date, datetime
 from typing import Callable, Dict, Iterable, Optional, Tuple
@@ -14,6 +15,8 @@ from sqlalchemy import select
 from src.data.angel_quotes import EntryContext
 from src.data.filings import Filing
 from src.database import FilingNoticeRecord
+
+log = logging.getLogger(__name__)
 
 MEETING = re.compile(r"scheduled on\s*(\d{1,2})/(\d{1,2})/(\d{4})", re.IGNORECASE)
 RESULTS = re.compile(r"financial result|outcome of board meeting", re.IGNORECASE)
@@ -54,7 +57,9 @@ def results_note(sessions, symbol: str, today: date) -> Dict[str, object]:
     note: Dict[str, object] = {}
     with sessions() as s:
         rows = list(s.scalars(select(FilingNoticeRecord).where(FilingNoticeRecord.symbol == symbol)))
-    meetings = sorted(r.meeting_date for r in rows if r.kind == "MEETING" and r.meeting_date and r.meeting_date >= today.isoformat())
+    meetings = sorted(
+        r.meeting_date for r in rows if r.kind == "MEETING" and r.meeting_date and r.meeting_date >= today.isoformat()
+    )
     if meetings:
         note["results_in_days"] = (date.fromisoformat(meetings[0]) - today).days
     filed = [r.published for r in rows if r.kind == "RESULT"]
@@ -73,7 +78,8 @@ def with_results(context_fn: Callable[[str, float], EntryContext], sessions, tod
         context = context_fn(symbol, price)
         try:
             extra = results_note(sessions, symbol, today_fn())
-        except Exception:
+        except Exception as e:  # fail open, as for any entry check, but say that the results check did not run
+            log.warning("results check for %s failed (%s: %s); the buy goes on without it", symbol, type(e).__name__, e)
             extra = {}
         due = extra.get("results_in_days")
         why = context.skip or (
