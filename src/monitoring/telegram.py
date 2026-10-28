@@ -4,7 +4,7 @@ import html
 import logging
 import threading
 import time
-from functools import partial, reduce
+from functools import partial
 from typing import Callable, Mapping, Optional, Tuple
 
 import httpx
@@ -95,6 +95,14 @@ def _period_lines(rows: list, cur: str, keep: int = 8) -> str:
     return "\n".join(lines[-keep:]) if lines else "no closed trades yet"
 
 
+def _merged(per_account: list) -> list:
+    """The period rows of several accounts combined, same labels summed."""
+    merged: list = []
+    for rows in per_account:
+        merged = merge_periods(merged, rows)
+    return merged
+
+
 def format_pnl(accounts: list, cur: str, tz=IST) -> Html:
     """Realized profit/loss of every paper account, [(name, closed trades)], and all of them combined. Each account shows its
     total and its last few days; the combined block shows the last days and weeks (Telegram cuts a message at 4,096 characters)."""
@@ -110,10 +118,9 @@ def format_pnl(accounts: list, cur: str, tz=IST) -> Html:
         all_weeks.append(group_by_week(trades, tz))
     if len(accounts) > 1:
         combined = sum(totals(trades, tz).net_pnl for _, trades in accounts)
-        merge = lambda rows: reduce(merge_periods, rows, [])  # noqa: E731
         parts.append(
             f"<b>All accounts</b>  {'+' if combined >= 0 else '-'}{cur}{abs(combined):,.0f}\n"
-            f"<u>by day</u>\n{_period_lines(merge(all_days), cur)}\n<u>by week</u>\n{_period_lines(merge(all_weeks), cur)}"
+            f"<u>by day</u>\n{_period_lines(_merged(all_days), cur)}\n<u>by week</u>\n{_period_lines(_merged(all_weeks), cur)}"
         )
     return Html("\n\n".join(parts))
 
