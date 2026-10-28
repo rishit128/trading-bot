@@ -4,7 +4,7 @@ import html
 import logging
 import threading
 import time
-from functools import partial
+from functools import partial, reduce
 from typing import Callable, Mapping, Optional, Tuple
 
 import httpx
@@ -16,7 +16,7 @@ from src.engine.ports import ListsHoldings, ListsTrades
 log = logging.getLogger(__name__)
 API = "https://api.telegram.org"
 HELP = (
-    "/status - equity, cash, mode\n/positions - open positions with profit/loss\n/history - closed trades\n/pnl - profit/loss by day and week, both accounts\n"
+    "/status - equity, cash, mode\n/positions - open positions with profit/loss\n/history - closed trades\n/pnl - profit/loss by day and week, all accounts\n"
     "/intraday - intraday account and open positions\n/intraday_history - intraday closed trades\n"
     "/gapgo - gap-and-go paper account\n/gapgo_history - gap-and-go closed trades\n"
     "/gaponly - gap-only control account\n/gaponly_history - gap-only closed trades\n"
@@ -85,38 +85,35 @@ def format_history(trades: list, cur: str, limit: int = 15) -> Html:
     )
 
 
-def _period_lines(rows: list, cur: str) -> str:
-    """Up to the last 8 period rows as plain lines, newest first; empty periods are left out."""
+def _period_lines(rows: list, cur: str, keep: int = 8) -> str:
+    """The last `keep` period rows as plain lines, newest first; empty periods are left out."""
     lines = [
         f"{r.label}  {'+' if r.net_pnl >= 0 else '-'}{cur}{abs(r.net_pnl):,.0f}  ({r.trades} trade{'s' if r.trades != 1 else ''})"
         for r in rows
         if r.trades
     ]
-    return "\n".join(lines[-8:]) if lines else "no closed trades yet"
+    return "\n".join(lines[-keep:]) if lines else "no closed trades yet"
 
 
-def format_pnl(swing_trades: list, intraday_trades: Optional[list], cur: str, tz=IST) -> Html:
-    """Realized profit/loss by day and by week: the swing account, the intraday account (if given), and both combined."""
-    swing_total = totals(swing_trades, tz)
-    parts = [
-        f"📈 <b>Profit / loss</b>\n\n<b>Swing</b>  {'+' if swing_total.net_pnl >= 0 else '-'}{cur}{abs(swing_total.net_pnl):,.0f}"
-        f"  ({swing_total.trades} closed trade{'s' if swing_total.trades != 1 else ''})\n"
-        f"<u>by day</u>\n{_period_lines(group_by_day(swing_trades, tz), cur)}\n"
-        f"<u>by week</u>\n{_period_lines(group_by_week(swing_trades, tz), cur)}"
-    ]
-    if intraday_trades is not None:
-        intraday_total = totals(intraday_trades, tz)
+def format_pnl(accounts: list, cur: str, tz=IST) -> Html:
+    """Realized profit/loss of every paper account, [(name, closed trades)], and all of them combined. Each account shows its
+    total and its last few days; the combined block shows the last days and weeks (Telegram cuts a message at 4,096 characters)."""
+    parts, all_days, all_weeks = ["📈 <b>Profit / loss</b>"], [], []
+    for name, trades in accounts:
+        total = totals(trades, tz)
+        days = group_by_day(trades, tz)
         parts.append(
-            f"<b>Intraday</b>  {'+' if intraday_total.net_pnl >= 0 else '-'}{cur}{abs(intraday_total.net_pnl):,.0f}"
-            f"  ({intraday_total.trades} closed trade{'s' if intraday_total.trades != 1 else ''})\n"
-            f"<u>by day</u>\n{_period_lines(group_by_day(intraday_trades, tz), cur)}\n"
-            f"<u>by week</u>\n{_period_lines(group_by_week(intraday_trades, tz), cur)}"
+            f"<b>{_e(name)}</b>  {'+' if total.net_pnl >= 0 else '-'}{cur}{abs(total.net_pnl):,.0f}"
+            f"  ({total.trades} closed trade{'s' if total.trades != 1 else ''})\n{_period_lines(days, cur, 5)}"
         )
-        combined = swing_total.net_pnl + intraday_total.net_pnl
-        combined_day = merge_periods(group_by_day(swing_trades, tz), group_by_day(intraday_trades, tz))
+        all_days.append(days)
+        all_weeks.append(group_by_week(trades, tz))
+    if len(accounts) > 1:
+        combined = sum(totals(trades, tz).net_pnl for _, trades in accounts)
+        merge = lambda rows: reduce(merge_periods, rows, [])  # noqa: E731
         parts.append(
-            f"<b>Combined</b>  {'+' if combined >= 0 else '-'}{cur}{abs(combined):,.0f}\n"
-            f"<u>by day</u>\n{_period_lines(combined_day, cur)}"
+            f"<b>All accounts</b>  {'+' if combined >= 0 else '-'}{cur}{abs(combined):,.0f}\n"
+            f"<u>by day</u>\n{_period_lines(merge(all_days), cur)}\n<u>by week</u>\n{_period_lines(merge(all_weeks), cur)}"
         )
     return Html("\n\n".join(parts))
 
@@ -253,9 +250,8 @@ def handle_command(
     }
     if isinstance(broker, ListsTrades):
         handlers["/history"] = lambda: format_history(broker.trade_history(), cur)
-        handlers["/pnl"] = lambda: format_pnl(
-            broker.trade_history(), intraday.trade_history() if isinstance(intraday, ListsTrades) else None, cur
-        )
+        paper = (("Swing", broker), ("Intraday (ORB)", intraday), ("Gap-and-go", gapgo), ("Gap-only", gaponly), ("News", news))
+        handlers["/pnl"] = lambda: format_pnl([(n, a.trade_history()) for n, a in paper if isinstance(a, ListsTrades)], cur)
     for name, account in (("intraday", intraday), ("gapgo", gapgo), ("gaponly", gaponly), ("news", news)):
         if account is not None:
             handlers[f"/{name}"] = partial(_account_view, account, name, False, cur)

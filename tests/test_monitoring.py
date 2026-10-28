@@ -1,5 +1,7 @@
 import json
 import logging
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -240,8 +242,8 @@ def test_pnl_command_shows_swing_and_intraday_broken_down_by_day_and_week_and_co
 
     text = handle_command("/pnl", control, Swing(Portfolio(1, 1)), SETTINGS, Intra(Portfolio(1, 1)))
     assert "Swing</b>  +₹60  (2 closed trades)" in text and "2026-09-29  +₹100  (1 trade)" in text
-    assert "2026-09-30  -₹40  (1 trade)" in text and "2026-W40  +₹60  (2 trades)" in text
-    assert "Intraday</b>  +₹20  (1 closed trade)" in text and "Combined</b>  +₹80" in text
+    assert "2026-09-30  -₹40  (1 trade)" in text and "2026-W40  +₹80  (3 trades)" in text  # the week is all accounts
+    assert "Intraday (ORB)</b>  +₹20  (1 closed trade)" in text and "All accounts</b>  +₹80" in text
 
 
 def test_pnl_command_works_with_no_intraday_account_and_no_closed_trades(control):
@@ -250,8 +252,7 @@ def test_pnl_command_works_with_no_intraday_account_and_no_closed_trades(control
             return []
 
     assert handle_command("/pnl", control, Empty(Portfolio(1, 1)), SETTINGS) == Html(
-        "📈 <b>Profit / loss</b>\n\n<b>Swing</b>  +₹0  (0 closed trades)\n<u>by day</u>\nno closed trades yet\n"
-        "<u>by week</u>\nno closed trades yet"
+        "📈 <b>Profit / loss</b>\n\n<b>Swing</b>  +₹0  (0 closed trades)\nno closed trades yet"
     )
     assert (
         handle_command("/pnl", control, FakeBroker(Portfolio(1, 1)), SETTINGS) == HELP
@@ -290,3 +291,27 @@ def test_a_polling_conflict_is_explained_once_in_the_chat_and_rate_limited_in_th
     conflicts = [r for r in caplog.records if "409" in r.getMessage()]
     assert len(conflicts) == 1 and "terminated by other getUpdates request" in conflicts[0].getMessage()
     assert "SECRET-TOKEN-123" not in caplog.text
+
+
+class HistoryOnly:
+    """A broker that can list its closed trades (what /pnl needs)."""
+
+    def __init__(self, *pnls):
+        self.trades = [{"closed_at": datetime(2026, 10, 27, 9, 0, tzinfo=timezone.utc), "net_pnl": p, "fees": 1.0} for p in pnls]
+
+    def trade_history(self, limit=None):
+        return self.trades
+
+
+def test_pnl_lists_every_paper_account_and_their_sum():
+    swing, orb, gap, only, news = HistoryOnly(100.0), HistoryOnly(-30.0), HistoryOnly(50.0), HistoryOnly(), HistoryOnly(-5.0)
+    reply = handle_command("/pnl", None, swing, SimpleNamespace(currency="Rs "), intraday=orb, gapgo=gap, gaponly=only, news=news)
+    for name in ("Swing", "Intraday (ORB)", "Gap-and-go", "Gap-only", "News"):
+        assert f"<b>{name}</b>" in reply
+    assert "+Rs 100" in reply and "-Rs 30" in reply and "no closed trades yet" in reply
+    assert "<b>All accounts</b>  +Rs 115" in reply  # 100 - 30 + 50 + 0 - 5
+
+
+def test_pnl_with_only_the_swing_account_has_no_combined_block():
+    reply = handle_command("/pnl", None, HistoryOnly(10.0), SimpleNamespace(currency="Rs "))
+    assert "<b>Swing</b>" in reply and "All accounts" not in reply

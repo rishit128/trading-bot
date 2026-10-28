@@ -23,7 +23,7 @@ days: the bots only trade while it is running. Settings are in `/home/rishit/tra
 /status              equity, cash, mode
 /positions           open positions with profit/loss
 /history              closed trades
-/pnl                  profit/loss by day and week, both accounts
+/pnl                  profit/loss by day and week, every paper account and all combined
 /intraday             intraday (breakout) account and open positions; /intraday_history for its closed trades
 /gapgo                gap-and-go paper account and open positions; /gapgo_history for its closed trades
 /gaponly              gap-only control account (gap-and-go without the breakout); /gaponly_history
