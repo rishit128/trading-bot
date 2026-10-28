@@ -11,7 +11,7 @@ checks on 10-23 and 10-26; news v1 to v3 in five days; swing-v3, technical-v13 a
 some changes went live without a version bump. A paper result that mixes rules is not evidence for any of them.
 
 ## Rules
-1. **Frozen versions.** orb-v4, gapgo-v2, gaponly-v2, news-v4 (news-v3 made no entry; v4 live from 12:50 on 2026-10-28), swing-v5, from
+1. **Frozen versions.** orb-v4, gapgo-v2, gaponly-v2, news-v4 (news-v3 made no entry; v4 live from 12:45 on 2026-10-28), swing-v5, from
    2026-10-28. Trades before that are history,
    not evidence.
 2. **Any rule change** (entry, exit, sizing, universe, a new skip) bumps its version in `src/versions.py` in the same

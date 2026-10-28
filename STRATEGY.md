@@ -1200,4 +1200,4 @@ Kept: the gap floor of 0% (the 9 good-news stocks that gapped down fell 6% on av
 and the breadth filter (it refused falling stocks on 23 Oct). These counts are context from six sessions, not evidence of
 an edge; v4 is chosen so the account trades and the idea gets tested. Judged like every account under
 `docs/trading/forward-tests.md` (GO / REDESIGN / INVESTIGATE, test length from the power calculation); registered in
-`docs/trading/research-trials.csv`. NEWS_VERSION news-v4, live from 12:50 on 28 Oct.
+`docs/trading/research-trials.csv`. NEWS_VERSION news-v4, live from 12:45 on 28 Oct.
