@@ -1184,3 +1184,20 @@ A two-axis review of the whole code base against the docs (standards, and STRATE
 - Not rule changes: swallowed errors in the candle retry, the results-date check and two best-effort helpers are now logged;
   stale comments (rule A's window, gapgo-v2, the ORB entry price) corrected. The results and F&O checks still fail open when
   Angel One is down, as the entry-context design intends; the results check now logs that it did not run.
+
+### News-catalyst v4 (2026-10-28): the stop band holds the stop instead of refusing the trade
+Six sessions under v1-v3 (21-28 Oct): 705 filings, 125 material (100 good news, 25 bad), no entry. Where the good-news
+filings stopped: gap outside 0% to +8% (36), no breakout by the window's end (23), stop outside 0.6-3% (8), rule B's
+first bar under +0.75% (8), never decided (13, mostly filed after 14:30 before v3 rolled them over), breadth (3), the order
+book (1), seen too late (1). Two of those filters refused trades for reasons that are not the news idea:
+- **The stop band refused the strongest reactions.** Big news makes a wide opening range, so the range low sits more than
+  3% under the breakout; the three such stocks with a measured move closed +7.3% on average from the filing. v4 keeps the
+  setup and puts the stop at the band's edge (3% below the entry, or 0.6% for a too-tight range). Sizing is by risk, so a
+  wider stop already means fewer shares.
+- **The order-book balance veto** reads one snapshot of the book: ATHERENERG was refused at -0.304 against -0.30 and rose
+  6.3%. Dropped; the balance is still recorded. The spread veto (an execution cost) stays.
+Kept: the gap floor of 0% (the 9 good-news stocks that gapped down fell 6% on average by the close), the breakout, rule B
+and the breadth filter (it refused falling stocks on 23 Oct). These counts are context from six sessions, not evidence of
+an edge; v4 is chosen so the account trades and the idea gets tested. Judged like every account under
+`docs/trading/forward-tests.md` (GO / REDESIGN / INVESTIGATE, test length from the power calculation); registered in
+`docs/trading/research-trials.csv`. NEWS_VERSION news-v4, live from 12:50 on 28 Oct.

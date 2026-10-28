@@ -30,12 +30,13 @@ from src.intraday import strategy as st
 
 GAP_MIN, GAP_MAX = 0.0, 0.08  # v2: v1 needed +2%; the breakout and VWAP below now carry the price confirmation
 SPREAD_MAX = 0.5  # percent: the live bid-ask spread above which the entry costs too much
-BOOK_MIN = -0.3  # order book balance (+1 all buyers): below it sellers dominate and the entry is skipped
 A_FROM, A_UNTIL = (
     dtime(9, 30),
     dtime(12, 0),
 )  # v3: v1/v2 stopped at 10:30; APOLLO and CHENNPETRO broke out at 11:35 and 10:35  # A's signal bars start in [A_FROM, A_UNTIL)
-STOP_MIN, STOP_MAX = 0.006, 0.03  # A's stop distance as a fraction of the entry
+# A's stop distance as a fraction of the entry, held within this band (v4; v1-v3 refused a setup outside it, which refused
+# the stocks reacting hardest to their news: a big reaction makes a wide opening range)
+STOP_MIN, STOP_MAX = 0.006, 0.03
 B_FROM, B_UNTIL = dtime(9, 15), dtime(14, 30)  # B's filings, inclusive
 B_MOVE, B_VOLUME = 0.0075, 3.0
 BREADTH_MIN = 0.40
@@ -95,24 +96,23 @@ def rule_a(symbol: str, day: pd.DataFrame, prev_close: Optional[float]) -> RuleC
         return RuleCheck(NO, f"no close above the 09:15-09:30 high and VWAP by {A_UNTIL:%H:%M}", ref_price=prev_close)
     i = int(hits[0])
     entry = float(close[i])
-    distance = (entry - range_low) / entry
-    if not STOP_MIN <= distance <= STOP_MAX:
-        return RuleCheck(
-            NO, f"stop {distance:.2%} below the entry (needs {STOP_MIN:.1%} to {STOP_MAX:.0%})", ref_price=prev_close
-        )
     if _near_circuit(entry, prev_close):
         return RuleCheck(NO, "within 1% of a 10% price band", ref_price=prev_close)
-    setup = _setup(symbol, day, i, range_low, range_high, range_low, float(ratio[i]))
-    return RuleCheck(FIRED, f"gap {gap:+.1%}, close above {range_high:,.2f} and VWAP", setup, prev_close)
+    distance = (entry - range_low) / entry
+    held = min(max(distance, STOP_MIN), STOP_MAX)
+    stop = range_low if held == distance else entry * (1 - held)
+    note = "" if held == distance else f", stop {held:.1%} below the entry (the range low is {distance:.2%})"
+    setup = _setup(symbol, day, i, stop, range_high, range_low, float(ratio[i]))
+    return RuleCheck(FIRED, f"gap {gap:+.1%}, close above {range_high:,.2f} and VWAP{note}", setup, prev_close)
 
 
 def book_veto(note: Dict[str, object]) -> Optional[str]:
-    """Rule D: why Angel One's live quote refuses the entry (a wide spread or a seller-heavy book), else None."""
-    spread, balance = note.get("spread_pct"), note.get("book_imbalance")
+    """Rule D: why Angel One's live quote refuses the entry (a spread too wide to pay), else None. v4 dropped the order-book
+    balance veto: one snapshot of the book is noise (ATHERENERG was refused at -0.304 against -0.30 and rose 6%); the balance
+    is still recorded with the entry."""
+    spread = note.get("spread_pct")
     if isinstance(spread, (int, float)) and spread > SPREAD_MAX:
         return f"spread {spread:.2f}% (max {SPREAD_MAX}%)"
-    if isinstance(balance, (int, float)) and balance < BOOK_MIN:
-        return f"order book {balance:+.2f}: sellers dominate (needs {BOOK_MIN:+.1f} or better)"
     return None
 
 

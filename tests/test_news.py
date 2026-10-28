@@ -147,7 +147,9 @@ def test_a_filing_after_the_close_or_on_a_closed_day_belongs_to_the_next_session
     assert first_session(friday_evening, weekday) == "2026-09-21"  # Monday
     assert first_session(datetime(2026, 9, 21, 8, 0, tzinfo=IST), weekday) == "2026-09-21"
     assert first_session(datetime(2026, 9, 21, 15, 45, tzinfo=IST), weekday) == "2026-09-22"
-    assert first_session(datetime(2026, 9, 21, 14, 46, tzinfo=IST), weekday) == "2026-09-22"  # too late for rule B: overnight news
+    assert (
+        first_session(datetime(2026, 9, 21, 14, 46, tzinfo=IST), weekday) == "2026-09-22"
+    )  # too late for rule B: overnight news
     assert first_session(datetime(2026, 9, 21, 14, 30, tzinfo=IST), weekday) == "2026-09-21"  # the last minute rule B takes
 
 
@@ -179,9 +181,11 @@ def test_rule_a_takes_a_breakout_after_10_30_until_noon():
     assert ns.rule_a("AAA", today(history(too_late)), 100.0).status == ns.NO
 
 
-def test_rule_a_skips_a_stop_too_far_or_too_close():
-    wide = [103.0, 105.5, 102.0, 106.0]  # range low 101.9: stop 3.9% below 106
-    assert "stop" in ns.rule_a("AAA", today(history(wide)), 100.0).reason
+def test_rule_a_holds_a_stop_too_far_or_too_close_within_the_band():
+    wide = [103.0, 105.5, 102.0, 106.0]  # range low 101.9: 3.9% below 106, held at 3%
+    check = ns.rule_a("AAA", today(history(wide)), 100.0)
+    assert check.status == ns.FIRED and check.setup.stop == pytest.approx(106.0 * 0.97) and "stop 3.0% below" in check.reason
+    assert check.setup.range_low == pytest.approx(101.9)  # the range itself is kept as it was
 
 
 def test_rule_b_needs_a_075_percent_move_on_3x_the_usual_volume_and_stops_at_the_filing_price():
@@ -507,8 +511,8 @@ def test_an_order_win_is_judged_on_its_size_even_when_the_surprise_is_unclear():
     assert materiality(order, lambda: 10_000.0).material
 
 
-def test_book_veto_refuses_a_wide_spread_or_a_seller_heavy_book_and_passes_when_there_is_no_quote():
+def test_book_veto_refuses_a_wide_spread_only_and_passes_when_there_is_no_quote():
     assert "spread" in ns.book_veto({"spread_pct": 0.8, "book_imbalance": 0.5})
-    assert "sellers" in ns.book_veto({"spread_pct": 0.05, "book_imbalance": -0.6})
+    assert ns.book_veto({"spread_pct": 0.05, "book_imbalance": -0.6}) is None  # v4: the book balance is recorded, not a veto
     assert ns.book_veto({"spread_pct": 0.05, "book_imbalance": 0.1}) is None
     assert ns.book_veto({}) is None
