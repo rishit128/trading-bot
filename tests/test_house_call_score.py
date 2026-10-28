@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 import pandas as pd
 import pytest
 
-from src.data.house_call_score import COST, Call, score_call
+from src.data.house_call_score import COST, Call, booked_price, score_call
 from src.data.india import IST
 
 
@@ -55,3 +55,20 @@ def test_a_swing_call_runs_to_its_valid_date():
     second = bars([(100, 100.4, 99.6, 101.0)] * 75, day=(2026, 10, 22))
     out = score_call(call(kind="Swing Trade", valid_to=date(2026, 10, 22)), pd.concat([two_days, second]))
     assert out.result == "TIME" and out.exit == 101.0
+
+
+def test_the_brokers_book_profit_exit_ends_the_call_unless_the_stop_came_first():
+    import dataclasses
+
+    booked = datetime(2026, 10, 21, 9, 27, tzinfo=IST).astimezone(timezone.utc)  # inside the third bar (09:25-09:30)
+    flat = [(100, 100.4, 99.6, 100.0)] * 2
+    c = dataclasses.replace(call(), booked_at=booked, booked_price=100.8)
+    out = score_call(c, bars(flat + [(100, 100.9, 99.8, 100.5)] + [(100, 100.4, 98.0, 98.5)]))
+    assert out.result == "BOOKED" and out.exit == 100.8  # booked before the later stop
+    assert score_call(c, bars(flat + [(100, 100.9, 98.5, 99.0)])).result == "STOP"  # the stop wins a shared bar
+    assert score_call(c, bars(flat + [(100, 102.5, 99.8, 102.0)])).result == "TARGET"
+
+
+def test_booked_price_reads_the_portal_comment():
+    assert booked_price("BOOK PROFIT @7420") == 7420.0 and booked_price("book profit @ 525.35") == 525.35
+    assert booked_price("") is None and booked_price("Stoploss Hit") is None

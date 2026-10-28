@@ -2,9 +2,11 @@
 "BOOK PROFIT" exits (no stop-loss ever appears), so its own record is flattering; and a call first read already closed is
 skipped here because only the winners are left in that list. Each call that was read while still open is followed on the
 5-minute bars: bought (or, for a sell call, sold short) at the open of the first bar that starts after it was published, and left at its stop,
-its target, or its time limit, whichever comes first. If one bar touches both the stop and the target, the stop counts
-(the unfavourable reading). The round-trip cost is the intraday figure for every kind, an approximation."""
+its target, its time limit or the broker's own "BOOK PROFIT" exit, whichever comes first (a follower of the call would
+have been told to book then). If one bar touches the stop and either the target or the booking, the stop counts (the
+unfavourable reading). The round-trip cost is the intraday figure for every kind, an approximation."""
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from datetime import time as dtime
@@ -32,11 +34,19 @@ class Call:
     stop: float
     target: float
     valid_to: Optional[date]
+    booked_at: Optional[datetime] = None  # UTC: when the broker closed the call with "BOOK PROFIT @price"
+    booked_price: Optional[float] = None
+
+
+def booked_price(comment: str) -> Optional[float]:
+    """The price in the portal's exit comment ("BOOK PROFIT @7420"), or None for any other comment."""
+    found = re.search(r"BOOK PROFIT\s*@\s*([0-9]+(?:\.[0-9]+)?)", comment or "", re.IGNORECASE)
+    return float(found.group(1)) if found else None
 
 
 @dataclass(frozen=True)
 class Outcome:
-    result: str  # TARGET | STOP | TIME | OPEN (the limit has not been reached yet) | NO_DATA
+    result: str  # TARGET | STOP | BOOKED (the broker's exit) | TIME | OPEN (the limit has not been reached yet) | NO_DATA
     entry: Optional[float] = None
     exit: Optional[float] = None
     gross: Optional[float] = None  # return on the entry price, the sign flipped for a sell call
@@ -70,6 +80,7 @@ def score_call(call: Call, bars: pd.DataFrame) -> Outcome:
     days = sorted(set(pd.DatetimeIndex(later.index).tz_convert(IST).date))
     limit = _limit(call, days)
     exit_price, result = float(later["Close"].iloc[-1]), "OPEN"
+    booked = pd.Timestamp(call.booked_at).tz_convert(IST) if call.booked_at and call.booked_price else None
     held = later if limit is None else later[(pd.DatetimeIndex(later.index) + BAR) <= limit]
     drift = sign * (float(held["Close"].iloc[-1]) / entry - 1)
     for ts, row in later.iterrows():
@@ -79,6 +90,8 @@ def score_call(call: Call, bars: pd.DataFrame) -> Outcome:
             exit_price, result = call.stop, "STOP"
         elif hit_target:
             exit_price, result = call.target, "TARGET"
+        elif booked is not None and booked < pd.Timestamp(str(ts)) + BAR:
+            exit_price, result = float(call.booked_price), "BOOKED"  # type: ignore[arg-type]
         elif limit is not None and pd.Timestamp(str(ts)) + BAR >= limit:
             exit_price, result = float(row["Close"]), "TIME"
         if result != "OPEN":

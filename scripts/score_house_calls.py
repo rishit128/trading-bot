@@ -1,5 +1,6 @@
 """Score the broker's research calls on the price (src.data.house_call_score): per kind of call, how many hit the target, the stop
-or their time limit, and the average return after costs. Only calls read while still open, within a day of being published, count.
+their time limit or the broker's own BOOK PROFIT exit, and the average return after costs. Only calls read while still open,
+within a day of being published, count.
 
     python scripts/score_house_calls.py"""
 
@@ -13,7 +14,7 @@ from sqlalchemy import select
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.app.wiring import house_calls_db_url  # noqa: E402
-from src.data.house_call_score import Call, score_call  # noqa: E402
+from src.data.house_call_score import Call, booked_price, score_call  # noqa: E402
 from src.data.intraday_bars import fetch_5m_bars  # noqa: E402
 from src.database import HouseCallEvent, make_session_factory  # noqa: E402
 
@@ -22,9 +23,10 @@ def calls_first_seen_open():
     """(the calls read while still open within a day of being published, the number of distinct calls read)."""
     with make_session_factory(house_calls_db_url())() as s:
         events = list(s.scalars(select(HouseCallEvent).order_by(HouseCallEvent.first_seen)))
-    first = {}
+    first, last = {}, {}
     for e in events:
         first.setdefault((e.symbol, e.kind, e.side, e.published), e)
+        last[(e.symbol, e.kind, e.side, e.published)] = e  # the latest state: how the broker ended it, if it did
     calls = [
         Call(
             e.symbol,
@@ -36,8 +38,10 @@ def calls_first_seen_open():
             e.stop,
             e.target,
             pd.Timestamp(e.valid_to).date() if e.valid_to else None,
+            pd.Timestamp(end.exit_at, tz="UTC").to_pydatetime() if (end := last[key]).exit_at else None,
+            booked_price(end.exit_comment),
         )
-        for e in first.values()
+        for key, e in first.items()
         if e.is_open and e.first_seen - e.published <= timedelta(days=1)
     ]
     return calls, len(first)
@@ -63,13 +67,18 @@ def main():
         )
     df = pd.DataFrame(rows)
     print(df.to_string(index=False, formatters={"gross": "{:+.2%}".format, "net": "{:+.2%}".format}, na_rep="-"))
-    done = df[df["result"].isin(["TARGET", "STOP", "TIME"])]
+    done = df[df["result"].isin(["TARGET", "STOP", "BOOKED", "TIME"])]
     print("\nresolved calls by kind and side (net of the 0.21% round-trip cost):")
     for (kind, side), g in done.groupby(["kind", "side"]):
         print(
-            f"  {kind:<12} {side:<5} n={len(g):<3} target {(g.result == 'TARGET').mean():.0%}  stop {(g.result == 'STOP').mean():.0%}"
+            f"  {kind:<12} {side:<5} n={len(g):<3} target {(g.result == 'TARGET').mean():.0%}  booked {(g.result == 'BOOKED').mean():.0%}"
+            f"  stop {(g.result == 'STOP').mean():.0%}"
             f"  mean net {g.net.mean():+.2%}  | stop and target ignored: direction right {(g.drift > 0).mean():.0%}, mean {g.drift.mean():+.2%}"
         )
+    print(
+        f"\nall resolved calls: n={len(done)}, mean net {done.net.mean():+.2%}, won {(done.net > 0).mean():.0%}"
+        f" (by the broker's own exits only: {(df.result == 'BOOKED').sum()} booked, none ever shown as stopped out)"
+    )
     print("\nA verdict needs at least 100 resolved calls of a kind; fewer than that is only a first look.")
 
 
