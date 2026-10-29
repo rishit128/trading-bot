@@ -675,3 +675,64 @@ def test_a_stock_we_hold_gets_a_warning_when_the_house_books_profit_on_it(tmp_pa
     quiet_pipe.run_once()
     # closed with no exit time: it cannot be dated, so it is not reported
     assert not [m for m in quiet if m.startswith("HOUSE WARNING")]
+
+
+# ---------------------------------------------------------------- swing-v6: the house exit
+def ended(symbol, label, hours_ago, **extra):
+    """A Swing Trade BUY call as the portal shows it once it is over: the label replaces buy in CallType."""
+    at = (datetime.now(IST) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S")
+    return {**RBL, "ScripCode": symbol, "CallType": label, "AppCallType": label, "CallMode": "Closed", "ExitDtm": at, **extra}
+
+
+def test_a_stoploss_hit_or_target_hit_label_is_read_as_the_end_of_the_call_not_skipped():
+    stopped, hit = parse_calls([body(ended("CHENNPETRO", "Stoploss Hit", 30), ended("VEDL", "Target Hit", 30))])
+    assert (stopped.side, stopped.is_open, stopped.exit_comment) == ("buy", False, "Stoploss Hit")
+    assert (hit.side, hit.is_open, hit.exit_comment) == ("buy", False, "Target Hit")
+
+
+def test_the_house_exit_needs_a_swing_buy_call_that_ended_after_we_bought():
+    from src.data.house_calls import house_exit
+
+    now = datetime.now(timezone.utc)
+    stopped = parse_calls([body(ended("TCS", "Stoploss Hit", 2))])
+    assert house_exit(stopped, "TCS", now - timedelta(days=5), now).exit_comment == "Stoploss Hit"
+    assert house_exit(stopped, "TCS", now - timedelta(hours=1), now) is None  # it ended before we bought
+    assert house_exit(stopped, "INFY", now - timedelta(days=5), now) is None
+    reissued = parse_calls(
+        [body(ended("TCS", "Stoploss Hit", 2), {**RBL, "ScripCode": "TCS", "PublishedDtm": "28 Oct 2026 10:00 AM"})]
+    )
+    assert house_exit(reissued, "TCS", now - timedelta(days=30), now) is None  # a newer open call: the house still recommends it
+    intraday = parse_calls([body({**CAMS, "ScripCode": "TCS", "CallType": "Stoploss Hit", "CallMode": "Closed",
+                                  "ExitDtm": (datetime.now(IST) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S")})])  # fmt: skip
+    assert (
+        house_exit(intraday, "TCS", now - timedelta(days=5), now) is None
+    )  # an intraday call is not a reason to sell a swing holding
+    stale = parse_calls([body(ended("TCS", "Stoploss Hit", 30))])
+    assert house_exit(stale, "TCS", now - timedelta(days=5), now) is None  # ended more than a day ago: not acted on now
+
+
+class HoldingBroker(FakeBroker):
+    def __init__(self, portfolio, since):
+        super().__init__(portfolio)
+        self.since = since
+
+    def holdings(self):
+        return [{"symbol": s, "opened_at": self.since} for s in self._portfolio.position_qty]
+
+
+@pytest.mark.parametrize("bought_days_ago, sells", [(5, True), (0.01, False)])
+def test_a_held_stock_is_sold_when_the_houses_call_on_it_ends_after_we_bought(tmp_path, bought_days_ago, sells):
+    import dataclasses
+
+    calls = [parse_calls([body(ended("TCS", "Stoploss Hit", 2))])]
+    pipe, _, sessions, _ = swing(tmp_path, calls, held={"TCS": 10})
+    since = datetime.now(timezone.utc) - timedelta(days=bought_days_ago)
+    pipe.broker = HoldingBroker(pipe.broker.portfolio(), since)
+    pipe.run_once()
+    [d] = decisions(sessions)
+    assert (d.final_action == "SELL" and d.decision_source == "house_exit") is sells
+    if sells:
+        assert d.reasoning.startswith("house exit:") and "Stoploss Hit" in d.reasoning
+    pipe.settings = dataclasses.replace(pipe.settings, house_exit=False)
+    pipe.run_once()
+    assert decisions(sessions)[-1].decision_source != "house_exit"  # HOUSE_EXIT=false turns the rule off

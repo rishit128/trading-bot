@@ -127,8 +127,11 @@ class Settings:
     min_traded_value: float = 100_000_000.0
     max_daily_volatility: float = 0.04
     trend_exit: bool = True  # sell a held stock when its last completed close is below its 200-day average
+    house_exit: bool = True  # swing-v6: sell a held stock when the broker's swing BUY call on it ends after we bought
     research_rule_gate: bool = False  # a BUY on a stock only a broker research call put on the list needs the rule's BUY too
-    core_sleeve: str = ""  # index ETFs held outside the stock logic, e.g. "NIFTYBEES:0.15,MID150BEES:0.15" (src.engine.core_sleeve)
+    core_sleeve: str = (
+        ""  # index ETFs held outside the stock logic, e.g. "NIFTYBEES:0.15,MID150BEES:0.15" (src.engine.core_sleeve)
+    )
     market_pulse: bool = True  # also analyse stocks of surging sectors (src.data.market_pulse); False = the screener only
     # Only above the day's cross-sectional median 20-day NSE delivery %. Combined with 12-1 momentum ranking, a
     # single 3-year test added ~14%/yr over the same-window basket (STRATEGY.md, 2026-09-22) -- promising, unproven.
@@ -232,6 +235,7 @@ def load_settings() -> Settings:
         min_traded_value=_float("MIN_TRADED_VALUE", defaults.min_traded_value),
         max_daily_volatility=_float("MAX_DAILY_VOLATILITY", 0.04),
         trend_exit=os.getenv("TREND_EXIT", "true").strip().lower() != "false",
+        house_exit=os.getenv("HOUSE_EXIT", "true").strip().lower() != "false",
         research_rule_gate=os.getenv("RESEARCH_RULE_GATE", "false").strip().lower() == "true",
         core_sleeve=os.getenv("CORE_SLEEVE", "").strip(),
         market_pulse=os.getenv("MARKET_PULSE", "true").strip().lower() != "false",

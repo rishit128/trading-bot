@@ -1201,3 +1201,18 @@ and the breadth filter (it refused falling stocks on 23 Oct). These counts are c
 an edge; v4 is chosen so the account trades and the idea gets tested. Judged like every account under
 `docs/trading/forward-tests.md` (GO / REDESIGN / INVESTIGATE, test length from the power calculation); registered in
 `docs/trading/research-trials.csv`. NEWS_VERSION news-v4, live from 12:45 on 28 Oct.
+
+### House-call exits: the reader keeps ended calls, and swing-v6 follows them (2026-10-29, at the owner's request; NOT backtested)
+(1) A reader fix, no rule change. Since about 27 Oct the portal shows an ended call with "Stoploss Hit" or "Target Hit" in
+CallType, where "buy" or "sell" was. Only "book profit" was accepted, so every stopped call was skipped ("unusable CallType")
+and the stored history kept such calls open forever. That is why only BOOK PROFIT exits were ever seen: the survivorship in
+the house-call scoring came from our reader, not the portal. Both labels are now read as the end of the call (`EXIT_LABELS`).
+(2) swing-v6 (`house_calls.house_exit`, `HOUSE_EXIT`, default on): a held stock is sold, whatever the AI says, when the
+broker's Swing Trade / Momentum / Stellar Pick BUY call on it ended (stop, target or profit booked) in the last day and after
+we bought. Not while a newer call on the stock is open; never on an Intraday call (a same-day trade is no reason to sell a
+holding); not on a call that ended days ago (acted on as news, so a restart does not sell on old exits). Asked for after
+CHENNPETRO (bought directly on 23 Oct) fell back from +5.7% to +1.2%. The only two past cases argue against it: CHENNPETRO's
+Momentum stop (1474) broke two hours after our buy, and following it would have sold at 1444-1462 against 1497 now; on
+LAURUSLABS the desk booked profit at 2094 on 27 Oct, and it is 2168 now. Two cases are not evidence either way. Judged
+forward against holding: after >= 30 house exits, compare the exit price with the stock's price 5 and 20 sessions later;
+switch it off (HOUSE_EXIT=false) if holding did better by 1% a trade or more (t >= 2).

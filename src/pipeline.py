@@ -12,7 +12,7 @@ from src.agents.base import Agent, AgentContext
 from src.config import Settings
 from src.data.angel_quotes import EntryContext
 from src.data.fundamentals import Fundamentals
-from src.data.house_calls import HouseCall, call_for, open_sells, recently_ended, swing_buys
+from src.data.house_calls import HouseCall, call_for, house_exit, open_sells, recently_ended, swing_buys
 from src.data.indicators import Snapshot
 from src.data.market_context import MarketContext
 from src.data.market_pulse import MAX_OPEN as MAX_PULSE_OPEN
@@ -22,11 +22,11 @@ from src.data.sector_watch import OIL_GAS
 from src.database import DecisionRecord, EquityRecord, OrderRecord
 from src.engine import core_sleeve
 from src.engine.agent_signal import AgentSignal, SignalDetails
-from src.engine.enums import NOT_A_PLACED_BUY, SILENT_STATUSES, Action, OrderStatus
-from src.engine.ports import Broker, ChargesFees, ListsTrades
+from src.engine.enums import NOT_A_PLACED_BUY, SILENT_STATUSES, Action, DecisionSource, OrderStatus
+from src.engine.ports import Broker, ChargesFees, ListsHoldings, ListsTrades
 from src.engine.risk_engine import Portfolio, RiskDecision, RiskEngine, drawdown_pause
 from src.engine.rules import rule_verdict
-from src.engine.strategy import Decision, combine_signals, trend_exit_decision
+from src.engine.strategy import HOUSE_EXIT_PREFIX, Decision, combine_signals, trend_exit_decision
 from src.results import SymbolResult, Verdict
 from src.versions import VERSIONS
 from src.workflow import build_analysis_graph, build_cycle_graph, build_decision_graph
@@ -115,6 +115,7 @@ class TradingPipeline:
         self._announced: Optional[tuple] = None  # the (day, sectors) last told to the user
         self._pulse_bought: Optional[Set[str]] = None  # per cycle: stocks whose latest filled BUY came from the pulse
         self._calls: List[HouseCall] = []  # read once per cycle, so every stock in a cycle sees the same snapshot
+        self._held_since: Dict[str, datetime] = {}  # per cycle: when each held stock was bought (for the house exit)
         self._sources: Dict[str, str] = {}  # why each stock of this cycle is analysed (recorded with its decision)
         self._screened: Dict[str, str] = {}  # the screener's verdict on this cycle's research-only stocks
         self._warned: set = set()  # house warnings already sent about held stocks
@@ -203,6 +204,7 @@ class TradingPipeline:
         self._check_halt(portfolio)
         self._cycle_llm = []
         self._calls = self._read_house_calls()
+        self._held_since = self._read_held_since()
         self._read_pulse()
         self._warn_on_held(portfolio)
         self._top_up_core(portfolio)
@@ -212,13 +214,20 @@ class TradingPipeline:
         """Buy the index ETFs of the core sleeve toward their share of equity (see src.engine.core_sleeve). Not while paused,
         in a dry run or with the market closed; a failure is logged and never stops the cycle."""
         weights = self.core
-        if not weights or self.settings.dry_run or (self.control and self.control.is_paused()) or not self.broker.is_market_open():
+        if (
+            not weights
+            or self.settings.dry_run
+            or (self.control and self.control.is_paused())
+            or not self.broker.is_market_open()
+        ):
             return
         try:
             prices = {s: self._quote(s, 0.0) for s in weights}
             for symbol, qty in core_sleeve.buys(weights, portfolio.positions, prices, portfolio.equity, portfolio.cash):
                 fill = self.broker.buy_with_bracket(symbol, qty, prices[symbol], CORE_STOP_PCT, CORE_TARGET_PCT)
-                self.notify(f"CORE sleeve: bought {qty} {symbol} @ ~{self.settings.currency}{fill.avg_price or prices[symbol]:,.2f}")
+                self.notify(
+                    f"CORE sleeve: bought {qty} {symbol} @ ~{self.settings.currency}{fill.avg_price or prices[symbol]:,.2f}"
+                )
         except Exception:
             log.exception("core sleeve top-up failed; the cycle goes on without it")
 
@@ -265,6 +274,29 @@ class TradingPipeline:
             log.exception("could not read the house research calls; this cycle runs without them")
             return []
 
+    def _read_held_since(self) -> Dict[str, datetime]:
+        if not self._calls or not self.settings.house_exit or not isinstance(self.broker, ListsHoldings):
+            return {}
+        try:
+            return {h["symbol"]: h["opened_at"] for h in self.broker.holdings() if h.get("opened_at") is not None}
+        except Exception:
+            log.exception("could not read when the held stocks were bought; no house exit this cycle")
+            return {}
+
+    def _house_exit(self, symbol: str, held: int) -> Optional[Decision]:
+        """swing-v6: sell a held stock whose house swing BUY call ended (stop, target or profit booked) in the last day,
+        after we bought it, whatever the AI says: the desk that recommended the stock no longer does. None otherwise."""
+        since = self._held_since.get(symbol)
+        call = house_exit(self._calls, symbol, since, datetime.now(timezone.utc)) if held > 0 and since is not None else None
+        if call is None:
+            return None
+        return Decision(
+            Action.SELL,
+            1.0,
+            f"{HOUSE_EXIT_PREFIX} the broker's {call.kind} BUY call ended ({call.exit_comment}) after we bought",
+            DecisionSource.HOUSE_EXIT,
+        )
+
     def _warn_on_held(self, portfolio: Portfolio) -> None:
         """Tell the user, once per call, when the house turns against a stock the bot holds (an open SELL call, or its
         call on the stock hit its stop-loss). The bot's own stop is unchanged; the stock is analysed every cycle anyway,
@@ -297,8 +329,10 @@ class TradingPipeline:
         combined by role; then size it with the risk engine and write the audit row."""
         held = portfolio.position_qty.get(symbol, 0)
         short = held > 0 and self._entered_via_pulse(symbol)
-        decision = trend_exit_decision(snapshot, held, self.settings.trend_exit, short) or combine_signals(
-            signals, {n: a.role for n, a in self.agents.items()}
+        decision = (
+            self._house_exit(symbol, held)
+            or trend_exit_decision(snapshot, held, self.settings.trend_exit, short)
+            or combine_signals(signals, {n: a.role for n, a in self.agents.items()})
         )
         if (  # RESEARCH_RULE_GATE: a stock only a broker research call listed needs the rule's BUY too
             self.settings.research_rule_gate

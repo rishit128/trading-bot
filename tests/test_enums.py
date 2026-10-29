@@ -28,7 +28,7 @@ def test_members_are_the_old_strings_so_nothing_stored_or_sent_changes():
         "SKIPPED_CONTEXT",
         "FAILED",
     }
-    assert {d.value for d in DecisionSource} == {"agents", "trend_exit"}
+    assert {d.value for d in DecisionSource} == {"agents", "trend_exit", "house_exit"}
 
 
 def test_every_json_schema_sent_to_the_model_offers_exactly_the_three_actions():

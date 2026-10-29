@@ -42,10 +42,12 @@ def replay(record: DecisionRecord, roles: Mapping[str, str] = DEFAULT_ROLES) -> 
     snap = Snapshot(**json.loads(record.snapshot_json)) if record.snapshot_json else None
     signals = {n: AgentSignal(**s) if s else None for n, s in json.loads(record.signals_json or "{}").items()}
     if record.decision_source:  # recorded explicitly: no need to guess from the wording
-        rule_based = record.decision_source == DecisionSource.TREND_EXIT
+        rule_based = record.decision_source in (DecisionSource.TREND_EXIT, DecisionSource.HOUSE_EXIT)
     else:  # a row from before the column existed
         rule_based = record.reasoning.startswith(TREND_EXIT_PREFIX)
-    if rule_based:
+    if record.decision_source == DecisionSource.HOUSE_EXIT:
+        recomputed: Optional[Action] = Action.SELL  # the ended call is recorded with the decision; the rule only sells
+    elif rule_based:
         recomputed = (
             Action.SELL
             if snap is not None and trend_broken(snap.price, snap.ma50 if "50-day" in record.reasoning else snap.ma200)

@@ -25,3 +25,4 @@ date,id,variants,family,description,data,trades,net_pct,t,result,source
 2026-10-21,E3,1,results,Results first-hour trend,8y Angel + archive,,0.082,1.7,fail,logs/research_round4.log
 2026-10-21,P1-P6,6,popular,"EMA 9/21 + VWAP, Supertrend, RSI 30/70, Bollinger, 30-min ORB both sides, previous-day high/low break",8y Angel + archive,,-0.161..-0.254,-93.5..-19.8,fail,logs/research_round4.log
 2026-10-28,news-v4,1,news,"News rule A holds its stop within 0.6-3% instead of refusing the setup; no order-book balance veto",forward paper from 2026-10-28,,,,running,STRATEGY.md News-catalyst v4
+2026-10-29,swing-v6,1,swing,"Sell a held stock when the broker's swing BUY call on it ended (stop, target or profit booked) in the last day, after we bought",forward paper from 2026-10-29,2,,,running (2 past cases both worse),STRATEGY.md House-call exits

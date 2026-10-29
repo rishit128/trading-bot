@@ -16,7 +16,9 @@ SCHEMA_VERSION = "signal-v1"  # the llm.SIGNAL_SCHEMA output contract, frozen fo
 #           (both refuse entries through the entry context), and the core index sleeve (CORE_SLEEVE).
 # swing-v5 (2026-10-27): the 24-hour re-buy cooldown also covers a stop-out (it only looked at our own buy orders, so a stock
 #           stopped out after more than a day in the position could be bought straight back, against STRATEGY.md).
-STRATEGY_VERSION = "swing-v5"
+# swing-v6 (2026-10-29): a held stock is sold when the broker's Swing Trade / Momentum / Stellar Pick BUY call on it ended
+#           (stop, target or profit booked) in the last day, after we bought it (HOUSE_EXIT, default on).
+STRATEGY_VERSION = "swing-v6"
 
 # The intraday engine (a separate paper account). Recorded with every signal so results can be split by system version.
 #   orb-v1: sizing borrowed from the swing settings (5% of equity), stop/target replay dropped each bar's tail, no record

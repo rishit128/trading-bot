@@ -12,7 +12,7 @@ some changes went live without a version bump. A paper result that mixes rules i
 
 ## Rules
 1. **Frozen versions.** orb-v4, gapgo-v2, gaponly-v2, news-v4 (news-v3 made no entry; v4 live from 12:45 on 2026-10-28), swing-v5, from
-   2026-10-28. Trades before that are history,
+   2026-10-28; swing-v6 from 2026-10-29 (the house exit; swing-v5 made no entry before it). Trades before that are history,
    not evidence.
 2. **Any rule change** (entry, exit, sizing, universe, a new skip) bumps its version in `src/versions.py` in the same
    commit, and moves `FREEZE` in the report: the test restarts. The report refuses to judge a test that mixes versions.

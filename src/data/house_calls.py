@@ -84,10 +84,12 @@ class HouseCall:
         return json.dumps(d, sort_keys=True)
 
 
-# CallType labels, besides buy and sell, that the portal uses for a call whose profit the desk has told clients to take. Seen on
-# 2026-10-19 (DEEPAKNTR, Intraday). The row still carries the call's own prices, so its side is read from them. Any other label
-# is skipped and logged with its value; add one here only after it has been seen and its meaning is clear.
-EXIT_LABELS = ("book profit",)
+# CallType labels, besides buy and sell, that the portal uses for a call that has ended: "book profit" (the desk told clients
+# to take the profit; seen 2026-10-19, DEEPAKNTR Intraday), "stoploss hit" and "target hit" (seen 2026-10-27, CHENNPETRO
+# Momentum and others: the label replaces buy/sell once the call is over). The row still carries the call's own prices, so
+# its side is read from them. Any other label is skipped and logged with its value; add one here only after it has been seen
+# and its meaning is clear.
+EXIT_LABELS = ("book profit", "stoploss hit", "target hit")
 
 
 def _label(row: Dict[str, Any]) -> str:
@@ -422,3 +424,20 @@ def recently_ended(
             if any(word in c.exit_comment.lower() for word in ("stop", "profit")):
                 return c
     return None
+
+
+def house_exit(
+    calls: Iterable[HouseCall], symbol: str, held_since: datetime, now: datetime, within: timedelta = timedelta(days=1)
+) -> Optional[HouseCall]:
+    """The house's swing BUY call (Swing Trade / Momentum / Stellar Pick) on a stock we hold that ended in the last day, after
+    we bought, by its stop, its target or a profit booking: the swing bot then sells too (swing-v6). None while the newest
+    such call is still open (the house still recommends the stock), for a call that ended before we bought or cannot be
+    dated, and for one that ended longer ago (the exit is acted on as news, not days later)."""
+    mine = [c for c in calls if c.symbol == symbol and c.side == "buy" and c.kind_key in SWING_KINDS]
+    if not mine:
+        return None
+    newest = max(mine, key=lambda c: c.published)
+    if newest.is_open or newest.exit_at is None or newest.exit_at <= held_since or now - newest.exit_at > within:
+        return None
+    ended = newest.exit_comment.lower()
+    return newest if any(word in ended for word in ("stop", "target", "profit")) else None

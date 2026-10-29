@@ -10,6 +10,7 @@ from src.engine.rules import trend_broken
 if TYPE_CHECKING:  # only for the annotation: the engine must not import the data layer at run time
     from src.data.indicators import Snapshot
 
+HOUSE_EXIT_PREFIX = "house exit:"  # likewise for the swing-v6 exit on a house call that ended (src.pipeline)
 TREND_EXIT_PREFIX = "trend exit:"  # how a rule-based exit announces itself in the recorded reasoning (read back by replay)
 
 

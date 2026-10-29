@@ -29,7 +29,9 @@ class OrderStatus(StrEnum):
     MARKET_CLOSED = "MARKET_CLOSED"
     SKIPPED_COOLDOWN = "SKIPPED_COOLDOWN"
     SKIPPED_OPEN_ORDER = "SKIPPED_OPEN_ORDER"
-    SKIPPED_CONTEXT = "SKIPPED_CONTEXT"  # a pre-trade check refused it: upper circuit, F&O short build-up, results due (Angel One, BSE feed)
+    SKIPPED_CONTEXT = (
+        "SKIPPED_CONTEXT"  # a pre-trade check refused it: upper circuit, F&O short build-up, results due (Angel One, BSE feed)
+    )
     FAILED = "FAILED"
 
 
@@ -58,6 +60,7 @@ class DecisionSource(StrEnum):
 
     AGENTS = "agents"
     TREND_EXIT = "trend_exit"
+    HOUSE_EXIT = "house_exit"  # swing-v6: the broker's BUY call on a held stock ended
 
 
 class SignalOutcome(StrEnum):
