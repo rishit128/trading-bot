@@ -9,6 +9,7 @@ EXAMPLE = (ROOT / ".env.example").read_text(encoding="utf-8")
 SOURCES = [ROOT / "main.py"] + sorted((ROOT / "src").rglob("*.py"))
 SECRETS = {"OPENROUTER_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}
 COMPUTED_DEFAULTS = {"WATCHLIST"}
+OS_VARIABLES = {"DBUS_SESSION_BUS_ADDRESS"}  # set by the desktop session, not a bot setting (src.portfolio.vault)
 
 READ = re.compile(
     r"""(?:getenv|environ\.get|_float|_int|_bool)\(\s*["']([A-Z][A-Z0-9_]+)["']|environ\[["']([A-Z][A-Z0-9_]+)["']\]"""
@@ -30,7 +31,7 @@ def documented():
 
 
 def test_every_setting_the_code_reads_is_documented():
-    missing = read_by_code() - set(documented())
+    missing = read_by_code() - set(documented()) - OS_VARIABLES
     assert not missing, f"settings read by the code but missing from .env.example: {sorted(missing)}"
 
 

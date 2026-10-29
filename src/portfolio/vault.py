@@ -59,16 +59,31 @@ def _backend():
     raise ValueError(f"PORTFOLIO_SECRET_BACKEND must be 'keyring' or 'aws', got {name!r}")
 
 
+def use_login_session_bus(bus: str = "") -> bool:
+    """Point a process started without a desktop session (cron @reboot) at the logged-in user's D-Bus, where the Linux
+    keyring lives; without it `keyring` finds no store. True when it set the address, False when one was already set or
+    nobody is logged in (or not on Linux)."""
+    if os.getenv("DBUS_SESSION_BUS_ADDRESS") or not hasattr(os, "getuid"):
+        return False
+    bus = bus or f"/run/user/{os.getuid()}/bus"
+    if not os.path.exists(bus):
+        return False
+    os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+    return True
+
+
 class _KeyringBackend:
     """Windows Credential Manager (or whatever secure OS store `keyring` finds); refuses an insecure fallback."""
 
     def _store(self):
         import keyring
 
+        if use_login_session_bus():
+            keyring.core.init_backend()  # it may have been chosen before the bus was known
         backend = keyring.get_keyring()
         kind = f"{type(backend).__module__}.{type(backend).__name__}"
         if kind.startswith(("keyring.backends.fail", "keyrings.alt", "keyring.backends.null")):
-            raise InsecureStore(f"no secure credential store available ({kind})")
+            raise InsecureStore(f"no secure credential store available ({kind}); on Linux, log in to the desktop first")
         return keyring
 
     def save(self, values: Dict[str, str]) -> None:

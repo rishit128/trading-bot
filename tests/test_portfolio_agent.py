@@ -2,6 +2,7 @@
 bot), the credential vault, holdings extraction/analysis, the graph's failure path and the /portfolio command."""
 
 import json
+import os
 
 import httpx
 import keyring
@@ -587,3 +588,13 @@ def test_browser_channel_defaults_to_playwrights_chromium_and_takes_an_installed
     assert _browser_channel() is None
     monkeypatch.setenv("PORTFOLIO_BROWSER_CHANNEL", " chrome ")
     assert _browser_channel() == "chrome"
+
+
+def test_a_process_without_a_desktop_session_finds_the_logged_in_users_keyring(tmp_path, monkeypatch):
+    bus = tmp_path / "bus"
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+    assert not vault.use_login_session_bus(str(bus))  # nobody logged in: nothing to point at
+    bus.touch()
+    assert vault.use_login_session_bus(str(bus))
+    assert os.environ["DBUS_SESSION_BUS_ADDRESS"] == f"unix:path={bus}"
+    assert not vault.use_login_session_bus(str(bus))  # an address already set is left alone
