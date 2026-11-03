@@ -1216,3 +1216,57 @@ Momentum stop (1474) broke two hours after our buy, and following it would have 
 LAURUSLABS the desk booked profit at 2094 on 27 Oct, and it is 2168 now. Two cases are not evidence either way. Judged
 forward against holding: after >= 30 house exits, compare the exit price with the stock's price 5 and 20 sessions later;
 switch it off (HOUSE_EXIT=false) if holding did better by 1% a trade or more (t >= 2).
+
+### Full account analysis and the fixes that followed (2026-11-03; no trading rule changed)
+All five accounts were read from their databases and every recorded signal was scored on the bars (exploratory, registered as A1
+in the trial register). Down Rs 1,890 (-1.5%) on Rs 1,25,000 while the Nifty 50 rose 3.6%; fees alone were Rs 1,221. The ORB loss is
+costs: about +0.08% a trade before 0.21% of costs, +0.04% over the median stock in the same minutes (t 1.2), correlation 0.73 with the
+day's drift. Swing's 7% win rate only counts closed trades: 11 of 27 win with the open ones (backtest 34%). Gap-and-go's live
++0.68% (21 trades) sits on -0.09% for the same rule over all 69 archived sessions.
+
+**The 09:30 step read Yahoo, not Angel One (a data fix, not a rule change).** The stream logs in at 08:45 and starts a backfill.
+Before the open a stock's request for today's range fails, and three tries on every stock kept `AngelStream.ready()` false until
+about 10:05, so every 09:30 entry decided on Yahoo's bars. Signals before 10:05 vanish on the final bars 26% of the time (entries
+27%), after it 8% (entries 13%). All 491 stocks still got 75 of 75 bars from the stream, so no data was lost. Before the open a stock
+with history is now skipped. Expected, checked by `scripts/shadow_report.py`: the entries' vanish share falls to the 10% limit of the
+forward-test protocol. It also resolves part of ORB's INVESTIGATE flag by construction, since the final bars are Angel One's too.
+
+**Reboots.** About 13 since 2 Oct, 9 in market hours. The system logs them as crashes: the journal stops with no out-of-memory, panic
+or hardware message, and the machine returns 1 to 6 minutes later (on 28 Oct a service watchdog timed out first). That reads as the
+whole machine freezing, cause unknown; it is not the bot. On 16 Oct the engine was down over the 15:15 square-off and 8 positions were
+held over the weekend (ORB -445, gap-and-go +94, gap-only +432), which flatters gap-only: without them it is -0.35% a trade, not -0.01%.
+
+**Watchdog** (`scripts/watchdog.py`, `src/ops/watchdog.py`, cron every 2 minutes): restarts a stopped bot, says the machine restarted,
+warns of a loop that stopped reporting (`logs/heartbeat-*`, written since this date), a research watch not started by 09:20 and 11:00,
+and positions still open after the square-off. A dead machine cannot report itself: that needs an outside check.
+
+**Record-only tests, gates fixed before any of their evidence; evidence counts from 2026-11-04** (`src/research/shadow.py`):
+- S1, breakouts on news: every ORB signal, taken or skipped, with a material good-news filing published before the signal, against
+  the rest. Needs 100 signals on 30 dates, mean net > 0, date-clustered t >= 2, both halves > 0 and better than the rest. A pass
+  makes it a candidate for orb-v5. So far (seen, not evidence): with news -0.64% on 8 signals, the rest -0.05% on 992. An earlier
+  look gave +0.39% on 21 only because it mixed versions and did not require the news to come first.
+- S2, the AI against the rule: where they disagree on a new entry, the AI's side must beat the rule's by 1% over 20 sessions (t >= 2)
+  after 100 disagreements. Otherwise the AI is a candidate for removal from buys. So far it agreed with the rule's BUY in 2,452 of 2,464
+  decisions, and confidence did not order 5-session returns.
+
+**Minimum position size and high-VIX sizing: not adopted** (`scripts/research_swing_v6.py`, `research_swing_v6b.py`, gates fixed before
+running). Half size above India VIX 18, 22 or 26 failed (full-period Sharpe 0.75, 0.83, 0.93 against 0.93). A Rs 1,000 minimum ticket
+passed its gate (+456% against +349%, Sharpe 1.04 against 0.93; last 3 years 1.45 against 1.09), and a second pre-declared test of that
+pass failed it. Sharpe zigzags with the threshold: 700: 1.05, 800: 1.19, 900: 1.00, 1,000: 1.04, 1,100: 0.94, 1,200: 0.86, 1,300: 0.94. At
+Rs 20,000, 35,000 and 50,000 the full period is worse with it (0.95, 0.96, 0.97 against 1.00, 1.01, 1.00). The small buys did do worse
+(+3.6% against +9.4% a trade), so the idea is not absurd, but the size of the gain was path luck. The lesson reaches past this test:
+**with 15 slots, a small change to which trades are taken moves the 10-year result by about 100 points of return and 0.1 to 0.2 of
+Sharpe** (the unchanged rule alone gives +349% to +415% across account sizes). A gate on one path can pass by chance, so a swing
+variant must also survive neighbouring values and account sizes, and a gain inside that band is not evidence.
+
+### Trade-to-trade stocks and the 9 stocks without Angel One bars (2026-11-03; orb-v5, gapgo-v3, gaponly-v3, news-v5; live 2026-11-04)
+Nine of the 500 INTRADAY_UNIVERSE stocks had no Angel One bars, so they were read from Yahoo. DIACABS, E2E and LOTUSDEV are plain -EQ
+stocks again: they needed only a fresh token list, which a process that runs for days never got. ICICIPRULI was renamed ICICILIFE (ICICI
+Life Insurance). HFCL, MILKYMIST, MOREPENLAB, STLTECH and TBZ are listed only as -BE, the trade-to-trade series: every trade is delivery, so a
+position cannot be squared off the same day, and the intraday accounts were paper-trading what real money could not. ORB and gap-only
+hold 7 past trades in these five (+204 and -125); the exchange moves stocks between series, so which were BE on the day is not known.
+The instrument list now covers -BE as well and is read fresh daily and at each login, so all of them get Angel One bars, and swing, which
+takes delivery, may still hold them. The intraday accounts refuse a trade-to-trade entry, recorded as SKIPPED with the reason; the check
+holds even when quotes fail. A skip is a rule change, so all four versions moved and their forward tests restart on 2026-11-04, the
+session the 09:30 feed fix also starts. Lost: five dates of evidence. The first fresh list shows 7 of the 500 as trade-to-trade: those five plus
+OMNI and RAMBHAJO. OMNI gave gap-and-go +8.6% and gap-only +11.9% on 22 Oct, which is why this check belongs before reading those accounts.

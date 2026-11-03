@@ -103,23 +103,41 @@ def _merged(per_account: list) -> list:
     return merged
 
 
+def _signed(amount: float, cur: str) -> str:
+    return f"{'+' if amount >= 0 else '-'}{cur}{abs(amount):,.0f}"
+
+
+def _open_line(trades: list, held: list, cur: str) -> str:
+    """Open positions and the win rate counting them: winners stay open and only losers close, so closed trades alone mislead."""
+    if not held:
+        return ""
+    won = sum(t["net_pnl"] > 0 for t in trades) + sum(h["pnl"] > 0 for h in held)
+    return (
+        f"\nopen {len(held)}: {_signed(sum(h['pnl'] for h in held), cur)}  | won {won} of {len(trades) + len(held)} counting open"
+    )
+
+
 def format_pnl(accounts: list, cur: str, tz=IST) -> Html:
-    """Realized profit/loss of every paper account, [(name, closed trades)], and all of them combined. Each account shows its
-    total and its last few days; the combined block shows the last days and weeks (Telegram cuts a message at 4,096 characters)."""
+    """Profit/loss of every paper account, [(name, closed trades, open holdings)], and all of them combined. Each account shows
+    its realized total, its open positions and its last few days; the combined block shows the last days and weeks (Telegram
+    cuts a message at 4,096 characters)."""
     parts, all_days, all_weeks = ["📈 <b>Profit / loss</b>"], [], []
-    for name, trades in accounts:
+    for name, trades, held in accounts:
         total = totals(trades, tz)
         days = group_by_day(trades, tz)
         parts.append(
             f"<b>{_e(name)}</b>  {'+' if total.net_pnl >= 0 else '-'}{cur}{abs(total.net_pnl):,.0f}"
-            f"  ({total.trades} closed trade{'s' if total.trades != 1 else ''})\n{_period_lines(days, cur, 5)}"
+            f"  ({total.trades} closed trade{'s' if total.trades != 1 else ''})"
+            f"{_open_line(trades, held, cur)}\n{_period_lines(days, cur, 5)}"
         )
         all_days.append(days)
         all_weeks.append(group_by_week(trades, tz))
     if len(accounts) > 1:
-        combined = sum(totals(trades, tz).net_pnl for _, trades in accounts)
+        combined = sum(totals(trades, tz).net_pnl for _, trades, _ in accounts)
+        unrealized = sum(h["pnl"] for _, _, held in accounts for h in held)
         parts.append(
-            f"<b>All accounts</b>  {'+' if combined >= 0 else '-'}{cur}{abs(combined):,.0f}\n"
+            f"<b>All accounts</b>  {'+' if combined >= 0 else '-'}{cur}{abs(combined):,.0f}"
+            f"{f'  (open {_signed(unrealized, cur)})' if unrealized else ''}\n"
             f"<u>by day</u>\n{_period_lines(_merged(all_days), cur)}\n<u>by week</u>\n{_period_lines(_merged(all_weeks), cur)}"
         )
     return Html("\n\n".join(parts))
@@ -258,7 +276,14 @@ def handle_command(
     if isinstance(broker, ListsTrades):
         handlers["/history"] = lambda: format_history(broker.trade_history(), cur)
         paper = (("Swing", broker), ("Intraday (ORB)", intraday), ("Gap-and-go", gapgo), ("Gap-only", gaponly), ("News", news))
-        handlers["/pnl"] = lambda: format_pnl([(n, a.trade_history()) for n, a in paper if isinstance(a, ListsTrades)], cur)
+        handlers["/pnl"] = lambda: format_pnl(
+            [
+                (n, a.trade_history(), a.holdings() if isinstance(a, ListsHoldings) else [])
+                for n, a in paper
+                if isinstance(a, ListsTrades)
+            ],
+            cur,
+        )
     for name, account in (("intraday", intraday), ("gapgo", gapgo), ("gaponly", gaponly), ("news", news)):
         if account is not None:
             handlers[f"/{name}"] = partial(_account_view, account, name, False, cur)

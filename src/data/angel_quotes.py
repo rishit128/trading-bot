@@ -135,3 +135,15 @@ class AngelQuotes:
             )
         )
         return EntryContext(skip, note)
+
+
+def no_trade_to_trade(context_fn: Callable[[str, float], EntryContext], is_trade_to_trade: Callable[[str], bool]):
+    """The intraday accounts' entry checks: a stock in the trade-to-trade (BE) series is refused first, since every trade in it is
+    delivery and a position could not be squared off the same day. It holds even when the quotes fail."""
+
+    def check(symbol: str, price: float) -> EntryContext:
+        if is_trade_to_trade(symbol):
+            return EntryContext(skip=f"{symbol} is trade-to-trade (BE series): it cannot be squared off the same day")
+        return context_fn(symbol, price)
+
+    return check

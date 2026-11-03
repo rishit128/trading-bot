@@ -9,6 +9,8 @@ Everything you'd actually type, in one place. The bots run on this laptop. Run f
 ```
 ./scripts/start_bots.sh                    # start the swing bot and the intraday bot in the background (safe to re-run)
 pgrep -af main.py                          # are both running? (--loop 30 --live --holdout and --intraday --live)
+tail -f logs/watchdog.log                  # what the watchdog found and did (scripts/watchdog.py, every 2 minutes from cron)
+./venv/bin/python scripts/shadow_report.py # record-only tests: news-backed breakouts, AI against the rule, the 09:30 feed check
 tail -f logs/bot.log                       # watch the swing bot live (Ctrl+C stops watching, not the bot)
 tail -f logs/intraday.log                  # watch the intraday engines (ORB, gap-and-go, gap-only)
 pkill -f "main.py --loop"; pkill -f "main.py --intraday"                              # stop both

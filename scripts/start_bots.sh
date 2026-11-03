@@ -6,7 +6,7 @@ start() {  # $1 = log file, rest = arguments to main.py
   local log="$1"; shift
   if pgrep -f "venv/bin/python -u main.py $*" >/dev/null; then echo "already running: $*"; return; fi
   mkdir -p logs
-  nohup ./venv/bin/python -u main.py "$@" >> "logs/$log" 2>&1 &
+  HEARTBEAT_FILE="logs/heartbeat-${log%.log}" nohup ./venv/bin/python -u main.py "$@" >> "logs/$log" 2>&1 &  # read by scripts/watchdog.py
   echo "started: $*"
 }
 start bot.log --loop 30 --live --holdout  # same flags as the AWS deployment had

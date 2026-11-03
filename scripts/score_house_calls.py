@@ -77,7 +77,8 @@ def main():
         )
     print(
         f"\nall resolved calls: n={len(done)}, mean net {done.net.mean():+.2%}, won {(done.net > 0).mean():.0%}"
-        f" (by the broker's own exits only: {(df.result == 'BOOKED').sum()} booked, none ever shown as stopped out)"
+        f" ({(done.result == 'TARGET').sum()} target, {(done.result == 'BOOKED').sum()} booked, {(done.result == 'STOP').sum()} stopped,"
+        f" {(done.result == 'TIME').sum()} out of time)"
     )
     print("\nA verdict needs at least 100 resolved calls of a kind; fewer than that is only a first look.")
 

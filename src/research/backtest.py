@@ -63,6 +63,7 @@ def simulate(
     cash_yield_from: Optional[pd.Timestamp] = None,
     trail_pct: Optional[float] = None,
     lock_at: Optional[float] = None,
+    min_ticket: float = 0.0,
 ) -> Result:
     """Replay signals through the real risk engine: next-open fills, stop/target levels off the signal-day close.
 
@@ -77,6 +78,8 @@ def simulate(
     `trail_pct` raises each position's stop to that fraction below its highest high since entry (never lowers it);
     `lock_at` (a gain such as 0.20) first moves the stop to the entry price once the high has gained that much.
     Both apply from the next day's open, like the live broker-side stop moves. Research only: the live bot does neither.
+
+    `min_ticket` skips a buy worth less than this in rupees (a fixed charge per sale makes small positions dear). Research only.
 
     `trend_exit` (the live exit, on by default) sells at the next open after a close below the 200-day average, so a
     simulation tests the strategy that is actually running.
@@ -149,7 +152,7 @@ def simulate(
         qty = min(decision.quantity, int(cash // open_price))
         while qty > 0 and fees and qty * open_price + fees(Action.BUY, qty * open_price) > cash:
             qty -= 1
-        if qty <= 0:
+        if qty <= 0 or qty * open_price < min_ticket:
             return
         entry_fee = fees(Action.BUY, qty * open_price) if fees else 0.0
         cash -= qty * open_price + entry_fee

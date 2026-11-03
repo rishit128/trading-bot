@@ -30,7 +30,7 @@ from src.research.significance import units_needed  # noqa: E402
 from src.versions import GAPGO_VERSION, GAPONLY_VERSION, INTRADAY_VERSION, NEWS_VERSION, STRATEGY_VERSION  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-FREEZE = "2026-10-28"  # the first full session under the frozen versions (10-27 opened on the old code)
+FREEZE = "2026-11-04"  # the first full session under the frozen versions (the 09:30 feed fix and the trade-to-trade check)
 MIN_DATES, T_GO, DRIFT_Z, VANISH_SHARE = 30, 2.0, -2.0, 0.10
 
 
@@ -42,6 +42,7 @@ class Account:
     expected: Optional[float]  # the backtest's mean net per trade (None: no backtest)
     expected_source: str
     signals: bool  # has intraday_signals (version stamp and final-bar check)
+    freeze: str = FREEZE  # the first full session under this account's version
 
 
 ACCOUNTS = {
@@ -49,7 +50,7 @@ ACCOUNTS = {
     "gapgo": Account("gapgo.db", GAPGO_VERSION, 0.0025, -0.0006, "8 years Angel One, 1,815 trades", True),
     "gaponly": Account("gaponly.db", GAPONLY_VERSION, 0.0025, -0.00107, "2 years 1-minute data, 2,806 trades", True),
     "news": Account("news.db", NEWS_VERSION, 0.0025, None, "no backtest (needs results history)", True),
-    "swing": Account("trading.db", STRATEGY_VERSION, 0.03, 0.081, "10-year live-configuration backtest", False),
+    "swing": Account("trading.db", STRATEGY_VERSION, 0.03, 0.081, "10-year live-configuration backtest", False, "2026-10-30"),
 }
 
 
@@ -61,10 +62,10 @@ def _read(db: Path, query: str) -> pd.DataFrame:
 def _versions(db: Path, account: Account) -> pd.Series:
     """The version each recorded entry since the freeze was made under."""
     if account.signals:
-        return _read(db, f"select system_version from intraday_signals where outcome = 'ENTERED' and day >= '{FREEZE}'")[
+        return _read(db, f"select system_version from intraday_signals where outcome = 'ENTERED' and day >= '{account.freeze}'")[
             "system_version"
         ]
-    frame = _read(db, f"select strategy_version from decisions where final_action = 'BUY' and created_at >= '{FREEZE}'")
+    frame = _read(db, f"select strategy_version from decisions where final_action = 'BUY' and created_at >= '{account.freeze}'")
     return frame["strategy_version"]
 
 
@@ -78,13 +79,13 @@ def clustered(per_trade: pd.Series, days: pd.Series) -> tuple[float, float, pd.S
 
 def report(name: str, account: Account) -> None:
     db = ROOT / account.db
-    print(f"\n=== {name}: frozen at {account.version} from {FREEZE} ({db.name}) ===")
+    print(f"\n=== {name}: frozen at {account.version} from {account.freeze} ({db.name}) ===")
     trades = _read(db, "select symbol, qty, entry_price, net_pnl, opened_at from paper_trades")
     if len(trades):
         trades["day"] = [pd.Timestamp(t).tz_localize("UTC").tz_convert(IST).date().isoformat() for t in trades["opened_at"]]
         trades["net"] = trades["net_pnl"] / (trades["entry_price"] * trades["qty"])
-    before = trades[trades["day"] < FREEZE] if len(trades) else trades
-    test = trades[trades["day"] >= FREEZE] if len(trades) else trades
+    before = trades[trades["day"] < account.freeze] if len(trades) else trades
+    test = trades[trades["day"] >= account.freeze] if len(trades) else trades
     if len(before):
         print(f"before the freeze (history only, not evidence): {len(before)} trades, mean net {before['net'].mean():+.3%}")
 
@@ -92,7 +93,7 @@ def report(name: str, account: Account) -> None:
     other = sorted(set(versions.dropna()) - {account.version})
     if other:
         print(
-            f"TEST RESTARTED: entries since the freeze under {other}, not {account.version}. Set a new FREEZE for the new rule."
+            f"TEST RESTARTED: entries since the freeze under {other}, not {account.version}. Set a new freeze for the new rule."
         )
         return
 
@@ -100,7 +101,7 @@ def report(name: str, account: Account) -> None:
     if account.signals and name != "news":
         check = _read(
             db,
-            f"select final_signal from intraday_signals where outcome = 'ENTERED' and day >= '{FREEZE}' "
+            f"select final_signal from intraday_signals where outcome = 'ENTERED' and day >= '{account.freeze}' "
             "and final_signal is not null",
         )["final_signal"]
         if len(check):

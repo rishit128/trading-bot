@@ -11,8 +11,8 @@ checks on 10-23 and 10-26; news v1 to v3 in five days; swing-v3, technical-v13 a
 some changes went live without a version bump. A paper result that mixes rules is not evidence for any of them.
 
 ## Rules
-1. **Frozen versions.** orb-v4, gapgo-v2, gaponly-v2, news-v4 (news-v3 made no entry; v4 live from 12:45 on 2026-10-28), swing-v5, from
-   2026-10-28; swing-v6 from 2026-10-29 (the house exit; swing-v5 made no entry before it). Trades before that are history,
+1. **Frozen versions.** orb-v5, gapgo-v3, gaponly-v3, news-v5, from 2026-11-04 (restarted from 2026-10-28: the 09:30 step now reads Angel
+   One's bars, and no entry in a trade-to-trade stock); swing-v6 from 2026-10-30, its first full session (the house exit; live from 13:20 on 2026-10-29). Trades before that are history,
    not evidence.
 2. **Any rule change** (entry, exit, sizing, universe, a new skip) bumps its version in `src/versions.py` in the same
    commit, and moves `FREEZE` in the report: the test restarts. The report refuses to judge a test that mixes versions.

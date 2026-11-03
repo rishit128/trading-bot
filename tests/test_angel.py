@@ -1,11 +1,14 @@
-from datetime import datetime, timedelta, timezone
+import os
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
-from src.data.angel import AngelStream, BarBuilder, bar_row, eq_tokens
+from src.data.angel import AngelStream, BarBuilder, Instruments, TradeToTrade, bar_row, instruments, load_instruments
 from src.data.angel_bars import MIN_CLEAN_DAYS, AngelBars, AngelPriceFeed, AngelTrust, agreement, clean_days
-from src.data.angel_quotes import AngelQuotes
+from src.data.angel_quotes import AngelQuotes, no_trade_to_trade
 from src.data.india import IST
 from src.database import AngelBarRecord, IntradayBarRecord, make_session_factory
 
@@ -16,13 +19,80 @@ def at(h, m, s=0, day=22):
     return datetime(2026, 10, day, h, m, s, tzinfo=IST).astimezone(timezone.utc)
 
 
-def test_eq_tokens_keeps_only_nse_equity():
+def test_instruments_give_every_cash_stock_a_token_and_name_the_trade_to_trade_ones():
     master = [
         {"exch_seg": "NSE", "symbol": "SBIN-EQ", "name": "SBIN", "token": "3045"},
         {"exch_seg": "NSE", "symbol": "XYZ-BE", "name": "XYZ", "token": "9"},
+        {"exch_seg": "NSE", "symbol": "ABC-EQ", "name": "ABC", "token": "1"},
+        {"exch_seg": "NSE", "symbol": "ABC-BE", "name": "ABC", "token": "2"},  # both lines: it can be day-traded on -EQ
+        {"exch_seg": "NSE", "symbol": "GOLD-GS", "name": "GOLD", "token": "7"},
         {"exch_seg": "BSE", "symbol": "SBIN", "name": "SBIN", "token": "500112"},
     ]
-    assert eq_tokens(master) == {"SBIN": "3045"}
+    assert instruments(master) == Instruments({"SBIN": "3045", "XYZ": "9", "ABC": "1"}, frozenset({"XYZ"}))
+
+
+def test_the_instrument_list_is_read_fresh_each_day_and_survives_a_failed_refresh(tmp_path, monkeypatch):
+    calls = []
+
+    def master():
+        calls.append(1)
+        return [{"exch_seg": "NSE", "symbol": "XYZ-BE", "name": "XYZ", "token": "9"}]
+
+    monkeypatch.setattr("src.data.filings.scrip_master", master)
+    assert load_instruments(tmp_path).trade_to_trade == {"XYZ"} and load_instruments(tmp_path).tokens == {"XYZ": "9"}
+    assert len(calls) == 1  # the second read came from today's file
+    os.utime(tmp_path / "angel_instruments.json", (1_000_000, 1_000_000))  # yesterday's copy
+
+    def down():
+        raise OSError("no network")
+
+    monkeypatch.setattr("src.data.filings.scrip_master", down)
+    assert load_instruments(tmp_path).tokens == {"XYZ": "9"}
+
+
+def test_the_trade_to_trade_check_rereads_on_a_new_day_and_keeps_the_last_list_on_failure(monkeypatch):
+    lists = [Instruments({}, frozenset({"XYZ"})), Instruments({}, frozenset({"ABC"})), None]
+    day = [date(2026, 11, 3)]
+
+    def load(_dir):
+        found = lists.pop(0)
+        if found is None:
+            raise OSError("no list")
+        return found
+
+    monkeypatch.setattr("src.data.angel.load_instruments", load)
+    check = TradeToTrade(Path("."), today=lambda: day[0])
+    assert check("XYZ") and not check("ABC") and len(lists) == 2  # one read a day
+    day[0] = date(2026, 11, 4)
+    assert check("ABC") and not check("XYZ")
+    day[0] = date(2026, 11, 5)
+    assert check("ABC")
+
+
+def test_a_login_refreshes_the_tokens_in_the_map_the_quotes_share(tmp_path):
+    shared = {"SBIN": "1", "HFCL": "2", "OTHER": "3"}
+    stream = AngelStream(
+        make_session_factory(f"sqlite:///{tmp_path / 'x.db'}"),
+        ["SBIN", "HFCL"],
+        shared,
+        refresh=lambda: {"SBIN": "1", "HFCL": "22"},
+    )
+    stream.refresh_tokens()
+    assert (
+        stream.tokens == {"SBIN": "1", "HFCL": "22"}
+        and stream.symbol_of["22"] == "HFCL"
+        and shared == {"SBIN": "1", "HFCL": "22"}
+    )
+
+
+def test_intraday_entries_refuse_a_trade_to_trade_stock_even_when_the_quotes_fail():
+    def broken(symbol, price):
+        raise OSError("no quote")
+
+    check = no_trade_to_trade(broken, lambda symbol: symbol == "XYZ")
+    assert "trade-to-trade" in check("XYZ", 100.0).skip
+    with pytest.raises(OSError):
+        check("SBIN", 100.0)  # any other stock goes on to the normal checks
 
 
 def test_ticks_become_five_minute_bars_with_volume_deltas():
@@ -231,8 +301,8 @@ def test_backfill_fetches_a_week_for_a_stock_with_no_history_and_only_today_for_
 
     stream = AngelStream(sessions, ["OLD", "NEW"], {"OLD": "1", "NEW": "2"})
     stream.api = SimpleNamespace(getCandleData=candles)
-    stream.backfill()
-    assert asked["1"].startswith(datetime.now(IST).date().isoformat()) and asked["2"] < asked["1"]
+    stream.backfill(datetime(2026, 10, 22, 4, 30, tzinfo=timezone.utc))  # 10:00 IST: the market is open
+    assert asked["1"].startswith("2026-10-22") and asked["2"] < asked["1"]
     assert stream.backfilled
     with sessions() as s:
         assert s.query(AngelBarRecord).filter_by(symbol="NEW").count() == 2
@@ -295,3 +365,21 @@ def test_the_login_is_announced_once_a_day(tmp_path):
     stream._tell_login()
     stream._tell_login()
     assert len(sent) == 1 and "logged in" in sent[0] and "1 stocks" in sent[0]
+
+
+def test_before_the_open_the_backfill_asks_only_for_stocks_without_history_and_the_feed_is_ready_at_once(tmp_path, monkeypatch):
+    """The range for today has not begun, so asking for it fails; three retries on every stock kept the stream 'not ready',
+    and every 09:30 entry on Yahoo's bars, until about 10:05 (2026-11-03)."""
+    monkeypatch.setattr("src.data.angel.time.sleep", lambda s: None)
+    sessions = make_session_factory(f"sqlite:///{tmp_path / 'x.db'}")
+    put_bars(sessions, "2026-10-21", ["OLD"])
+    asked = []
+
+    def candles(params):
+        asked.append(params["symboltoken"])
+        return {"status": True, "data": []}
+
+    stream = AngelStream(sessions, ["OLD", "NEW"], {"OLD": "1", "NEW": "2"})
+    stream.api = SimpleNamespace(getCandleData=candles)
+    stream.backfill(datetime(2026, 10, 22, 3, 16, tzinfo=timezone.utc))  # 08:46 IST
+    assert asked == ["2"] and stream.backfilled

@@ -17,9 +17,9 @@ from src.app.wiring import (
     news_db_url,
     open_house_calls,
 )
-from src.data.angel import CACHE_DIR, AngelStream, make_stream
+from src.data.angel import CACHE_DIR, AngelStream, TradeToTrade, make_stream
 from src.data.angel_bars import AngelBars
-from src.data.angel_quotes import AngelQuotes, EntryContext
+from src.data.angel_quotes import AngelQuotes, EntryContext, no_trade_to_trade
 from src.data.intraday_bars import BarArchive, fetch_5m_bars, shared_download
 from src.data.market_context import MarketContextProvider
 from src.data.market_regime import RegimeProvider, with_regime
@@ -151,6 +151,7 @@ class Angel(NamedTuple):
     stream: AngelStream
     context: Callable[[str, float], EntryContext]  # the quote checks and entry record, with the market regime added
     tokens: Dict[str, str]
+    is_trade_to_trade: Callable[[str], bool]
 
 
 def start_angel(settings, sessions, universe, notify) -> Optional[Angel]:
@@ -163,7 +164,9 @@ def start_angel(settings, sessions, universe, notify) -> Optional[Angel]:
     stream, tokens = made
     stream.start()
     quotes = AngelQuotes(lambda: stream.api, tokens, universe)
-    return Angel(stream, with_regime(quotes.entry_context, RegimeProvider(MarketContextProvider(), sessions)), tokens)
+    is_trade_to_trade = TradeToTrade(CACHE_DIR)
+    context = with_regime(quotes.entry_context, RegimeProvider(MarketContextProvider(), sessions))
+    return Angel(stream, no_trade_to_trade(context, is_trade_to_trade), tokens, is_trade_to_trade)
 
 
 def swing_holdings(sessions) -> Set[str]:
@@ -175,7 +178,7 @@ def swing_holdings(sessions) -> Set[str]:
 def build_news_engine(settings, universe, bars, notify, live: bool, angel: Optional[Angel] = None) -> Optional[Any]:
     """The news-catalyst engine on its own paper account, with its filing watcher started; None (and a printed reason) when it
     cannot run: it needs an AI model and the BSE -> NSE symbol map. `angel` is set when Angel One is in use: it
-    drops stocks Angel One lists only as BE (trade-to-trade), gives the live price when a filing is seen and the circuit,
+    drops stocks Angel One lists only as BE (trade-to-trade) when it starts (the entry check covers a stock that moves later), gives the live price when a filing is seen and the circuit,
     spread and F&O checks at each entry."""
     from src.data.filings import FeedReader, load_bse_nse_map
     from src.data.india import IndiaClock
@@ -194,7 +197,7 @@ def build_news_engine(settings, universe, bars, notify, live: bool, angel: Optio
         return None
     swing_sessions = make_session_factory(settings.database_url)
     broker = make_paper_broker(settings, news_db_url(), fees=intraday_fees, stream=angel.stream if angel else None)
-    news_universe = NewsUniverse([s for s in universe if angel is None or s in angel.tokens])
+    news_universe = NewsUniverse([s for s in universe if angel is None or (s in angel.tokens and not angel.is_trade_to_trade(s))])
     calendar = IndiaClock()
     FilingWatcher(
         broker.sessions,

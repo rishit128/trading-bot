@@ -31,18 +31,22 @@ STRATEGY_VERSION = "swing-v6"
 #   orb-v4: the universe is the explicit 500-stock INTRADAY_UNIVERSE (was Yahoo's top 100, since 2026-10-19), and Angel One's
 #           entry checks refuse a buy within 1% of the upper circuit (since 2026-10-23) or into an F&O short build-up
 #           (since 2026-10-26). Bumped 2026-10-26: those changes had gone live under orb-v3.
-INTRADAY_VERSION = "orb-v4"
+#   orb-v5 (2026-11-03): no entry in a trade-to-trade (BE series) stock, which cannot be squared off the same day, and ICICIPRULI
+#           becomes ICICILIFE in the universe (renamed). All four intraday accounts carry both.
+INTRADAY_VERSION = "orb-v5"
 # The gap-and-go paper strategy (its own account): gap >= 2% then a close above the opening range by 10:30, stop at
 # the range low, held to the square-off.
 # gapgo-v2: v1 plus the 500-stock universe (live since 2026-10-19) and the Angel One entry checks (2026-10-23, 10-26) that
 # orb-v4 also carries (bumped 2026-10-26).
-GAPGO_VERSION = "gapgo-v2"
+# gapgo-v3: v2 plus the trade-to-trade check of orb-v5.
+GAPGO_VERSION = "gapgo-v3"
 # The gap-only paper control (its own account): the same gap, bought on the 09:30 close with no breakout.
 # gaponly-v2: v1 plus the universe and Angel One entry checks of orb-v4 (bumped 2026-10-26).
-GAPONLY_VERSION = "gaponly-v2"
+# gaponly-v3: v2 plus the trade-to-trade check of orb-v5.
+GAPONLY_VERSION = "gaponly-v3"
 # The news-catalyst paper strategy (its own account): a material exchange filing, read by the AI, traded long by fixed
 # rules (src.news.strategy).
-NEWS_VERSION = "news-v4"  # v2: gap floor 0% (was +2%), live order-book veto; v3: rule A until 12:00, filings after 14:30 roll over, no entry into an F&O short build-up; v4: rule A holds its stop within 0.6-3% instead of refusing the setup, no order-book balance veto (the spread veto stays)
+NEWS_VERSION = "news-v5"  # v5: v4 plus the trade-to-trade check of orb-v5; v2: gap floor 0% (was +2%), live order-book veto; v3: rule A until 12:00, filings after 14:30 roll over, no entry into an F&O short build-up; v4: rule A holds its stop within 0.6-3% instead of refusing the setup, no order-book balance veto (the spread veto stays)
 
 VERSIONS = {
     "feature": FEATURE_VERSION,

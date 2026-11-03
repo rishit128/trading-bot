@@ -8,10 +8,11 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from datetime import time as dtime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
 
 import pandas as pd
 
@@ -21,8 +22,7 @@ log = logging.getLogger(__name__)
 
 BAR = timedelta(minutes=5)
 CACHE_DIR = Path("research_cache")  # the BSE -> NSE symbol map and the Angel One token list (git-ignored)
-TOKEN_FILE = "angel_tokens.json"
-TOKEN_MAX_AGE = 86400  # the instrument list is refreshed daily
+INSTRUMENT_FILE = "angel_instruments.json"  # refreshed on the first read of each day: the exchange moves stocks between series
 SWEEP = 2.0  # seconds between checks for bars whose five minutes have passed
 STALE_AFTER = 90.0  # seconds without a tick before the stream counts as down
 SESSION_START, SESSION_END = dtime(9, 15), dtime(15, 30)
@@ -38,28 +38,71 @@ def credentials_set() -> bool:
     return all(os.getenv(k) for k in REQUIRED_KEYS)
 
 
-def eq_tokens(master: List[dict]) -> Dict[str, str]:
-    """NSE symbol -> Angel One token, for plain equity (-EQ) instruments only: the BE (trade-to-trade) series is left out."""
-    return {r["name"]: str(r["token"]) for r in master if r.get("exch_seg") == "NSE" and str(r.get("symbol", "")).endswith("-EQ")}
+@dataclass(frozen=True)
+class Instruments:
+    tokens: Dict[str, str]  # symbol -> Angel One token, for every stock with bars: -EQ, and -BE for a stock with no -EQ line
+    trade_to_trade: FrozenSet[str]  # the stocks listed only as -BE: every trade is delivery, so no same-day square-off
 
 
-def load_tokens(cache_dir: Path) -> Dict[str, str]:
-    """The symbol -> token map from a daily cache; a failed refresh keeps the old copy, and with none at all it raises."""
+def instruments(master: List[dict]) -> Instruments:
+    """The NSE cash stocks of the scrip master. The other series (bonds, ETFs on SME platforms and so on) are left out."""
+    equity, be = {}, {}
+    for r in master:
+        if r.get("exch_seg") == "NSE":
+            series = str(r.get("symbol", "")).rsplit("-", 1)[-1]
+            if series == "EQ":
+                equity[r["name"]] = str(r["token"])
+            elif series == "BE":
+                be[r["name"]] = str(r["token"])
+    return Instruments({**be, **equity}, frozenset(be.keys() - equity.keys()))
+
+
+def load_instruments(cache_dir: Path) -> Instruments:
+    """Today's instrument list, from a cache refreshed once a day; a failed refresh keeps the old copy, and with none at all it
+    raises."""
     from src.data.filings import scrip_master
 
-    path = cache_dir / TOKEN_FILE
-    if path.exists() and time.time() - path.stat().st_mtime < TOKEN_MAX_AGE:
-        return json.loads(path.read_text(encoding="utf-8"))
+    path = cache_dir / INSTRUMENT_FILE
+    if path.exists() and date.fromtimestamp(path.stat().st_mtime) == date.today():
+        return _read_instruments(path)
     try:
-        tokens = eq_tokens(scrip_master())
+        found = instruments(scrip_master())
     except Exception:
         if path.exists():
             log.exception("could not refresh the Angel One instrument list; using the old copy")
-            return json.loads(path.read_text(encoding="utf-8"))
+            return _read_instruments(path)
         raise
     cache_dir.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(tokens), encoding="utf-8")
-    return tokens
+    path.write_text(json.dumps({"tokens": found.tokens, "trade_to_trade": sorted(found.trade_to_trade)}), encoding="utf-8")
+    return found
+
+
+def _read_instruments(path: Path) -> Instruments:
+    body = json.loads(path.read_text(encoding="utf-8"))
+    return Instruments(body["tokens"], frozenset(body["trade_to_trade"]))
+
+
+def load_tokens(cache_dir: Path) -> Dict[str, str]:
+    return load_instruments(cache_dir).tokens
+
+
+class TradeToTrade:
+    """Whether a stock is trade-to-trade today, for the intraday accounts' entry check. The list is read once a day; if it
+    cannot be read the last one stands."""
+
+    def __init__(self, cache_dir: Path, today: Callable[[], date] = date.today):
+        self.cache_dir, self.today = cache_dir, today
+        self.day: Optional[date] = None
+        self.symbols: FrozenSet[str] = frozenset()
+
+    def __call__(self, symbol: str) -> bool:
+        if self.day != self.today():
+            try:
+                self.symbols = load_instruments(self.cache_dir).trade_to_trade
+                self.day = self.today()
+            except Exception:
+                log.exception("could not read the trade-to-trade list; using the last one")
+        return symbol in self.symbols
 
 
 def _silence_sdk_log() -> None:
@@ -176,10 +219,17 @@ class AngelStream:
     (re)connect the bars the stream has not seen are fetched from Angel One's candles; until then `ready()` is False
     and the engines read Yahoo."""
 
-    def __init__(self, sessions, symbols: List[str], tokens: Dict[str, str], notify: Optional[Callable[[str], object]] = None):
+    def __init__(
+        self,
+        sessions,
+        symbols: List[str],
+        tokens: Dict[str, str],
+        notify: Optional[Callable[[str], object]] = None,
+        refresh: Optional[Callable[[], Dict[str, str]]] = None,
+    ):
         self.sessions, self.notify = sessions, notify
-        self.tokens = {s: tokens[s] for s in symbols if s in tokens}
-        self.symbol_of = {token: s for s, token in self.tokens.items()}
+        self.symbols, self.refresh, self.all_tokens = symbols, refresh, tokens
+        self._use_tokens(tokens)
         self.builder = BarBuilder()
         self.lock = threading.Lock()
         self.api: Any = None  # the logged-in session, shared with src.data.angel_quotes
@@ -188,6 +238,24 @@ class AngelStream:
         self.backfilled = False
         self.alerted_on = ""
         self.logged_in_on = ""
+
+    def _use_tokens(self, tokens: Dict[str, str]) -> None:
+        self.tokens = {s: tokens[s] for s in self.symbols if s in tokens}
+        self.symbol_of = {token: s for s, token in self.tokens.items()}
+
+    def refresh_tokens(self) -> None:
+        """Today's tokens before a login: a stock that changed series has a new one, and the bots run for days. The shared map
+        is updated in place, as the quotes use it too."""
+        if self.refresh is None:
+            return
+        try:
+            fresh = self.refresh()
+        except Exception:
+            log.exception("could not refresh the Angel One tokens; keeping the old ones")
+            return
+        self.all_tokens.clear()
+        self.all_tokens.update(fresh)
+        self._use_tokens(self.all_tokens)
 
     def ready(self) -> bool:
         """True while ticks are arriving and the day's earlier bars are in."""
@@ -247,18 +315,24 @@ class AngelStream:
         with self.sessions() as s:
             return set(s.scalars(select(AngelBarRecord.symbol).where(AngelBarRecord.day < today).distinct()))
 
-    def backfill(self) -> None:
+    def backfill(self, now: Optional[datetime] = None) -> None:
         """The bars the stream has not seen, from the broker's candles: today's earlier bars, and for a stock with no earlier
         session saved the previous HISTORY_DAYS calendar days too (one request each), so the engines have the previous close
         and time-of-day volumes from the first day. Mid-session it starts at the next bar boundary, so that the bar the stream
-        joined in the middle of is complete."""
-        now = datetime.now(timezone.utc)
-        if now.astimezone(IST).time() >= dtime(9, 20):
+        joined in the middle of is complete. Before the open nothing has traded today, so a stock with history needs no
+        request: asking for a range that has not begun fails, and the retries kept the feed on Yahoo until about 10:05."""
+        now = now or datetime.now(timezone.utc)
+        local = now.astimezone(IST)
+        if local.time() >= dtime(9, 20):
             time.sleep(max(0.0, (bar_start(now) + BAR - now).total_seconds() + 3))
-        today, known, failed = datetime.now(IST).date(), self.has_history(), 0
+        before_open = local.time() < SESSION_START
+        today, known, failed = local.date(), self.has_history(), 0
         for symbol, token in self.tokens.items():
+            if before_open and symbol in known:
+                continue
             start = today if symbol in known else today - timedelta(days=HISTORY_DAYS)
             candles: list = []
+            last_error = ""
             for attempt in range(CANDLE_TRIES):
                 end = datetime.now(IST)
                 try:
@@ -274,12 +348,11 @@ class AngelStream:
                     candles = reply.get("data") or []
                     break
                 except Exception as e:
-                    log.debug(
-                        "candles for %s failed (try %d of %d): %s: %s", symbol, attempt + 1, CANDLE_TRIES, type(e).__name__, e
-                    )
+                    last_error = f"{type(e).__name__}: {str(e)[:120]}"
+                    log.debug("candles for %s failed (try %d of %d): %s", symbol, attempt + 1, CANDLE_TRIES, last_error)
                     time.sleep(CANDLE_PACE * 3 * (attempt + 1))
             else:
-                log.warning("candles for %s: gave up after %d tries", symbol, CANDLE_TRIES)
+                log.warning("candles for %s: gave up after %d tries (%s)", symbol, CANDLE_TRIES, last_error)
                 failed += 1
             seen = datetime.now(timezone.utc)
             rows = []
@@ -308,6 +381,7 @@ class AngelStream:
     def _stream(self) -> None:
         from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 
+        self.refresh_tokens()
         self.api, jwt, feed = login()
         self._tell_login()
         ws = SmartWebSocketV2(jwt, os.environ["ANGEL_API_KEY"], os.environ["ANGEL_CLIENT_CODE"], feed)
@@ -360,4 +434,4 @@ def make_stream(sessions, universe: List[str], cache_dir: Path, notify) -> Optio
     except Exception as e:
         log.warning("angel: no instrument list (%s: %s), Yahoo only", type(e).__name__, e)
         return None
-    return AngelStream(sessions, universe, tokens, notify), tokens
+    return AngelStream(sessions, universe, tokens, notify, refresh=lambda: load_tokens(cache_dir)), tokens

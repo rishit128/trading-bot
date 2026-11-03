@@ -315,3 +315,13 @@ def test_pnl_lists_every_paper_account_and_their_sum():
 def test_pnl_with_only_the_swing_account_has_no_combined_block():
     reply = handle_command("/pnl", None, HistoryOnly(10.0), SimpleNamespace(currency="Rs "))
     assert "<b>Swing</b>" in reply and "All accounts" not in reply
+
+
+def test_pnl_counts_open_positions_in_the_win_rate_because_winners_stay_open():
+    class Holding(HistoryOnly):
+        def holdings(self):
+            return [{"symbol": "A", "pnl": 300.0}, {"symbol": "B", "pnl": 50.0}, {"symbol": "C", "pnl": -20.0}]
+
+    swing = Holding(-100.0)
+    reply = handle_command("/pnl", None, swing, SimpleNamespace(currency="Rs "), intraday=HistoryOnly(10.0))
+    assert "open 3: +Rs 330  | won 2 of 4 counting open" in reply and "(open +Rs 330)" in reply
