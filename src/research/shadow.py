@@ -2,7 +2,10 @@
 
 S1 asks whether the breakout rule works on stocks with real news, the only lead the research left. Every breakout the ORB engine
 records, taken or skipped, is scored on the final bars with the live exits, and split by whether a material good-news filing
-was published before the signal. S2 asks whether the swing AI's decisions add anything where they differ from the rule."""
+was published before the signal. S2 asks whether the swing AI's decisions add anything where they differ from the rule. S3 and S4
+follow each filing from the first bar after it was seen: which kinds of news move, and whether buying good results and holding for
+days beats the costs that a same-day trade cannot (S4 is the test; the moves are larger). Prices are Angel One's bars, dates the
+exchange filings' own: no free history of either exists before 2026-10-21, so these run forward only."""
 
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
@@ -15,6 +18,8 @@ BAR = pd.Timedelta(minutes=5)
 SQUARE_OFF = "15:15"
 MIN_SIGNALS, MIN_DATES, T_GO = 100, 30, 2.0
 MIN_DISAGREEMENTS, AI_EDGE = 100, 0.01
+HOLDS = (1, 3, 5)  # sessions after the entry session's close; S4 judges 5 only, so that one test is run, not three
+JUDGED_HOLD, MIN_RESULTS, T_RESULTS = 5, 100, 2.6
 
 
 def score_signal(
@@ -112,3 +117,50 @@ def unrecorded_entries(opened: Iterable[Tuple[str, str]], ordered: Iterable[Tupl
     """(symbol, date) of positions with no filled BUY order on that date: bought by hand or by the core sleeve."""
     known = set(ordered)
     return [entry for entry in opened if entry not in known]
+
+
+def session_bars(bars: pd.DataFrame) -> pd.DataFrame:
+    """One row per stock and session from 5-minute bars (symbol, day, t, open, close), up to the square-off: `close` is the last bar
+    before 15:15."""
+    kept = bars[bars["t"].dt.strftime("%H:%M") < SQUARE_OFF].sort_values("t")
+    return kept.groupby(["symbol", "day"], as_index=False).agg(close=("close", "last"))
+
+
+def follow_filings(filings: pd.DataFrame, bars: pd.DataFrame, today: str) -> pd.DataFrame:
+    """Each stock's first filing of a session, bought at the open of the first bar starting after we saw it (a filing seen after the
+    last bar goes to the next session). `filings`: symbol, session, seen (aware), event_type, direction, material; `bars`: symbol,
+    day, t, open, close. Adds entry_day, entry, ret_0 (to that session's close) and ret_N (N sessions later), as % moves, and the same
+    for the median stock (mkt_0, mkt_N). A session still running is not used as an exit."""
+    done = sorted(day for day in bars["day"].unique() if day < today)
+    closes = session_bars(bars[bars["day"].isin(done)]).pivot(index="day", columns="symbol", values="close").sort_index()
+    by_stock = {symbol: frame.sort_values("t") for symbol, frame in bars[bars["day"].isin(done)].groupby("symbol")}
+    position = {day: i for i, day in enumerate(closes.index)}
+    open_at = bars[bars["day"].isin(done)].pivot_table(index="t", columns="symbol", values="open")
+    rows = []
+    for f in filings.sort_values("seen").drop_duplicates(["symbol", "session"]).itertuples():
+        stock = by_stock.get(f.symbol)
+        if stock is None:
+            continue
+        later = stock[(stock["t"] >= f.seen) & (stock["t"].dt.strftime("%H:%M") < SQUARE_OFF)]
+        if later.empty:
+            continue
+        t0, entry, day = later["t"].iloc[0], float(later["open"].iloc[0]), later["day"].iloc[0]
+        row = dict(symbol=f.symbol, session=f.session, event_type=f.event_type, direction=f.direction, material=bool(f.material))
+        row.update(day=day, entry=entry)
+        base = open_at.loc[t0]
+        for hold in (0, *HOLDS):
+            i = position[day] + hold
+            if i < len(closes):
+                exit_close = closes.iloc[i]
+                row[f"ret_{hold}"] = (float(exit_close[f.symbol]) / entry - 1) * 100
+                row[f"mkt_{hold}"] = float((exit_close / base - 1).median()) * 100
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def results_verdict(s: Stats, excess: Stats) -> str:
+    """S4's gate, fixed before any of its evidence: net of delivery costs and beyond the median stock over the same days."""
+    if s.n < MIN_RESULTS:
+        return f"RUNNING ({s.n} of {MIN_RESULTS} results)"
+    passed = s.mean > 0 and excess.mean > 0 and excess.t >= T_RESULTS and excess.first_half > 0 and excess.second_half > 0
+    return "PASS: a candidate design for the ORB account" if passed else "FAIL: good results do not pay after costs"

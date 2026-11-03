@@ -1270,3 +1270,14 @@ takes delivery, may still hold them. The intraday accounts refuse a trade-to-tra
 holds even when quotes fail. A skip is a rule change, so all four versions moved and their forward tests restart on 2026-11-04, the
 session the 09:30 feed fix also starts. Lost: five dates of evidence. The first fresh list shows 7 of the 500 as trade-to-trade: those five plus
 OMNI and RAMBHAJO. OMNI gave gap-and-go +8.6% and gap-only +11.9% on 22 Oct, which is why this check belongs before reading those accounts.
+
+### What follows a filing, and holding good results for days (2026-11-03; S3, S4; record only, Angel One bars and exchange filings only)
+Every labelled filing is followed from the first Angel One bar after we saw it (`src/research/shadow.py`). S3 splits it by kind against the
+median stock. S4 is the test: buy material good results and hold 5 sessions (1 and 3 are shown, not judged), net of delivery costs (1.05%
+on a Rs 2,200 position), judged after 100 results from 2026-11-04: mean net > 0, excess over the median stock > 0 with date-clustered t
+>= 2.6 and both halves > 0. A pass makes it a candidate rule for the ORB account; decision by 2027-02-28, which covers the next results season.
+It runs forward only: the BSE feed serves only the latest filings, so our dates begin 2026-10-21, and Yahoo's are not used. A history
+test would need a results file downloaded by hand from NSE (its terms forbid automated collection) and the Angel One downloader rebuilt.
+First look, seen, not evidence (8 sessions, a market that rebounded 4.5% after 23 Oct): results good news, to the close, -0.62% against the
+median stock on 74 filings (t -1.6); held 5 sessions, about flat net but -1.54% against the median stock on 19 filings over 3 dates. Nothing here
+supports buying good results straight after the filing. The news rule's 7 fired signals, which also wait for a price breakout, are too few to read.

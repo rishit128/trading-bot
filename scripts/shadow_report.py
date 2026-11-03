@@ -6,18 +6,25 @@ were designed, so it is shown apart. Fixed in advance in src/research/shadow.py 
 
 import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src.engine.costs import SLIPPAGE, india_delivery_fees  # noqa: E402
 from src.research.shadow import (  # noqa: E402
+    HOLDS,
+    JUDGED_HOLD,
     Stats,
     ai_cells,
     ai_verdict,
     catalyst_verdict,
+    follow_filings,
+    results_verdict,
     score_signal,
     stats,
     unrecorded_entries,
@@ -29,6 +36,8 @@ EVIDENCE_FROM = "2026-11-04"  # the first session after the tests were fixed
 FEED_FIX_FROM = "2026-11-04"  # the first session whose 09:30 step reads Angel One's bars
 IST = "Asia/Kolkata"
 SWING_HORIZON = 20
+S3_MIN = 5  # a kind of news with fewer filings is not shown
+LIVE_POSITION = 2200.0  # the swing account's 8.8% of Rs 25,000
 
 
 def read(db: str, query: str, params=()) -> pd.DataFrame:
@@ -114,6 +123,67 @@ def report_ai() -> None:
     print(" verdict:", ai_verdict(cells[cells["day"] >= EVIDENCE_FROM]))
 
 
+def filings_followed() -> pd.DataFrame:
+    filings = read(
+        "news.db",
+        "select symbol, session, created_at, event_type, direction, material from news_filings where label_status = 'LABELLED'",
+    )
+    filings["seen"] = pd.to_datetime(filings["created_at"], utc=True).dt.tz_convert(IST)
+    filings["session"] = filings["session"].astype(str).str[:10]
+    bars = read("intraday.db", "select symbol, day, ts, open, close from angel_bars where day >= ?", (filings["session"].min(),))
+    bars["t"] = pd.to_datetime(bars["ts"]).dt.tz_localize("UTC").dt.tz_convert(IST)
+    return follow_filings(filings, bars, datetime.now(ZoneInfo(IST)).date().isoformat())
+
+
+def report_kinds(followed: pd.DataFrame) -> None:
+    print("\nS3 filings by kind: first Angel One bar after we saw it, to the close, against the median stock (no costs taken):")
+    if followed.empty or "ret_0" not in followed:
+        print("  none yet")
+        return
+    moved = followed.dropna(subset=["ret_0"])
+    moved = moved.assign(excess=moved["ret_0"] - moved["mkt_0"])
+    for label, part in (
+        ("seen, not evidence", moved[moved["day"] < EVIDENCE_FROM]),
+        ("evidence", moved[moved["day"] >= EVIDENCE_FROM]),
+    ):
+        print(f" {label}:")
+        if part.empty:
+            print("  none yet")
+        for (kind, direction), group in part.groupby(["event_type", "direction"]):
+            if len(group) >= S3_MIN:
+                print(line(f"{kind} {direction}", stats(group, "excess")))
+
+
+def report_results_hold(followed: pd.DataFrame) -> None:
+    cost = (
+        india_delivery_fees("BUY", LIVE_POSITION) + india_delivery_fees("SELL", LIVE_POSITION)
+    ) / LIVE_POSITION * 100 + 2 * SLIPPAGE * 100
+    print(
+        f"\nS4 material good results, bought and held (net of {cost:.2f}% delivery costs on Rs {LIVE_POSITION:,.0f}; excess is over the median stock):"
+    )
+    if followed.empty:
+        print("  none yet")
+        return
+    good = followed[(followed["event_type"] == "results") & (followed["direction"] == "up") & followed["material"]]
+    for hold in HOLDS:
+        col = f"ret_{hold}"
+        if col not in good:
+            print(f"  {hold} sessions: none matured yet")
+            continue
+        held = good.dropna(subset=[col])
+        held = held.assign(net=held[col] - cost, excess=held[col] - held[f"mkt_{hold}"] - cost)
+        for label, part in (("seen", held[held["day"] < EVIDENCE_FROM]), ("evidence", held[held["day"] >= EVIDENCE_FROM])):
+            print(line(f"{hold} sessions, {label}", stats(part)))
+            print(line("   excess", stats(part, "excess")))
+    judged = f"ret_{JUDGED_HOLD}"
+    if judged in good:
+        held = good[good["day"] >= EVIDENCE_FROM].dropna(subset=[judged])
+        held = held.assign(net=held[judged] - cost, excess=held[judged] - held[f"mkt_{JUDGED_HOLD}"] - cost)
+        print(" verdict:", results_verdict(stats(held), stats(held, "excess")))
+    else:
+        print(" verdict: RUNNING (0 results)")
+
+
 def report_feed(signals: pd.DataFrame) -> None:
     print("\nFeed check: entries whose signal is gone on the final bars, before 10:05 (the step that read Yahoo until the fix):")
     if signals.empty:
@@ -155,6 +225,9 @@ def main() -> None:
     signals = scored_signals()
     report_news_breakouts(signals)
     report_ai()
+    followed = filings_followed()
+    report_kinds(followed)
+    report_results_hold(followed)
     report_feed(signals)
     report_unrecorded()
 
