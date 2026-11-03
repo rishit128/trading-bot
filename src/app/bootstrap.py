@@ -44,6 +44,7 @@ from src.monitoring.heartbeat import Heartbeat
 from src.monitoring.telegram import CommandListener, Notifier, handle_command
 from src.ops.holdout import HoldoutReserve
 from src.ops.preflight import build_checks, critical_failures, format_results, run_checks
+from src.ops.shadow_watch import latest_summary
 from src.pipeline import TradingPipeline
 from src.runner import run_cycle, run_loop
 
@@ -91,6 +92,7 @@ def build_pipeline(live: bool) -> TradingPipeline:
             "/research_start": (PortfolioCommand.RESEARCH_START_HELP, portfolio.research_start),
             "/research_stop": (PortfolioCommand.RESEARCH_STOP_HELP, portfolio.research_stop),
             "/market": ("the market now: trend, risk (VIX) and today's breadth", market_report),
+            "/shadow": ("the record-only tests: the latest numbers and verdicts", latest_summary),
         }
         CommandListener(
             token,

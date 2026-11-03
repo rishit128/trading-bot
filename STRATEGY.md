@@ -1281,3 +1281,50 @@ test would need a results file downloaded by hand from NSE (its terms forbid aut
 First look, seen, not evidence (8 sessions, a market that rebounded 4.5% after 23 Oct): results good news, to the close, -0.62% against the
 median stock on 74 filings (t -1.6); held 5 sessions, about flat net but -1.54% against the median stock on 19 filings over 3 dates. Nothing here
 supports buying good results straight after the filing. The news rule's 7 fired signals, which also wait for a price breakout, are too few to read.
+
+### Holding after a strong reaction to results: pre-declared test FAILED (2026-11-03; H1; no rule changed)
+
+Gate and method are in `scripts/research_results_hold.py`, declared before any result was seen. Angel One daily candles, 401 of today's
+listed stocks, June 2016 to November 2026; dates from the cached Yahoo file only. Costs 1.05% a round trip. Excess is net of costs, less the
+median stock over the same days. t is clustered by calendar month. No cell of the nine passed.
+
+| Reaction | Hold | Trades | Net | Excess | t | Placebo excess |
+|---|---|---|---|---|---|---|
+| 2% | 5 | 2,367 | -0.58% | -0.39% | -1.6 | -0.75% |
+| 2% | 10 | 2,363 | -0.08% | -0.07% | +0.1 | -0.51% |
+| 2% | 20 | 2,353 | +0.75% | +0.34% | +0.3 | -0.06% |
+| 5% | 5 | 1,162 | -0.31% | -0.13% | -1.1 | -0.78% |
+| 5% | 10 | 1,160 | +0.30% | +0.20% | +0.7 | -0.46% |
+| 5% | 20 | 1,154 | +1.25% | +0.84% | +1.5 | +0.24% |
+| 10% | 5 | 318 | -0.37% | -0.12% | -1.7 | -1.29% |
+| 10% | 10 | 318 | +0.51% | +0.37% | -0.1 | -0.82% |
+| 10% | 20 | 316 | +1.30% | +0.87% | +0.6 | +0.29% |
+
+The dates are sound: the median reaction is 1.6 to 2.2 times an ordinary day's in every year, so this is a failure of the rule and not of
+the data. The closest cell (5%, 20 sessions) needed t 2.6 and has 1.5; its mean falls from +0.84% to +0.50% without its best 1% of trades,
+its median is +0.31%, and it wins 52% of the time. Today's listings only, which flatters all of this. Every cell beats its placebo, so a
+reaction on results does last longer than one on an ordinary day, but not by enough to pay for itself reliably. Retesting a neighbouring
+rule on the same data would be searching, not testing. The candles were deleted as declared; S4 keeps recording on real filings at no cost.
+
+### Same-day trades on filings: which side, given how far the price has moved (2026-11-03; S5; record only, three rules)
+
+Declared before any of the three was measured; the first-look figures of S3 had been seen. Plain candles cannot show what a filing says, so this
+is the intraday family that does not repeat the price-pattern tests. Each stock's first material filing of a session (the existing test in
+`src/news/labels.py`, unchanged) enters at the open of the first Angel One bar from 09:20 to 14:30 after we saw it, in that session or
+the next, and exits at the last bar before 15:15. No stop. A bar locked at a price limit gives no fill. "Ahead" is the stock's move since the
+previous close at entry, less the median stock's.
+
+- F1, not priced in: good news, ahead by under 1%, long. Reason: the market has not acted yet.
+- F2, overreaction: good news, ahead by 3% or more, short. Reason: the crowd overpays for headlines.
+- F3, bad news: short, however far it has fallen. Reason: bad news may keep drifting.
+- Good news between 1% and 3% ahead is not traded.
+
+Gate, for each rule on its own, evidence from 2026-11-04: at least 100 filings over 30 dates; mean net > 0 after 0.21% costs and after twice the
+slippage; excess over the median stock > 0 with date-clustered t >= 2.6 and both halves > 0. A pass makes the rule a candidate for
+paper trading in the ORB account, never more. Thresholds and hours do not change after this point; a change is a new test on new data.
+30 dates cannot arrive before mid-December, and quiet weeks between results seasons will slow it. If a rule has not reached its count by 2027-02-28 it
+is reported as unproven, not passed. Live trading is not touched, so no version moves.
+
+### The record-only tests track themselves (2026-11-03; no trading change)
+
+The owner should not have to remember them. The intraday bot starts `scripts/shadow_report.py --notify` at 16:30 on each trading day, or on its return if it was down then (`src/ops/shadow_watch.py`). It sends S1, S2, S4, S5's three rules and the 09:30 feed fix to Telegram, sends a separate alert when a test reaches a verdict, and tells the owner if the report fails. `/shadow` answers with the latest report. It runs in its own low-priority process, reads the databases and sends messages only: a pass switches nothing on.

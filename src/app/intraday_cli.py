@@ -20,6 +20,7 @@ from src.app.wiring import (
 from src.data.angel import CACHE_DIR, AngelStream, TradeToTrade, make_stream
 from src.data.angel_bars import AngelBars
 from src.data.angel_quotes import AngelQuotes, EntryContext, no_trade_to_trade
+from src.data.india import IndiaClock
 from src.data.intraday_bars import BarArchive, fetch_5m_bars, shared_download
 from src.data.market_context import MarketContextProvider
 from src.data.market_regime import RegimeProvider, with_regime
@@ -36,6 +37,7 @@ from src.intraday.strategy import (
 from src.intraday.universe import select_universe
 from src.monitoring.heartbeat import Heartbeat
 from src.monitoring.telegram import Notifier
+from src.ops.shadow_watch import ShadowWatch
 from src.versions import GAPGO_VERSION, GAPONLY_VERSION
 
 # The gap experiments, in the order they are stepped: (Telegram label, database, rule, last bar that may signal, version,
@@ -144,6 +146,9 @@ def run_intraday(live: bool) -> None:
     if notify:
         for running in engines:
             notify(f"[{running.label}] started: {mode}")
+        if live:
+            clock = IndiaClock()
+            ShadowWatch(lambda now: clock.is_open(now.replace(hour=12, minute=0, second=0)), notify).start()
     run_together(engines, heartbeat=Heartbeat.from_setting(settings.heartbeat_file))
 
 

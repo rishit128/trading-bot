@@ -1,12 +1,15 @@
-"""The record-only tests: news-backed breakouts (S1), the swing AI against the rule (S2), the 09:30 feed fix, and swing positions
+"""The record-only tests: news-backed breakouts (S1), the swing AI against the rule (S2), filings (S3 to S5), the 09:30 feed fix, and swing positions
 opened outside the normal order path. Read only. Evidence counts from EVIDENCE_FROM; what came before was seen while the tests
 were designed, so it is shown apart. Fixed in advance in src/research/shadow.py and STRATEGY.md.
 
-    python scripts/shadow_report.py"""
+    python scripts/shadow_report.py            # everything, on screen
+    python scripts/shadow_report.py --summary  # the short version, on screen
+    python scripts/shadow_report.py --notify   # the short version to Telegram; the intraday bot runs this after each close"""
 
+import os
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -15,14 +18,20 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import src.config  # noqa: E402, F401  (loads .env: the Telegram keys)
 from src.engine.costs import SLIPPAGE, india_delivery_fees  # noqa: E402
+from src.monitoring.telegram import Notifier  # noqa: E402
+from src.ops.shadow_watch import SESSION_FINISHED, load_state, new_verdicts, save_state  # noqa: E402
 from src.research.shadow import (  # noqa: E402
+    FILING_RULES,
     HOLDS,
     JUDGED_HOLD,
     Stats,
     ai_cells,
     ai_verdict,
     catalyst_verdict,
+    filing_trades,
+    filing_verdict,
     follow_filings,
     results_verdict,
     score_signal,
@@ -78,6 +87,13 @@ def scored_signals() -> pd.DataFrame:
     return signals.dropna(subset=["net"])
 
 
+def tag_news(signals: pd.DataFrame) -> pd.DataFrame:
+    filings = read("news.db", "select symbol, session, published from news_filings where material = 1 and direction = 'up'")
+    filings["published"] = pd.to_datetime(filings["published"], utc=True)
+    filings["session"] = filings["session"].astype(str).str[:10]
+    return signals.assign(news=with_catalyst(signals, filings))
+
+
 def report_news_breakouts(signals: pd.DataFrame) -> None:
     print(
         f"\nS1 breakouts in stocks with material good news (orb-v4 and {INTRADAY_VERSION}, net of costs, taken or skipped, not trade-to-trade):"
@@ -85,10 +101,7 @@ def report_news_breakouts(signals: pd.DataFrame) -> None:
     if signals.empty:
         print("  no signals")
         return
-    filings = read("news.db", "select symbol, session, published from news_filings where material = 1 and direction = 'up'")
-    filings["published"] = pd.to_datetime(filings["published"], utc=True)
-    filings["session"] = filings["session"].astype(str).str[:10]
-    signals = signals.assign(news=with_catalyst(signals, filings))
+    signals = tag_news(signals)
     for label, part in (
         ("seen, not evidence", signals[signals["day"] < EVIDENCE_FROM]),
         ("evidence", signals[signals["day"] >= EVIDENCE_FROM]),
@@ -100,8 +113,7 @@ def report_news_breakouts(signals: pd.DataFrame) -> None:
     print(" verdict:", catalyst_verdict(stats(evidence[evidence["news"]]), stats(evidence[~evidence["news"]])))
 
 
-def report_ai() -> None:
-    print(f"\nS2 the swing AI against the rule (new entries, {SWING_HORIZON}-session gross return):")
+def ai_decisions() -> pd.DataFrame:
     decisions = read(
         "trading.db",
         "select symbol, bar_date, rule_action, final_action, candidate_source from decisions where rule_action is not null order by id",
@@ -109,7 +121,12 @@ def report_ai() -> None:
     outcomes = read(
         "trading.db", "select symbol, bar_date, gross_return from decision_outcomes where horizon = ?", (SWING_HORIZON,)
     )
-    cells = ai_cells(decisions, outcomes)
+    return ai_cells(decisions, outcomes)
+
+
+def report_ai() -> None:
+    print(f"\nS2 the swing AI against the rule (new entries, {SWING_HORIZON}-session gross return):")
+    cells = ai_decisions()
     if cells.empty:
         print("  no labelled decisions yet (an outcome needs 20 sessions to mature)")
         return
@@ -123,16 +140,20 @@ def report_ai() -> None:
     print(" verdict:", ai_verdict(cells[cells["day"] >= EVIDENCE_FROM]))
 
 
-def filings_followed() -> pd.DataFrame:
+def filings_and_bars() -> tuple:
     filings = read(
         "news.db",
         "select symbol, session, created_at, event_type, direction, material from news_filings where label_status = 'LABELLED'",
     )
     filings["seen"] = pd.to_datetime(filings["created_at"], utc=True).dt.tz_convert(IST)
     filings["session"] = filings["session"].astype(str).str[:10]
-    bars = read("intraday.db", "select symbol, day, ts, open, close from angel_bars where day >= ?", (filings["session"].min(),))
+    bars = read(
+        "intraday.db",
+        "select symbol, day, ts, open, high, low, close from angel_bars where day >= ?",
+        (filings["session"].min(),),
+    )
     bars["t"] = pd.to_datetime(bars["ts"]).dt.tz_localize("UTC").dt.tz_convert(IST)
-    return follow_filings(filings, bars, datetime.now(ZoneInfo(IST)).date().isoformat())
+    return filings, bars
 
 
 def report_kinds(followed: pd.DataFrame) -> None:
@@ -154,17 +175,33 @@ def report_kinds(followed: pd.DataFrame) -> None:
                 print(line(f"{kind} {direction}", stats(group, "excess")))
 
 
+def delivery_cost() -> float:
+    fees = india_delivery_fees("BUY", LIVE_POSITION) + india_delivery_fees("SELL", LIVE_POSITION)
+    return fees / LIVE_POSITION * 100 + 2 * SLIPPAGE * 100
+
+
+def results_hold_verdict(good: pd.DataFrame, cost: float) -> str:
+    judged = f"ret_{JUDGED_HOLD}"
+    if judged not in good:
+        return "RUNNING (0 results)"
+    held = good[good["day"] >= EVIDENCE_FROM].dropna(subset=[judged])
+    held = held.assign(net=held[judged] - cost, excess=held[judged] - held[f"mkt_{JUDGED_HOLD}"] - cost)
+    return results_verdict(stats(held), stats(held, "excess"))
+
+
+def good_results(followed: pd.DataFrame) -> pd.DataFrame:
+    return followed[(followed["event_type"] == "results") & (followed["direction"] == "up") & followed["material"]]
+
+
 def report_results_hold(followed: pd.DataFrame) -> None:
-    cost = (
-        india_delivery_fees("BUY", LIVE_POSITION) + india_delivery_fees("SELL", LIVE_POSITION)
-    ) / LIVE_POSITION * 100 + 2 * SLIPPAGE * 100
+    cost = delivery_cost()
     print(
         f"\nS4 material good results, bought and held (net of {cost:.2f}% delivery costs on Rs {LIVE_POSITION:,.0f}; excess is over the median stock):"
     )
     if followed.empty:
         print("  none yet")
         return
-    good = followed[(followed["event_type"] == "results") & (followed["direction"] == "up") & followed["material"]]
+    good = good_results(followed)
     for hold in HOLDS:
         col = f"ret_{hold}"
         if col not in good:
@@ -175,13 +212,22 @@ def report_results_hold(followed: pd.DataFrame) -> None:
         for label, part in (("seen", held[held["day"] < EVIDENCE_FROM]), ("evidence", held[held["day"] >= EVIDENCE_FROM])):
             print(line(f"{hold} sessions, {label}", stats(part)))
             print(line("   excess", stats(part, "excess")))
-    judged = f"ret_{JUDGED_HOLD}"
-    if judged in good:
-        held = good[good["day"] >= EVIDENCE_FROM].dropna(subset=[judged])
-        held = held.assign(net=held[judged] - cost, excess=held[judged] - held[f"mkt_{JUDGED_HOLD}"] - cost)
-        print(" verdict:", results_verdict(stats(held), stats(held, "excess")))
-    else:
-        print(" verdict: RUNNING (0 results)")
+    print(" verdict:", results_hold_verdict(good, cost))
+
+
+def report_filing_trades(trades: pd.DataFrame) -> None:
+    print("\nS5 same-day trades on material filings (net of 0.21% intraday costs; excess is net, beyond the median stock):")
+    for rule in FILING_RULES:
+        part = trades[trades["rule"] == rule] if not trades.empty else trades
+        print(f" {rule}:")
+        if part.empty:
+            print("  none yet")
+        seen, evidence = (part, part) if part.empty else (part[part["day"] < EVIDENCE_FROM], part[part["day"] >= EVIDENCE_FROM])
+        print(line("seen, not evidence", stats(seen)))
+        print(line("   excess", stats(seen, "excess")))
+        print(line("evidence", stats(evidence)))
+        print(line("   excess", stats(evidence, "excess")))
+        print("  verdict:", filing_verdict(stats(evidence), stats(evidence, "excess"), stats(evidence, "net_2x")))
 
 
 def report_feed(signals: pd.DataFrame) -> None:
@@ -221,13 +267,99 @@ def report_unrecorded() -> None:
     print(f"  {len(picked)} closed by hand-opened, net {picked['net_pnl'].sum():+.0f}; {len(still)} open")
 
 
+def session_cutoff(now: datetime) -> str:
+    """The first day that does not count as finished: today's session counts once its final bars are in."""
+    return (now.date() + timedelta(days=1) if now.time() >= SESSION_FINISHED else now.date()).isoformat()
+
+
+def verdicts(signals: pd.DataFrame, cells: pd.DataFrame, followed: pd.DataFrame, trades: pd.DataFrame) -> dict:
+    """Every judged test's standing, from evidence alone."""
+    out = {}
+    if signals.empty:
+        out["S1 breakouts on news"] = "RUNNING (no signals yet)"
+    else:
+        evidence = tag_news(signals[signals["day"] >= EVIDENCE_FROM]) if (signals["day"] >= EVIDENCE_FROM).any() else None
+        out["S1 breakouts on news"] = (
+            catalyst_verdict(stats(evidence[evidence["news"]]), stats(evidence[~evidence["news"]]))
+            if evidence is not None
+            else "RUNNING (0 signals)"
+        )
+    out["S2 AI against the rule"] = (
+        ai_verdict(cells[cells["day"] >= EVIDENCE_FROM]) if not cells.empty else "RUNNING (0 disagreements)"
+    )
+    out["S4 hold good results"] = (
+        results_hold_verdict(good_results(followed), delivery_cost()) if not followed.empty else "RUNNING (0 results)"
+    )
+    for rule in FILING_RULES:
+        part = trades[trades["rule"] == rule] if not trades.empty else trades
+        evidence = part[part["day"] >= EVIDENCE_FROM] if not part.empty else part
+        out[f"S5 {rule}"] = filing_verdict(stats(evidence), stats(evidence, "excess"), stats(evidence, "net_2x"))
+    return out
+
+
+def feed_line(signals: pd.DataFrame) -> str:
+    """The 09:30 feed fix's share, against the 10% limit."""
+    if signals.empty:
+        return "09:30 feed fix: no entries yet"
+    known = signals[signals["final_signal"].notna() & (signals["day"] >= FEED_FIX_FROM) & (signals["outcome"] == "ENTERED")]
+    early = known[known["bar_time"].dt.strftime("%H:%M") < "10:05"]
+    if early.empty:
+        return "09:30 feed fix: no entries yet"
+    return f"09:30 feed fix: {(early['final_signal'] == 0).mean():.0%} of {len(early)} early entries vanished (limit 10%)"
+
+
+def summary(day: str, standing: dict, trades: pd.DataFrame, feed: str) -> str:
+    lines = [f"Test tracker, {day} (calculated only: no trades, no money)"]
+    for name, verdict in standing.items():
+        lines.append(f"{name}: {verdict}")
+        rule = name[3:]
+        part = trades[(trades["rule"] == rule) & (trades["day"] >= EVIDENCE_FROM)] if not trades.empty else trades
+        if len(part):
+            s = stats(part)
+            lines.append(f"   so far net {s.mean:+.2f}% a trade, won {s.win:.0%}")
+    lines.append(feed)
+    return "\n".join(lines)
+
+
+def tracker(notify_owner: bool) -> None:
+    now = datetime.now(ZoneInfo(IST))
+    cutoff = session_cutoff(now)
+    signals, cells = scored_signals(), ai_decisions()
+    filings, bars = filings_and_bars()
+    followed, trades = follow_filings(filings, bars, cutoff), filing_trades(filings, bars, cutoff)
+    day = now.date().isoformat()
+    standing = verdicts(signals, cells, followed, trades)
+    text = summary(day, standing, trades, feed_line(signals))
+    print(text)
+    if not notify_owner:
+        return
+    token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        raise SystemExit("Telegram is not configured")
+    notifier = Notifier(token, chat)
+    before = load_state().get("verdicts", {})
+    if not notifier.send(text):
+        raise SystemExit("Telegram did not take the message")
+    for verdict in new_verdicts(before, standing):
+        notifier.send(
+            f"Test verdict reached.\n{verdict}\nNothing changes in any account until you agree to it. Ask Claude to look at it."
+        )
+    save_state({"sent_day": day, "verdicts": standing, "summary": text})
+
+
 def main() -> None:
+    if "--notify" in sys.argv or "--summary" in sys.argv:
+        tracker("--notify" in sys.argv)
+        return
     signals = scored_signals()
     report_news_breakouts(signals)
     report_ai()
-    followed = filings_followed()
+    filings, bars = filings_and_bars()
+    today = session_cutoff(datetime.now(ZoneInfo(IST)))
+    followed = follow_filings(filings, bars, today)
     report_kinds(followed)
     report_results_hold(followed)
+    report_filing_trades(filing_trades(filings, bars, today))
     report_feed(signals)
     report_unrecorded()
 

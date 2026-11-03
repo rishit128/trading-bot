@@ -1,11 +1,17 @@
 import pandas as pd
+import pytest
 
 from src.research.shadow import (
+    COST_2X_PCT,
     COST_PCT,
+    FILING_RULES,
     Stats,
     ai_cells,
     ai_verdict,
     catalyst_verdict,
+    filing_rule,
+    filing_trades,
+    filing_verdict,
     follow_filings,
     results_verdict,
     score_signal,
@@ -171,3 +177,77 @@ def test_the_results_gate_needs_enough_results_and_an_edge_beyond_the_market():
     assert results_verdict(good(), good(t=2.0)).startswith("FAIL")
     assert results_verdict(good(mean=-0.1), good()).startswith("FAIL")
     assert results_verdict(good(), good(first=-0.1)).startswith("FAIL")
+
+
+def _session(day, symbol, price, last, *, locked=False):
+    """09:15 to 15:25 in 5-minute bars, flat at `price` until the 10:00 bar, then at `last`."""
+    rows = []
+    for t in pd.date_range(f"{day} 09:15", f"{day} 15:25", freq="5min", tz="Asia/Kolkata"):
+        level = price if t.strftime("%H:%M") < "10:00" else last
+        spread = 0.0 if locked else 0.5
+        rows.append(dict(symbol=symbol, day=day, t=t, open=level, high=level + spread, low=level - spread, close=level))
+    return rows
+
+
+def _market(stocks):
+    """Each stock: (previous close, price from the open, price from 10:00), beside two flat stocks."""
+    frames = []
+    for symbol, (close, opened, last) in {**stocks, "M1": (100, 100, 100), "M2": (100, 100, 100)}.items():
+        frames += _session("2026-11-04", symbol, close, close) + _session("2026-11-05", symbol, opened, last)
+    return pd.DataFrame(frames)
+
+
+def _filing(symbol, direction, at="2026-11-05 09:40", material=True):
+    seen = pd.Timestamp(at, tz="Asia/Kolkata")
+    return dict(symbol=symbol, session=seen.date().isoformat(), seen=seen, direction=direction, material=material)
+
+
+def test_filing_rule_picks_the_side_from_the_move():
+    assert filing_rule("up", 0.5) == (FILING_RULES[0], 1)
+    assert filing_rule("up", 2.0) is None
+    assert filing_rule("up", 3.0) == (FILING_RULES[1], -1)
+    assert filing_rule("down", 9.0) == (FILING_RULES[2], -1)
+    assert filing_rule("none", 0.0) is None
+
+
+def test_filing_trades_long_and_short_results():
+    bars = _market({"AAA": (100, 100, 102), "BBB": (100, 105, 100)})
+    done = filing_trades(pd.DataFrame([_filing("AAA", "up"), _filing("BBB", "up")]), bars, "2026-11-06")
+    long = done[done["symbol"] == "AAA"].iloc[0]
+    assert long["rule"] == FILING_RULES[0] and long["side"] == 1
+    assert long["gross"] == pytest.approx(2.0)
+    assert long["net"] == pytest.approx(2.0 - COST_PCT)
+    assert long["net_2x"] == pytest.approx(2.0 - COST_2X_PCT)
+    short = done[done["symbol"] == "BBB"].iloc[0]
+    assert short["rule"] == FILING_RULES[1] and short["side"] == -1
+    assert short["ahead"] == pytest.approx(5.0)
+    assert short["gross"] == pytest.approx(100 * (1 - 100 / 105))
+
+
+def test_filing_trades_skips_what_could_not_be_traded():
+    bars = _market({"AAA": (100, 100, 102)})
+    locked = pd.DataFrame(_session("2026-11-04", "LOCK", 100, 100) + _session("2026-11-05", "LOCK", 100, 100, locked=True))
+    both = pd.concat([bars, locked])
+    filings = [_filing("LOCK", "up"), _filing("AAA", "up", material=False)]
+    assert filing_trades(pd.DataFrame(filings), both, "2026-11-06").empty
+    assert filing_trades(pd.DataFrame([_filing("AAA", "up")]), bars, "2026-11-05").empty  # the session has not finished
+
+
+def test_filing_seen_late_goes_to_the_next_session_and_no_further():
+    bars = _market({"AAA": (100, 100, 102)})
+    late = filing_trades(pd.DataFrame([_filing("AAA", "up", at="2026-11-04 15:00")]), bars, "2026-11-06")
+    assert len(late) == 1 and late.iloc[0]["day"] == "2026-11-05"
+    third = pd.DataFrame(_session("2026-11-06", "M1", 100, 100) + _session("2026-11-06", "AAA", 100, 102))
+    gap = pd.concat([bars[~((bars["symbol"] == "AAA") & (bars["day"] == "2026-11-05"))], third])
+    stale = filing_trades(pd.DataFrame([_filing("AAA", "up", at="2026-11-04 15:00")]), gap, "2026-11-07")
+    assert stale.empty  # no bars next session: two sessions on, the news is old
+
+
+def test_filing_verdict_gate():
+    good = Stats(120, 35, 0.5, 0.6, 3.0, 0.4, 0.6)
+    assert filing_verdict(good, good, good).startswith("PASS")
+    assert filing_verdict(Stats(99, 35, 0.5, 0.6, 3.0, 0.4, 0.6), good, good).startswith("RUNNING")
+    assert filing_verdict(Stats(120, 29, 0.5, 0.6, 3.0, 0.4, 0.6), good, good).startswith("RUNNING")
+    assert filing_verdict(good, Stats(120, 35, 0.5, 0.6, 2.5, 0.4, 0.6), good).startswith("FAIL")
+    assert filing_verdict(good, Stats(120, 35, 0.5, 0.6, 3.0, -0.1, 0.6), good).startswith("FAIL")
+    assert filing_verdict(good, good, Stats(120, 35, -0.1, 0.6, 3.0, 0.4, 0.6)).startswith("FAIL")

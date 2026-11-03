@@ -4,8 +4,9 @@ S1 asks whether the breakout rule works on stocks with real news, the only lead 
 records, taken or skipped, is scored on the final bars with the live exits, and split by whether a material good-news filing
 was published before the signal. S2 asks whether the swing AI's decisions add anything where they differ from the rule. S3 and S4
 follow each filing from the first bar after it was seen: which kinds of news move, and whether buying good results and holding for
-days beats the costs that a same-day trade cannot (S4 is the test; the moves are larger). Prices are Angel One's bars, dates the
-exchange filings' own: no free history of either exists before 2026-10-21, so these run forward only."""
+days beats the costs that a same-day trade cannot (S4 is the test; the moves are larger). S5 asks whether a same-day trade on a filing
+beats its costs when the rule looks at how far the price has already moved. Prices are Angel One's bars, dates the exchange filings'
+own: no free history of either exists before 2026-10-21, so these run forward only."""
 
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
@@ -20,6 +21,11 @@ MIN_SIGNALS, MIN_DATES, T_GO = 100, 30, 2.0
 MIN_DISAGREEMENTS, AI_EDGE = 100, 0.01
 HOLDS = (1, 3, 5)  # sessions after the entry session's close; S4 judges 5 only, so that one test is run, not three
 JUDGED_HOLD, MIN_RESULTS, T_RESULTS = 5, 100, 2.6
+COST_2X_PCT = COST_PCT + 0.10  # twice the slippage: 0.05% more a side
+FIRST_ENTRY, LAST_ENTRY = "09:20", "14:30"  # S5: past the opening auction; late enough news goes to the next session
+FRESH_BELOW, FADE_FROM = 1.0, 3.0  # S5: % ahead of the median stock since the previous close, at entry
+MIN_FILINGS, MIN_FILING_DATES, T_FILINGS = 100, 30, 2.6
+FILING_RULES = ("F1 not priced in, long", "F2 overreaction, short", "F3 bad news, short")
 
 
 def score_signal(
@@ -164,3 +170,75 @@ def results_verdict(s: Stats, excess: Stats) -> str:
         return f"RUNNING ({s.n} of {MIN_RESULTS} results)"
     passed = s.mean > 0 and excess.mean > 0 and excess.t >= T_RESULTS and excess.first_half > 0 and excess.second_half > 0
     return "PASS: a candidate design for the ORB account" if passed else "FAIL: good results do not pay after costs"
+
+
+def filing_rule(direction: str, ahead: float) -> Optional[Tuple[str, int]]:
+    """S5's rule and side for a material filing, given how far the stock is ahead of the median stock (%)."""
+    if direction == "down":
+        return FILING_RULES[2], -1
+    if direction != "up":
+        return None
+    if ahead < FRESH_BELOW:
+        return FILING_RULES[0], 1
+    return (FILING_RULES[1], -1) if ahead >= FADE_FROM else None
+
+
+def filing_trades(filings: pd.DataFrame, bars: pd.DataFrame, today: str) -> pd.DataFrame:
+    """S5's same-day trades. Each stock's first material filing of a session enters at the open of the first bar from FIRST_ENTRY to
+    LAST_ENTRY starting after we saw it, in that session or the next, and exits at the close of the last bar before the square-off.
+    A bar with no range is locked at a price limit, so no fill. `filings`: symbol, session, seen (aware), direction, material; `bars`:
+    symbol, day, t, open, high, low, close. Returns rule, side, ahead, and the % results gross, net, net_2x and excess (net of costs,
+    beyond the median stock over the same bars)."""
+    bars = bars[bars["day"] < today].sort_values("t")
+    clock = bars["t"].dt.strftime("%H:%M")
+    days = sorted(bars["day"].unique())
+    position = {day: i for i, day in enumerate(days)}
+    previous_close = bars.groupby(["day", "symbol"])["close"].last().unstack()
+    last_close = bars[clock < SQUARE_OFF].groupby(["day", "symbol"])["close"].last().unstack()
+    open_at = bars.pivot_table(index="t", columns="symbol", values="open")
+    tradable = bars[(clock >= FIRST_ENTRY) & (clock <= LAST_ENTRY)]
+    by_stock = {symbol: frame for symbol, frame in tradable.groupby("symbol")}
+    material = filings[filings["material"].astype(bool)].sort_values("seen").drop_duplicates(["symbol", "session"])
+    rows = []
+    for symbol, seen, direction in zip(material["symbol"], material["seen"], material["direction"]):
+        stock = by_stock.get(symbol)
+        if stock is None:
+            continue
+        later = stock[stock["t"] >= seen]
+        if later.empty:
+            continue
+        bar = later.iloc[0]
+        at = position[bar["day"]]
+        first_possible = next(i for i, day in enumerate(days) if day >= seen.date().isoformat())
+        if at == 0 or at > first_possible + 1 or bar["high"] == bar["low"] or bar["open"] <= 0:
+            continue
+        before, entry = previous_close.iloc[at - 1], float(bar["open"])
+        if not np.isfinite(before.get(symbol, np.nan)):
+            continue
+        opens = open_at.loc[bar["t"]]
+        ahead = ((entry / before[symbol] - 1) - float((opens / before - 1).median())) * 100
+        rule = filing_rule(direction, ahead)
+        close = last_close.loc[bar["day"]]
+        if rule is None or not np.isfinite(close.get(symbol, np.nan)):
+            continue
+        gross = rule[1] * (float(close[symbol]) / entry - 1) * 100
+        market = rule[1] * float((close / opens - 1).median()) * 100
+        row = dict(symbol=symbol, day=bar["day"], rule=rule[0], side=rule[1], ahead=ahead, gross=gross, net=gross - COST_PCT)
+        row.update(net_2x=gross - COST_2X_PCT, excess=gross - market - COST_PCT)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def filing_verdict(net: Stats, excess: Stats, doubled: Stats) -> str:
+    """S5's gate, fixed before any of its evidence, for each rule on its own."""
+    if net.n < MIN_FILINGS or net.dates < MIN_FILING_DATES:
+        return f"RUNNING ({net.n} of {MIN_FILINGS} filings, {net.dates} of {MIN_FILING_DATES} dates)"
+    passed = (
+        net.mean > 0
+        and doubled.mean > 0
+        and excess.mean > 0
+        and excess.t >= T_FILINGS
+        and excess.first_half > 0
+        and excess.second_half > 0
+    )
+    return "PASS: a candidate design for the ORB account, on paper" if passed else "FAIL: this does not beat its costs"
