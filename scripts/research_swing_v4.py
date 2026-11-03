@@ -63,14 +63,28 @@ def main():
             rk = {d: [c for c in cs if c.symbol in symbols] for d, cs in rk.items()}
         src, lo, hi = make_source(rk, cfg, bear)
         limits = replace(lim, min_position_pct=lo, max_position_pct=hi)
-        res = simulate(sub, {}, limits, start_equity=capital, fees=india_delivery_fees, slippage=SLIPPAGE, buy_source=src,
-                       cash_yield=0.0, cash_yield_from=w0, **kw)
+        res = simulate(
+            sub,
+            {},
+            limits,
+            start_equity=capital,
+            fees=india_delivery_fees,
+            slippage=SLIPPAGE,
+            buy_source=src,
+            cash_yield=0.0,
+            cash_yield_from=w0,
+            **kw,
+        )
         res = Result(res.equity.loc[w0:], [t for t in res.trades if t.entry_date >= w0], res.open_at_end)
         return res, metrics(LiveRun(res, capital, limits), capital, w0)
 
     variants = {
-        "base": {}, "trail20": dict(trail_pct=0.20), "trail25": dict(trail_pct=0.25), "trail30": dict(trail_pct=0.30),
-        "lock10": dict(lock_at=0.10), "lock20": dict(lock_at=0.20),
+        "base": {},
+        "trail20": dict(trail_pct=0.20),
+        "trail25": dict(trail_pct=0.25),
+        "trail30": dict(trail_pct=0.30),
+        "lock10": dict(lock_at=0.10),
+        "lock20": dict(lock_at=0.20),
     }
     out, base_trades = {}, None
     for wname, w0 in windows:
@@ -85,8 +99,10 @@ def main():
         print(f"\n== {wname} ==\n{head}")
         for name in variants:
             s = out[(wname, name)]
-            print(f"{name:9s}{s['total_return']:+9.1%}{s['sharpe']:7.2f}{s['max_drawdown']:8.1%}{s['trades']:7d}"
-                  f"{s['win_rate']:5.0%}{s['expectancy_pct']:+8.2%}{s['h1']:+8.1%}{s['h2']:+8.1%}")
+            print(
+                f"{name:9s}{s['total_return']:+9.1%}{s['sharpe']:7.2f}{s['max_drawdown']:8.1%}{s['trades']:7d}"
+                f"{s['win_rate']:5.0%}{s['expectancy_pct']:+8.2%}{s['h1']:+8.1%}{s['h2']:+8.1%}"
+            )
 
     def beats(k, extra=False):
         ok = True
@@ -117,11 +133,15 @@ def main():
         totals.append(curve[-1] - 1)
         dds.append((curve / np.maximum.accumulate(curve) - 1).min())
     q = lambda a, p: float(np.percentile(a, p))  # noqa: E731
-    print(f"150 trades at 8.8%: total return 5/50/95th pct {q(totals, 5):+.1%} / {q(totals, 50):+.1%} / {q(totals, 95):+.1%};"
-          f" worst drawdown median {q(dds, 50):.1%}, 5th pct {q(dds, 5):.1%}")
+    print(
+        f"150 trades at 8.8%: total return 5/50/95th pct {q(totals, 5):+.1%} / {q(totals, 50):+.1%} / {q(totals, 95):+.1%};"
+        f" worst drawdown median {q(dds, 50):.1%}, 5th pct {q(dds, 5):.1%}"
+    )
     firsts = [np.prod(1 + rng.choice(rets, 21, replace=True) * size) - 1 for _ in range(5000)]
-    print(f"first 21 trades: 5/50/95th pct {q(firsts, 5):+.1%} / {q(firsts, 50):+.1%} / {q(firsts, 95):+.1%}; "
-          f"P(loss >= 4% of the account from 21 trades, as the live account's closed+open trades) = {np.mean(np.array(firsts) <= -0.04):.0%}")
+    print(
+        f"first 21 trades: 5/50/95th pct {q(firsts, 5):+.1%} / {q(firsts, 50):+.1%} / {q(firsts, 95):+.1%}; "
+        f"P(loss >= 4% of the account from 21 trades, as the live account's closed+open trades) = {np.mean(np.array(firsts) <= -0.04):.0%}"
+    )
 
     delayed = {}
     days = sorted(ranked)
@@ -130,13 +150,17 @@ def main():
     for wname, w0 in windows:
         _, m = run(w0, ranked_by_day=delayed)
         b = out[(wname, "base")]
-        print(f"entry one session later, {wname}: return {m['total_return']:+.1%} / Sharpe {m['sharpe']:.2f} (base {b['total_return']:+.1%} / {b['sharpe']:.2f})")
+        print(
+            f"entry one session later, {wname}: return {m['total_return']:+.1%} / Sharpe {m['sharpe']:.2f} (base {b['total_return']:+.1%} / {b['sharpe']:.2f})"
+        )
     names = sorted(bars)
     for part in (0, 1):
         syms = {s for s in names if zlib.crc32(s.encode()) % 2 == part}
         for wname, w0 in windows:
             _, m = run(w0, symbols=syms)
-            print(f"half {part} of the stocks, {wname}: return {m['total_return']:+.1%} / Sharpe {m['sharpe']:.2f} / maxDD {m['max_drawdown']:.1%}")
+            print(
+                f"half {part} of the stocks, {wname}: return {m['total_return']:+.1%} / Sharpe {m['sharpe']:.2f} / maxDD {m['max_drawdown']:.1%}"
+            )
 
 
 if __name__ == "__main__":

@@ -124,7 +124,9 @@ def swing_entry_context(settings: Settings):
 
     try:
         quotes = AngelQuotes(AngelSession().api, load_tokens(CACHE_DIR))
-        with_market = with_regime(quotes.entry_context, RegimeProvider(MarketContextProvider(), make_session_factory(intraday_db_url())))
+        with_market = with_regime(
+            quotes.entry_context, RegimeProvider(MarketContextProvider(), make_session_factory(intraday_db_url()))
+        )
         return with_results(with_market, make_session_factory(news_db_url()), lambda: datetime.now(IST).date())
     except Exception:
         log.exception("no Angel One instrument list: the swing bot's buys go without the circuit check")

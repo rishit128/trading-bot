@@ -28,9 +28,7 @@ def expected_max_null(n_trials: int, sd: float = 1.0) -> float:
         raise ValueError(f"n_trials must be >= 1, got {n_trials}")
     if n_trials == 1:
         return 0.0
-    return sd * (
-        (1 - EULER_GAMMA) * _Z.inv_cdf(1 - 1 / n_trials) + EULER_GAMMA * _Z.inv_cdf(1 - 1 / (n_trials * math.e))
-    )
+    return sd * ((1 - EULER_GAMMA) * _Z.inv_cdf(1 - 1 / n_trials) + EULER_GAMMA * _Z.inv_cdf(1 - 1 / (n_trials * math.e)))
 
 
 @dataclass(frozen=True)

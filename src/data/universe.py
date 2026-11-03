@@ -274,6 +274,8 @@ class UniverseScreener:
         chosen = {c.symbol for c in picks}
         affordable = portfolio.equity * self.cfg.affordable_pct if self.cfg.affordable_pct is not None else None
         sector = [  # watched oil and gas stocks that passed every filter but ranked below the top N
-            c.symbol for c in self.ranked() if c.symbol in OIL_GAS and c.symbol not in chosen and (affordable is None or c.price <= affordable)
+            c.symbol
+            for c in self.ranked()
+            if c.symbol in OIL_GAS and c.symbol not in chosen and (affordable is None or c.price <= affordable)
         ]
         return held + [s for s in [*(c.symbol for c in picks), *sector] if s not in portfolio.positions]

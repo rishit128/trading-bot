@@ -81,19 +81,25 @@ def main():
     w0 = close.index[MOMENTUM_BARS]
     warm = close.index[close.index.searchsorted(w0 - pd.Timedelta(days=330))]
     src, lo, hi = make_source(ranked, cfg, pd.Series(False, index=close.index))
-    res = simulate({s: df.loc[warm:] for s, df in bars.items()}, {}, replace(lim, min_position_pct=lo, max_position_pct=hi),
-                   start_equity=capital, fees=india_delivery_fees, slippage=SLIPPAGE, buy_source=src)
+    res = simulate(
+        {s: df.loc[warm:] for s, df in bars.items()},
+        {},
+        replace(lim, min_position_pct=lo, max_position_pct=hi),
+        start_equity=capital,
+        fees=india_delivery_fees,
+        slippage=SLIPPAGE,
+        buy_source=src,
+    )
     strat = res.equity.loc[w0:].pct_change().dropna()
     nifty, junior, mid = etf_returns("NIFTYBEES"), etf_returns("JUNIORBEES"), etf_returns("MID150BEES")
-    cores = {"broad (Nifty50+Next50)": ((nifty + junior) / 2).dropna(),
-             "mid (Nifty50+Midcap150)": ((nifty + mid) / 2).dropna()}
+    cores = {"broad (Nifty50+Next50)": ((nifty + junior) / 2).dropna(), "mid (Nifty50+Midcap150)": ((nifty + mid) / 2).dropna()}
     last3 = strat.index[-1] - pd.DateOffset(years=3)
     table = {}
     for cname, core in cores.items():
         for wname, start in (("full", strat.index[0]), ("last3y", last3)):
             sub = strat.loc[start:]
             if cname.startswith("mid") and wname == "full":
-                sub = strat.loc[core.index[0]:]  # the ETF exists from 2019
+                sub = strat.loc[core.index[0] :]  # the ETF exists from 2019
                 wname = "since2019"
             for w in WEIGHTS:
                 table[(cname, wname, w)] = stats(blend(sub, core, w))
@@ -106,12 +112,14 @@ def main():
                 s = table[(cname, wname, w)]
                 print(f"{w:8.0%}{s['ret']:+9.1%}{s['sharpe']:7.2f}{s['dd']:8.1%}")
     print("\n== gate (broad core; full and last3y) ==")
+
     def ok(w, margin):
         for wn in ("full", "last3y"):
             b, v = table[("broad (Nifty50+Next50)", wn, 0.0)], table[("broad (Nifty50+Next50)", wn, w)]
             if not (v["sharpe"] >= b["sharpe"] + margin and v["dd"] >= b["dd"] and v["ret"] >= b["ret"] - 0.25 * abs(b["ret"])):
                 return False
         return True
+
     for i, w in enumerate(WEIGHTS):
         if w in (0.0, 1.0):
             continue

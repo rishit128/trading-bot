@@ -73,7 +73,9 @@ def test_the_provider_labels_a_falling_market_bear_and_caches_for_five_minutes()
     assert regime.trend == "BEAR" and regime.risk == "STRESS" and regime.tone is None
     assert regime.short() == "BEAR/STRESS" and "BEAR" in regime.text()
     assert "Brent crude $85, +6.2%" in regime.text()
-    provider.market = SimpleNamespace(index_series=lambda: calls.append(1) or falling, vix_series=lambda: None, crude_move=lambda: None)
+    provider.market = SimpleNamespace(
+        index_series=lambda: calls.append(1) or falling, vix_series=lambda: None, crude_move=lambda: None
+    )
     provider.current()
     assert calls == []  # cached
     now[0] = 400.0

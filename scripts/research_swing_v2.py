@@ -40,7 +40,7 @@ from src.data.price_history import load_index_close, load_ohlc_nse  # noqa: E402
 from src.data.universe import MOMENTUM_BARS, select_candidates  # noqa: E402
 from src.engine.costs import SLIPPAGE, india_delivery_fees  # noqa: E402
 from src.research.backtest import simulate  # noqa: E402
-from src.research.live_backtest import DEFAULT_CONFIDENCE, ranked_candidates, summarize_run, LiveRun  # noqa: E402
+from src.research.live_backtest import DEFAULT_CONFIDENCE, LiveRun, ranked_candidates, summarize_run  # noqa: E402
 
 CACHE = Path("research_cache")
 MIN_CONF = 0.60
@@ -107,8 +107,11 @@ def main():
     nifty = load_index_close("^NSEI", args.years)
     close = pd.DataFrame({s: df["Close"] for s, df in bars.items()}).sort_index()
     volume = pd.DataFrame({s: df["Volume"] for s, df in bars.items()}).sort_index()
-    print(f"{len(bars)} stocks, {close.index[0].date()} .. {close.index[-1].date()}; capital {capital:,.0f}, "
-          f"{settings.risk.max_open_positions} positions x {settings.risk.min_position_pct:.1%}", flush=True)
+    print(
+        f"{len(bars)} stocks, {close.index[0].date()} .. {close.index[-1].date()}; capital {capital:,.0f}, "
+        f"{settings.risk.max_open_positions} positions x {settings.risk.min_position_pct:.1%}",
+        flush=True,
+    )
     start_all = close.index[MOMENTUM_BARS]
     dates = [d for d in close.index if d >= start_all]
     cache = CACHE / f"ranked_nse_{args.years}y.pkl"
@@ -141,14 +144,23 @@ def main():
     for wname, w0 in windows:
         w0 = close.index[close.index.searchsorted(w0)]
         warm = close.index.searchsorted(w0 - pd.Timedelta(days=330))
-        sub = {s: df.loc[close.index[warm]:] for s, df in bars.items()}
+        sub = {s: df.loc[close.index[warm] :] for s, df in bars.items()}
         for name, kw in variants.items():
             kw = dict(kw)
             limits = kw.pop("_limits", lim)
             src, lo, hi = make_source(ranked, cfg, bear, **kw)
             limits = replace(limits, min_position_pct=lo, max_position_pct=hi)
-            res = simulate(sub, {}, limits, start_equity=capital, fees=india_delivery_fees, slippage=SLIPPAGE, buy_source=src,
-                           cash_yield=0.0, cash_yield_from=w0)
+            res = simulate(
+                sub,
+                {},
+                limits,
+                start_equity=capital,
+                fees=india_delivery_fees,
+                slippage=SLIPPAGE,
+                buy_source=src,
+                cash_yield=0.0,
+                cash_yield_from=w0,
+            )
             from src.research.backtest import Result
 
             res = Result(res.equity.loc[w0:], [t for t in res.trades if t.entry_date >= w0], res.open_at_end)
@@ -160,8 +172,10 @@ def main():
         print(f"\n== {wname} ==\n{head}")
         for name in variants:
             s = results[(wname, name)]
-            print(f"{name:12s}{s['total_return']:+9.1%}{s['sharpe']:7.2f}{s['max_drawdown']:8.1%}{s['trades']:7d}"
-                  f"{s['win_rate']:5.0%}{s['expectancy_pct']:+8.2%}{s['fees_pct_of_capital']:7.1%}{s['h1']:+8.1%}{s['h2']:+8.1%}")
+            print(
+                f"{name:12s}{s['total_return']:+9.1%}{s['sharpe']:7.2f}{s['max_drawdown']:8.1%}{s['trades']:7d}"
+                f"{s['win_rate']:5.0%}{s['expectancy_pct']:+8.2%}{s['fees_pct_of_capital']:7.1%}{s['h1']:+8.1%}{s['h2']:+8.1%}"
+            )
     print("\n== gate (vs base) ==")
     for name in variants:
         if name == "base":
@@ -185,7 +199,11 @@ def main():
             why.append("a half of the full period is negative")
         print(f"{name:12s}{'PASS' if ok else 'FAIL'}  " + "; ".join(why))
     print("\nyearly returns, base vs combo (full run):")
-    print(pd.DataFrame({"base": results[("full", "base")]["yearly"], "combo": results[("full", "combo")]["yearly"]}).round(3).to_string())
+    print(
+        pd.DataFrame({"base": results[("full", "base")]["yearly"], "combo": results[("full", "combo")]["yearly"]})
+        .round(3)
+        .to_string()
+    )
     _ = np
 
 

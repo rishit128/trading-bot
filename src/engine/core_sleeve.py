@@ -31,7 +31,9 @@ def parse(spec: str) -> Dict[str, float]:
     return weights
 
 
-def buys(weights: Mapping[str, float], held_value: Mapping[str, float], prices: Mapping[str, float], equity: float, cash: float) -> List[Tuple[str, int]]:
+def buys(
+    weights: Mapping[str, float], held_value: Mapping[str, float], prices: Mapping[str, float], equity: float, cash: float
+) -> List[Tuple[str, int]]:
     """(symbol, shares) to buy now: each ETF more than TOLERANCE under its target, in the order given, from the cash above
     the reserve. Whole shares only; skips an ETF with no price."""
     spendable = cash - RESERVE_PCT * equity

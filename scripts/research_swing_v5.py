@@ -32,8 +32,13 @@ from src.engine.costs import SLIPPAGE, india_delivery_fees  # noqa: E402
 from src.research.backtest import Result, simulate  # noqa: E402
 
 VARIANTS = {
-    "dd20": (0.20, 30), "dd15": (0.15, 30), "dd12": (0.12, 30), "dd10": (0.10, 30), "dd8": (0.08, 30),
-    "dd10_14d": (0.10, 14), "dd10_60d": (0.10, 60),
+    "dd20": (0.20, 30),
+    "dd15": (0.15, 30),
+    "dd12": (0.12, 30),
+    "dd10": (0.10, 30),
+    "dd8": (0.08, 30),
+    "dd10_14d": (0.10, 14),
+    "dd10_60d": (0.10, 60),
 }
 NEIGHBOURS = {"dd15": ["dd12"], "dd12": ["dd15", "dd10"], "dd10": ["dd12", "dd8", "dd10_14d", "dd10_60d"], "dd8": ["dd10"]}
 
@@ -56,17 +61,30 @@ def main():
         for name, (dd, pause) in VARIANTS.items():
             src, lo, hi = make_source(ranked, cfg, bear)
             limits = replace(lim, min_position_pct=lo, max_position_pct=hi, max_drawdown_pct=dd, drawdown_pause_days=pause)
-            res = simulate(sub, {}, limits, start_equity=capital, fees=india_delivery_fees, slippage=SLIPPAGE, buy_source=src,
-                           cash_yield=0.0, cash_yield_from=w0)
+            res = simulate(
+                sub,
+                {},
+                limits,
+                start_equity=capital,
+                fees=india_delivery_fees,
+                slippage=SLIPPAGE,
+                buy_source=src,
+                cash_yield=0.0,
+                cash_yield_from=w0,
+            )
             res = Result(res.equity.loc[w0:], [t for t in res.trades if t.entry_date >= w0], res.open_at_end)
             out[(wname, name)] = metrics(LiveRun(res, capital, limits), capital, w0)
         print(wname, "done", flush=True)
     for wname, _ in windows:
-        print(f"\n== {wname} ==\n{'variant':10s}{'return':>9}{'Sharpe':>7}{'maxDD':>8}{'trades':>7}{'win':>5}{'half1':>8}{'half2':>8}")
+        print(
+            f"\n== {wname} ==\n{'variant':10s}{'return':>9}{'Sharpe':>7}{'maxDD':>8}{'trades':>7}{'win':>5}{'half1':>8}{'half2':>8}"
+        )
         for name in VARIANTS:
             s = out[(wname, name)]
-            print(f"{name:10s}{s['total_return']:+9.1%}{s['sharpe']:7.2f}{s['max_drawdown']:8.1%}{s['trades']:7d}"
-                  f"{s['win_rate']:5.0%}{s['h1']:+8.1%}{s['h2']:+8.1%}")
+            print(
+                f"{name:10s}{s['total_return']:+9.1%}{s['sharpe']:7.2f}{s['max_drawdown']:8.1%}{s['trades']:7d}"
+                f"{s['win_rate']:5.0%}{s['h1']:+8.1%}{s['h2']:+8.1%}"
+            )
 
     def beats(k, margin):
         ok = True
