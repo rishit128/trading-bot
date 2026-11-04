@@ -1328,3 +1328,27 @@ is reported as unproven, not passed. Live trading is not touched, so no version 
 ### The record-only tests track themselves (2026-11-03; no trading change)
 
 The owner should not have to remember them. The intraday bot starts `scripts/shadow_report.py --notify` at 16:30 on each trading day, or on its return if it was down then (`src/ops/shadow_watch.py`). It sends S1, S2, S4, S5's three rules and the 09:30 feed fix to Telegram, sends a separate alert when a test reaches a verdict, and tells the owner if the report fails. `/shadow` answers with the latest report. It runs in its own low-priority process, reads the databases and sends messages only: a pass switches nothing on.
+
+### Profit drift after results (2026-11-04; S6; record only); the insider test is not built
+
+From the research search (Harshita, Singh & Yadav 2018: Nifty 500, 2002-2017; the top tenth of earnings surprises beat the market by 3.4% over days +2 to +64, before costs. Gupta & Dhusia 2021, on 100 firms, found no such drift). S6 scales the quarter's profit rise over a year earlier by market value, using the unit written in the filing. At least 1% of market value counts: about the top 13% of 107 filings already seen, measured without looking at any return. Bought at the open of the session after the first one that could react, held 60 sessions, Rs 2,200 delivery costs. A split-sized overnight move drops the trade. The market value is read near the filing and kept, from Yahoo as the live materiality test does; it is taken after the reaction, where the paper's is taken before.
+
+Gate, evidence from filings of 2026-11-05: at least 100 finished trades over 20 entry weeks; mean net > 0; excess over the median stock > 0 with t >= 2.6 clustered by entry week and both halves > 0. A pass makes it a candidate for paper trading in the ORB account. Holds overlap, so even this t is generous. About 13% of filings qualify, so 100 trades needs several results seasons; a verdict is not expected before the second half of 2027.
+
+The insider test is not built. The search suggested following insider selling (Krishnan & Rangan: -7.32% over 12 months after sells, against -0.90% after buys, before costs). The filing feed does not carry these trades: it holds a handful of takeover-code disclosures and offers for sale, and the labels cannot be trusted to say which way those went. NSE's terms forbid automated collection, and BSE's page refused us and its terms could not be read. A test on this feed would record noise, so it waits for a licensed source.
+
+### Why gap-only loses: read-only analysis (2026-11-04; A2; nothing adopted)
+
+The rule replayed on 68 sessions of saved bars, 705 signals, next-bar entry, stop first, 0.21% costs: gross -0.06%, net -0.27% a trade (date t -1.2), 57% stopped, most of those before 10:00. About 70 slices were read, so about 4 would look significant by luck.
+
+Not the cause: the stop (no stop, to the close: gross -0.25%); the position limit and its list-order choice of stocks (signals skipped when full -0.54%, those taken on the same days -0.57%); fills (entries within 0.01% of the replay; stops 0.11% beyond their level, worst MRPL -1.4%). Fees are not the whole cause, as the rule loses before them. Gap size, price and liquidity show no steady pattern.
+
+Leads, unproven. Days with more than 10 gappers: -0.43% a trade, date t -4.1, both halves negative, against +0.13% on the other days (date t +0.4; random day splits match the gap 0.4% of the time). The market also fell more after 09:30 on those days (-0.27% against -0.03%). The good side is weak: at a limit of 12 gappers instead of 10 it turns to -0.14%, and without its three best stocks it is negative. A stock up over 3% the day before: -0.62%, date t -2.8. A stop under 0.5% away is hit 90% of the time but loses about the average, so widening nothing here would change much. Live trades on crowded days: -Rs 787 on 36; on the others +Rs 33 on 16 (without 16 October; these overlap the sample, so they are not separate evidence). The bot saw only 103 of the replay's 172 gappers from 12 October; the 09:30 feed fix from 2026-11-04 should close this and the tracker reports it.
+
+### Gap-only changed at the owner's request (2026-11-04, gaponly-v4; live from 2026-11-05; NOT proven)
+
+The owner chose to change the account directly to cut its losses, against the recommendation to test first. Two refusals, recorded as SKIPPED with the reason: no entry on a day more than 10 stocks gapped up at least 2%, and none in a stock up more than 3% the session before the gap. If a previous close is missing for over half the stocks scanned, the crowd cannot be read and it does not trade that day. The stop, the sizing and everything else stay.
+
+Replay on the same 68 sessions the idea came from, so it flatters: -0.27% a trade on 705 becomes +0.44% on 151 (date t 1.2, both halves positive). The limit is on a cliff: 11 gives about zero and 12 loses. Expect about a fifth of the signals and fewer trades.
+
+Gap-only is no longer the plain control, so `scripts/compare_gap.py` no longer judges gap-and-go's timing edge from 2026-11-05: its earlier comparison stands as history, and the refused signals stay recorded should a control need rebuilding. The forward test restarts from 2026-11-05 with its usual verdicts.

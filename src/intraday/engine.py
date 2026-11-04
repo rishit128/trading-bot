@@ -20,7 +20,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from datetime import time as dtime
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -66,6 +66,8 @@ class IntradayEngine:
     entry_until: dtime = st.ENTRY_UNTIL  # no bar starting at or after this can signal: the scan stops one bar later
     label: str = "INTRADAY"  # prefix of its Telegram messages
     version: str = INTRADAY_VERSION  # recorded with every signal and universe row
+    # (this scan's bars, today) -> (symbol) -> why a found setup is not bought, or None: refusals that need the whole scan. None = no such rule
+    refusals_fn: Optional[Callable[[Dict[str, pd.DataFrame], date], Callable[[str], Optional[str]]]] = None
     record_capped: bool = False  # also record (as SKIPPED) the signals the position limit left out: the gap experiments
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     house_calls_fn: Optional[Callable[[], List[HouseCall]]] = None  # broker research calls; None = not used
@@ -252,6 +254,7 @@ class IntradayEngine:
         )
         entered = skipped = 0
         cash = pf.cash
+        refusal = None  # worked out at the first setup: most scans find none, and the 09:30 step must not be late
         for sym, df in bars.items():
             full = len(pf.positions) + entered >= self.max_positions
             if full and not self.record_capped:
@@ -268,6 +271,14 @@ class IntradayEngine:
             if setup.symbol in sells:  # the house says sell this stock: a long breakout against that call is not taken
                 self._done_today.add(setup.symbol)
                 self._record(setup, SignalOutcome.SKIPPED, 0, f"the broker has an open {sells[setup.symbol].kind} SELL call")
+                skipped += 1
+                continue
+            if self.refusals_fn and refusal is None:
+                refusal = self.refusals_fn(bars, local.date())
+            why_not = refusal(setup.symbol) if refusal else None
+            if why_not:
+                self._done_today.add(setup.symbol)
+                self._record(setup, SignalOutcome.SKIPPED, 0, why_not)
                 skipped += 1
                 continue
             if full:  # only with record_capped: the signal is real, the account had no free position

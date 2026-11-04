@@ -43,7 +43,9 @@ GAPGO_VERSION = "gapgo-v3"
 # The gap-only paper control (its own account): the same gap, bought on the 09:30 close with no breakout.
 # gaponly-v2: v1 plus the universe and Angel One entry checks of orb-v4 (bumped 2026-10-26).
 # gaponly-v3: v2 plus the trade-to-trade check of orb-v5.
-GAPONLY_VERSION = "gaponly-v3"
+# gaponly-v4 (2026-11-04, the owner's decision): no entry on a day more than 10 stocks gapped up, nor in a stock up more than 3% the
+# session before the gap. It is no longer the plain control for gap-and-go; the refused signals stay recorded.
+GAPONLY_VERSION = "gaponly-v4"
 # The news-catalyst paper strategy (its own account): a material exchange filing, read by the AI, traded long by fixed
 # rules (src.news.strategy).
 NEWS_VERSION = "news-v5"  # v5: v4 plus the trade-to-trade check of orb-v5; v2: gap floor 0% (was +2%), live order-book veto; v3: rule A until 12:00, filings after 14:30 roll over, no entry into an F&O short build-up; v4: rule A holds its stop within 0.6-3% instead of refusing the setup, no order-book balance veto (the spread veto stays)

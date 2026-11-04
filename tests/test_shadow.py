@@ -1,18 +1,25 @@
+import json
+
 import pandas as pd
 import pytest
 
 from src.research.shadow import (
     COST_2X_PCT,
     COST_PCT,
+    DRIFT_HOLD,
     FILING_RULES,
     Stats,
     ai_cells,
     ai_verdict,
     catalyst_verdict,
+    drift_candidates,
+    drift_trades,
+    drift_verdict,
     filing_rule,
     filing_trades,
     filing_verdict,
     follow_filings,
+    profit_rise_crore,
     results_verdict,
     score_signal,
     stats,
@@ -251,3 +258,81 @@ def test_filing_verdict_gate():
     assert filing_verdict(good, Stats(120, 35, 0.5, 0.6, 2.5, 0.4, 0.6), good).startswith("FAIL")
     assert filing_verdict(good, Stats(120, 35, 0.5, 0.6, 3.0, -0.1, 0.6), good).startswith("FAIL")
     assert filing_verdict(good, good, Stats(120, 35, -0.1, 0.6, 3.0, 0.4, 0.6)).startswith("FAIL")
+
+
+def _numbers(now, before, written="Rs crore"):
+    return json.dumps({"profit_quarter": now, "profit_year_ago": before, "as_written": written})
+
+
+def test_profit_rise_reads_the_unit_from_the_words():
+    assert profit_rise_crore(_numbers(200, 100)) == pytest.approx(100)
+    assert profit_rise_crore(_numbers(39150, 31750, "PAT 39150 vs 31750 (Rs in lakhs)")) == pytest.approx(74)
+    assert profit_rise_crore(_numbers(2000, 1000, "Rs million")) == pytest.approx(100)
+    assert profit_rise_crore(_numbers(200, 100, "no unit given")) is None
+    assert profit_rise_crore(_numbers(None, 100)) is None
+    assert profit_rise_crore(None) is None
+
+
+def _drift_filing(symbol, numbers, session="2026-11-05", at="2026-11-05 11:00", event="results"):
+    seen = pd.Timestamp(at, tz="Asia/Kolkata")
+    return dict(symbol=symbol, session=session, seen=seen, event_type=event, numbers_json=numbers)
+
+
+def test_drift_candidates_apply_the_cutoff_and_the_start_date():
+    filings = pd.DataFrame(
+        [
+            _drift_filing("BIG", _numbers(200, 100)),  # 100 crore on 10,000: 1%
+            _drift_filing("SMALL", _numbers(200, 100)),  # 100 crore on 20,000: 0.5%
+            _drift_filing("OLD", _numbers(200, 100), session="2026-11-04"),
+            _drift_filing("NEWS", _numbers(200, 100), event="order_win"),
+            _drift_filing("NOCAP", _numbers(200, 100)),
+        ]
+    )
+    caps = {"BIG|2026-11-05": 10000, "SMALL|2026-11-05": 20000, "OLD|2026-11-04": 10000, "NEWS|2026-11-05": 10000}
+    assert list(drift_candidates(filings, caps)["symbol"]) == ["BIG"]
+
+
+def _daily(symbol, prices):
+    days = pd.bdate_range("2026-11-05", periods=len(prices))
+    return [
+        dict(symbol=symbol, day=d.date().isoformat(), t=d.tz_localize("Asia/Kolkata") + pd.Timedelta(hours=10), open=o, close=c)
+        for d, (o, c) in zip(days, prices)
+    ]
+
+
+def test_drift_enters_after_the_reaction_session_and_holds_sixty():
+    prices = [(90, 90)] + [(100, 100)] * (DRIFT_HOLD - 1) + [(100, 110)] + [(110, 110)] * 3
+    flat = [(100, 100)] * len(prices)
+    bars = pd.DataFrame(_daily("AAA", prices) + _daily("M1", flat) + _daily("M2", flat))
+    done, running = drift_trades(pd.DataFrame([_drift_filing("AAA", None)]), bars, "2027-12-31", 1.0)
+    assert running == 0 and len(done) == 1
+    assert done.iloc[0]["gross"] == pytest.approx(10.0)
+    assert done.iloc[0]["net"] == pytest.approx(9.0)
+    assert done.iloc[0]["excess"] == pytest.approx(9.0)
+
+
+def test_drift_counts_a_young_trade_as_running_and_drops_a_split():
+    young = pd.DataFrame(_daily("AAA", [(100, 100)] * 10))
+    done, running = drift_trades(pd.DataFrame([_drift_filing("AAA", None)]), young, "2027-12-31", 1.0)
+    assert done.empty and running == 1
+    split = [(100, 100)] * 20 + [(50, 50)] * (DRIFT_HOLD + 5)
+    bars = pd.DataFrame(_daily("AAA", split))
+    done, running = drift_trades(pd.DataFrame([_drift_filing("AAA", None)]), bars, "2027-12-31", 1.0)
+    assert done.empty and running == 0
+
+
+def test_a_filing_seen_after_the_close_reacts_next_session():
+    prices = [(50, 50), (90, 90)] + [(100, 100)] * (DRIFT_HOLD - 1) + [(100, 120)] + [(120, 120)] * 2
+    bars = pd.DataFrame(_daily("AAA", prices))
+    filing = _drift_filing("AAA", None, at="2026-11-05 18:00")
+    done, _ = drift_trades(pd.DataFrame([filing]), bars, "2027-12-31", 1.0)
+    assert done.iloc[0]["gross"] == pytest.approx(20.0)
+
+
+def test_drift_verdict_gate():
+    good = Stats(120, 25, 2.0, 0.6, 3.0, 1.0, 1.0)
+    assert drift_verdict(good, good, 0).startswith("PASS")
+    assert "99 of 100" in drift_verdict(Stats(99, 25, 2.0, 0.6, 3.0, 1.0, 1.0), good, 7)
+    assert drift_verdict(Stats(120, 19, 2.0, 0.6, 3.0, 1.0, 1.0), good, 0).startswith("RUNNING")
+    assert drift_verdict(good, Stats(120, 25, 2.0, 0.6, 2.5, 1.0, 1.0), 0).startswith("FAIL")
+    assert drift_verdict(Stats(120, 25, -1.0, 0.6, 3.0, 1.0, 1.0), good, 0).startswith("FAIL")

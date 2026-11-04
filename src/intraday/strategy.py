@@ -32,12 +32,14 @@ waited for. Frozen rules:
 It answers one question: does waiting for the breakout add anything over simply buying the big gaps?"""
 
 from dataclasses import dataclass
+from datetime import date
 from datetime import time as dtime
-from typing import Optional, Tuple
+from typing import Callable, Dict, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
+from src.data.india import IST
 from src.engine.ports import BAR
 
 RANGE_BARS = 3
@@ -51,6 +53,9 @@ GAP_ENTRY_UNTIL = dtime(10, 30)  # ...and break the opening range high within th
 NO_TARGET = 1.0  # a +100% "target" for a strategy that has none: it exits at the stop or the square-off
 GAP_ONLY_BAR = dtime(9, 25)  # gap-only: enter on the close of this bar (09:25-09:30, the last opening-range bar)...
 GAP_ONLY_ENTRY_UNTIL = dtime(9, 30)  # ...so no bar starting at or after 09:30 can signal: only the 09:30 cycle trades
+GAP_ONLY_MAX_GAPPERS = 10  # gaponly-v4: more stocks than this gapping up the same day, and it buys none of them...
+GAP_ONLY_MAX_PRIOR_RISE = 0.03  # ...nor a stock already up more than this the session before the gap
+GAP_ONLY_MIN_COUNTED = 0.5  # the crowd cannot be read from under this share of the stocks scanned: no entries that day
 GAP_ONLY_LATEST_START = dtime(9, 33)  # that one step must start by this, else the day is flagged as possibly missed
 CASH_HEADROOM = 1.003  # cash kept back per share bought: slippage (0.05%) and both fees fit inside 0.3%
 
@@ -226,6 +231,33 @@ def find_gap_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[flo
     return Setup(
         symbol, entry, range_low, entry * (1 + NO_TARGET), range_high, range_low, day_bars.index[i], volume_ratio=float(ratio[i])
     )
+
+
+def gap_only_refusals(bars: Mapping[str, pd.DataFrame], day: date) -> Callable[[str], Optional[str]]:
+    """gaponly-v4's two refusals for one scan of a session: (symbol) -> why it is not bought, or None. `bars` are the stocks' finished
+    bars, with earlier sessions. Counts every stock that opened at least GAP_MIN above its previous close."""
+    gappers = counted = 0
+    prior_rise: Dict[str, Optional[float]] = {}
+    for symbol, frame in bars.items():
+        index = pd.DatetimeIndex(frame.index).tz_convert(IST)
+        today = frame[index.date == day]
+        closes = frame.loc[index.date < day].groupby(index[index.date < day].date)["Close"].last()
+        prior_rise[symbol] = float(closes.iloc[-1] / closes.iloc[-2] - 1) if len(closes) >= 2 else None
+        if len(today) and len(closes):
+            counted += 1
+            gappers += float(today["Open"].iloc[0]) >= float(closes.iloc[-1]) * (1 + GAP_MIN)
+
+    def refusal(symbol: str) -> Optional[str]:
+        if counted < GAP_ONLY_MIN_COUNTED * len(bars):
+            return f"gapping stocks cannot be counted (previous close for only {counted} of {len(bars)})"
+        if gappers > GAP_ONLY_MAX_GAPPERS:
+            return f"crowded gap day: {gappers} stocks gapped up (limit {GAP_ONLY_MAX_GAPPERS})"
+        rise = prior_rise.get(symbol)
+        if rise is not None and rise > GAP_ONLY_MAX_PRIOR_RISE:
+            return f"already up {rise:.1%} the session before the gap (limit {GAP_ONLY_MAX_PRIOR_RISE:.0%})"
+        return None
+
+    return refusal
 
 
 def find_gap_only_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float]) -> Optional[Setup]:

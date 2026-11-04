@@ -5,11 +5,14 @@ records, taken or skipped, is scored on the final bars with the live exits, and 
 was published before the signal. S2 asks whether the swing AI's decisions add anything where they differ from the rule. S3 and S4
 follow each filing from the first bar after it was seen: which kinds of news move, and whether buying good results and holding for
 days beats the costs that a same-day trade cannot (S4 is the test; the moves are larger). S5 asks whether a same-day trade on a filing
-beats its costs when the rule looks at how far the price has already moved. Prices are Angel One's bars, dates the exchange filings'
+beats its costs when the rule looks at how far the price has already moved. S6 asks whether a large rise in profit keeps paying for
+about three months, as an Indian study found. Prices are Angel One's bars, dates the exchange filings'
 own: no free history of either exists before 2026-10-21, so these run forward only."""
 
+import json
+import re
 from dataclasses import dataclass
-from typing import Iterable, Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -25,6 +28,15 @@ COST_2X_PCT = COST_PCT + 0.10  # twice the slippage: 0.05% more a side
 FIRST_ENTRY, LAST_ENTRY = "09:20", "14:30"  # S5: past the opening auction; late enough news goes to the next session
 FRESH_BELOW, FADE_FROM = 1.0, 3.0  # S5: % ahead of the median stock since the previous close, at entry
 MIN_FILINGS, MIN_FILING_DATES, T_FILINGS = 100, 30, 2.6
+DRIFT_FROM, DRIFT_MIN_SCORE, DRIFT_HOLD = "2026-11-05", 1.0, 60  # S6: first filing session; % of market value; sessions held
+DRIFT_SPLIT_MOVE = 0.30  # Angel One's candles are not adjusted: an overnight move past this is probably a split or bonus
+MIN_DRIFT, MIN_DRIFT_WEEKS, T_DRIFT = 100, 20, 2.6
+CRORE_PER = (
+    (r"crore|\bcrs?\b", 1.0),
+    (r"lakh|\blacs?\b", 0.01),
+    (r"million|\bmn\b", 0.1),
+    (r"billion|\bbn\b", 100.0),
+)
 FILING_RULES = ("F1 not priced in, long", "F2 overreaction, short", "F3 bad news, short")
 
 
@@ -242,3 +254,71 @@ def filing_verdict(net: Stats, excess: Stats, doubled: Stats) -> str:
         and excess.second_half > 0
     )
     return "PASS: a candidate design for the ORB account, on paper" if passed else "FAIL: this does not beat its costs"
+
+
+def profit_rise_crore(numbers_json: Optional[str]) -> Optional[float]:
+    """The quarter's profit less the year-ago quarter's, in Rs crore, from a filing's labelled numbers. Companies report in crore, lakh or
+    million, and the unit is only in the words as written; None when the numbers or the unit are missing."""
+    numbers = json.loads(numbers_json) if numbers_json else {}
+    now, before = numbers.get("profit_quarter"), numbers.get("profit_year_ago")
+    if now is None or before is None:
+        return None
+    written = str(numbers.get("as_written") or "").lower()
+    for pattern, crore in CRORE_PER:
+        if re.search(pattern, written):
+            return (float(now) - float(before)) * crore
+    return None
+
+
+def drift_candidates(filings: pd.DataFrame, caps: Dict[str, float]) -> pd.DataFrame:
+    """S6's filings: each stock's first results filing of a session from DRIFT_FROM with a known profit rise of at least DRIFT_MIN_SCORE
+    % of market value. `filings`: symbol, session, seen, event_type, numbers_json. `caps`: "symbol|session" -> Rs crore."""
+    results = filings[(filings["event_type"] == "results") & (filings["session"] >= DRIFT_FROM)].copy()
+    results["rise"] = [profit_rise_crore(n) for n in results["numbers_json"]]
+    results = results.dropna(subset=["rise"]).sort_values("seen").drop_duplicates(["symbol", "session"])
+    results["cap"] = [caps.get(f"{a}|{b}") for a, b in zip(results["symbol"], results["session"])]
+    results = results.dropna(subset=["cap"])
+    return results[results["rise"] / results["cap"] * 100 >= DRIFT_MIN_SCORE]
+
+
+def drift_trades(candidates: pd.DataFrame, bars: pd.DataFrame, today: str, cost: float) -> Tuple[pd.DataFrame, int]:
+    """(matured trades, how many are still running). The first session that could react is the one the filing was seen before the close
+    of; the entry is the next session's open and the exit the close DRIFT_HOLD sessions on. A window with a split-sized overnight move
+    is dropped. `day` is the entry's week, since holds overlap. `bars`: symbol, day, t, open, close."""
+    bars = bars[bars["day"] < today].sort_values("t")
+    if candidates.empty or bars.empty:
+        return pd.DataFrame(), 0
+    opens = bars.groupby(["day", "symbol"])["open"].first().unstack().sort_index()
+    closes = bars.groupby(["day", "symbol"])["close"].last().unstack().sort_index()
+    days = list(opens.index)
+    rows, running = [], 0
+    for symbol, seen in zip(candidates["symbol"], candidates["seen"]):
+        date = seen.date().isoformat()
+        react = next((i for i, day in enumerate(days) if day > date or (day == date and seen.strftime("%H:%M") < "15:30")), None)
+        if react is None or react + 1 >= len(days):
+            running += 1
+            continue
+        entry_at, exit_at = react + 1, react + DRIFT_HOLD
+        if exit_at >= len(days):
+            running += 1
+            continue
+        if symbol not in opens or not np.isfinite(opens[symbol].iloc[entry_at]) or not np.isfinite(closes[symbol].iloc[exit_at]):
+            continue
+        overnight = (
+            opens[symbol].iloc[entry_at + 1 : exit_at + 1].to_numpy() / closes[symbol].iloc[entry_at:exit_at].to_numpy() - 1
+        )
+        if np.nanmax(np.abs(overnight), initial=0.0) > DRIFT_SPLIT_MOVE:
+            continue
+        gross = (float(closes[symbol].iloc[exit_at]) / float(opens[symbol].iloc[entry_at]) - 1) * 100
+        market = float((closes.iloc[exit_at] / opens.iloc[entry_at] - 1).median()) * 100
+        week = pd.Timestamp(days[entry_at]).to_period("W").start_time.date().isoformat()
+        rows.append(dict(symbol=symbol, day=week, gross=gross, net=gross - cost, excess=gross - market - cost))
+    return pd.DataFrame(rows), running
+
+
+def drift_verdict(net: Stats, excess: Stats, running: int) -> str:
+    """S6's gate, fixed before any of its evidence; `dates` here counts entry weeks."""
+    if net.n < MIN_DRIFT or net.dates < MIN_DRIFT_WEEKS:
+        return f"RUNNING ({net.n} of {MIN_DRIFT} finished, {net.dates} of {MIN_DRIFT_WEEKS} weeks, {running} still held)"
+    passed = net.mean > 0 and excess.mean > 0 and excess.t >= T_DRIFT and excess.first_half > 0 and excess.second_half > 0
+    return "PASS: a candidate design for the ORB account, on paper" if passed else "FAIL: profit drift does not pay after costs"

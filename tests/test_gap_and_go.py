@@ -156,6 +156,7 @@ def test_the_docker_image_keep_the_gap_account_on_the_data_volume():
 
 
 # == gap-only: gap-and-go's control ==========================================================================================
+from src.app.intraday_cli import GAP_EXPERIMENTS  # noqa: E402
 from src.research.gap_compare import capped_signals, compare  # noqa: E402
 from src.versions import GAPONLY_VERSION  # noqa: E402
 
@@ -300,3 +301,22 @@ def test_capped_signals_are_counted_from_the_recorded_reasons():
         {"reason": ["position limit reached (5 open)", None, "not enough cash", "position limit reached (5 open)"]}
     )
     assert capped_signals(rows) == 2 and capped_signals(pd.DataFrame()) == 0
+
+
+def test_a_refused_gap_is_recorded_not_bought_and_only_a_setup_pays_for_the_count(tmp_path):
+    bars = {"AAA": with_previous_session(make_bars(BREAKOUT, volumes=VOLS), 98.0)}
+    eng, broker, *_ = gap_only_engine(tmp_path, bars, at(9, 30), refusals_fn=lambda scan, day: lambda symbol: "crowded gap day")
+    assert "entered 0" in eng.step() and broker.holdings() == []
+    row = signals(broker)[0]
+    assert row.outcome == "SKIPPED" and row.reason == "crowded gap day" and row.qty == 0
+
+    asked = []
+    quiet = {"AAA": with_previous_session(make_bars(BREAKOUT, volumes=VOLS), 100.0)}  # no gap, so no setup
+    eng, broker, *_ = gap_only_engine(tmp_path, quiet, at(9, 30), db="quiet.db", refusals_fn=lambda s, d: asked.append(d))
+    eng.step()
+    assert asked == []
+
+
+def test_only_gap_only_carries_the_refusals():
+    wired = {row[0]: row[-1] for row in GAP_EXPERIMENTS}
+    assert wired == {"GAP-ONLY": st.gap_only_refusals, "GAP-GO": None}

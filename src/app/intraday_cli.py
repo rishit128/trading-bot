@@ -33,6 +33,7 @@ from src.intraday.strategy import (
     GAP_ONLY_LATEST_START,
     find_gap_only_setup,
     find_gap_setup,
+    gap_only_refusals,
 )
 from src.intraday.universe import select_universe
 from src.monitoring.heartbeat import Heartbeat
@@ -45,8 +46,16 @@ from src.versions import GAPGO_VERSION, GAPONLY_VERSION
 # others' work (the first engine also pays for the shared download); the breakout engine, which has all day, goes last.
 # Same sizing and universe as the breakout engine; the 5-day download supplies the previous session's close.
 GAP_EXPERIMENTS = (
-    ("GAP-ONLY", gaponly_db_url, find_gap_only_setup, GAP_ONLY_ENTRY_UNTIL, GAPONLY_VERSION, GAP_ONLY_LATEST_START),
-    ("GAP-GO", gapgo_db_url, find_gap_setup, GAP_ENTRY_UNTIL, GAPGO_VERSION, None),
+    (
+        "GAP-ONLY",
+        gaponly_db_url,
+        find_gap_only_setup,
+        GAP_ONLY_ENTRY_UNTIL,
+        GAPONLY_VERSION,
+        GAP_ONLY_LATEST_START,
+        gap_only_refusals,
+    ),
+    ("GAP-GO", gapgo_db_url, find_gap_setup, GAP_ENTRY_UNTIL, GAPGO_VERSION, None, None),
 )
 
 
@@ -102,9 +111,10 @@ def run_intraday(live: bool) -> None:
             label=name,
             version=version,
             step_deadline=deadline,
+            refusals_fn=refusals,
             record_capped=True,
         )
-        for name, db_url, rule, until, version, deadline in GAP_EXPERIMENTS
+        for name, db_url, rule, until, version, deadline, refusals in GAP_EXPERIMENTS
     ]
     engines.append(
         engine(

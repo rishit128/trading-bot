@@ -48,7 +48,15 @@ class Account:
 ACCOUNTS = {
     "orb": Account("intraday.db", INTRADAY_VERSION, 0.0025, -0.00225, "8 years Angel One, 116,908 trades", True),
     "gapgo": Account("gapgo.db", GAPGO_VERSION, 0.0025, -0.0006, "8 years Angel One, 1,815 trades", True),
-    "gaponly": Account("gaponly.db", GAPONLY_VERSION, 0.0025, -0.00107, "2 years 1-minute data, 2,806 trades", True),
+    "gaponly": Account(
+        "gaponly.db",
+        GAPONLY_VERSION,
+        0.0025,
+        0.0044,
+        "replay of 68 sessions, 151 trades, the sample the rule came from",
+        True,
+        "2026-11-05",
+    ),
     "news": Account("news.db", NEWS_VERSION, 0.0025, None, "no backtest (needs results history)", True),
     "swing": Account("trading.db", STRATEGY_VERSION, 0.03, 0.081, "10-year live-configuration backtest", False, "2026-10-30"),
 }

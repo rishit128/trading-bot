@@ -6,6 +6,7 @@ were designed, so it is shown apart. Fixed in advance in src/research/shadow.py 
     python scripts/shadow_report.py --summary  # the short version, on screen
     python scripts/shadow_report.py --notify   # the short version to Telegram; the intraday bot runs this after each close"""
 
+import json
 import os
 import sqlite3
 import sys
@@ -21,8 +22,11 @@ sys.path.insert(0, str(ROOT))
 import src.config  # noqa: E402, F401  (loads .env: the Telegram keys)
 from src.engine.costs import SLIPPAGE, india_delivery_fees  # noqa: E402
 from src.monitoring.telegram import Notifier  # noqa: E402
+from src.news.watcher import yahoo_market_cap_crore  # noqa: E402
 from src.ops.shadow_watch import SESSION_FINISHED, load_state, new_verdicts, save_state  # noqa: E402
 from src.research.shadow import (  # noqa: E402
+    DRIFT_FROM,
+    DRIFT_HOLD,
     FILING_RULES,
     HOLDS,
     JUDGED_HOLD,
@@ -30,9 +34,13 @@ from src.research.shadow import (  # noqa: E402
     ai_cells,
     ai_verdict,
     catalyst_verdict,
+    drift_candidates,
+    drift_trades,
+    drift_verdict,
     filing_trades,
     filing_verdict,
     follow_filings,
+    profit_rise_crore,
     results_verdict,
     score_signal,
     stats,
@@ -46,6 +54,7 @@ FEED_FIX_FROM = "2026-11-04"  # the first session whose 09:30 step reads Angel O
 IST = "Asia/Kolkata"
 SWING_HORIZON = 20
 S3_MIN = 5  # a kind of news with fewer filings is not shown
+CAPS_FILE = ROOT / "research_cache" / "drift_caps.json"
 LIVE_POSITION = 2200.0  # the swing account's 8.8% of Rs 25,000
 
 
@@ -143,7 +152,8 @@ def report_ai() -> None:
 def filings_and_bars() -> tuple:
     filings = read(
         "news.db",
-        "select symbol, session, created_at, event_type, direction, material from news_filings where label_status = 'LABELLED'",
+        "select symbol, session, created_at, event_type, direction, material, numbers_json from news_filings "
+        "where label_status = 'LABELLED'",
     )
     filings["seen"] = pd.to_datetime(filings["created_at"], utc=True).dt.tz_convert(IST)
     filings["session"] = filings["session"].astype(str).str[:10]
@@ -230,6 +240,35 @@ def report_filing_trades(trades: pd.DataFrame) -> None:
         print("  verdict:", filing_verdict(stats(evidence), stats(evidence, "excess"), stats(evidence, "net_2x")))
 
 
+def drift_caps(filings: pd.DataFrame) -> dict:
+    """Market values for S6, read once near the filing and kept: asked again later, they would already hold what the stock did next."""
+    known = json.loads(CAPS_FILE.read_text()) if CAPS_FILE.exists() else {}
+    wanted = filings[(filings["event_type"] == "results") & (filings["session"] >= DRIFT_FROM)]
+    for symbol, session, numbers in zip(wanted["symbol"], wanted["session"], wanted["numbers_json"]):
+        key = f"{symbol}|{session}"
+        rise = profit_rise_crore(numbers)
+        if key not in known and rise is not None and rise > 0:
+            cap = yahoo_market_cap_crore(symbol)
+            if cap:
+                known[key] = cap
+    CAPS_FILE.write_text(json.dumps(known, indent=0))
+    return known
+
+
+def profit_drift(filings: pd.DataFrame, bars: pd.DataFrame, today: str) -> tuple:
+    candidates = drift_candidates(filings, drift_caps(filings))
+    return drift_trades(candidates, bars[["symbol", "day", "t", "open", "close"]], today, delivery_cost())
+
+
+def report_profit_drift(trades: pd.DataFrame, running: int) -> None:
+    print(
+        f"\nS6 large profit rises held {DRIFT_HOLD} sessions (net of {delivery_cost():.2f}% delivery costs; excess is over the median stock):"
+    )
+    print(line("finished", stats(trades)))
+    print(line("   excess", stats(trades, "excess")))
+    print(" verdict:", drift_verdict(stats(trades), stats(trades, "excess"), running))
+
+
 def report_feed(signals: pd.DataFrame) -> None:
     print("\nFeed check: entries whose signal is gone on the final bars, before 10:05 (the step that read Yahoo until the fix):")
     if signals.empty:
@@ -272,7 +311,7 @@ def session_cutoff(now: datetime) -> str:
     return (now.date() + timedelta(days=1) if now.time() >= SESSION_FINISHED else now.date()).isoformat()
 
 
-def verdicts(signals: pd.DataFrame, cells: pd.DataFrame, followed: pd.DataFrame, trades: pd.DataFrame) -> dict:
+def verdicts(signals: pd.DataFrame, cells: pd.DataFrame, followed: pd.DataFrame, trades: pd.DataFrame, drift: tuple) -> dict:
     """Every judged test's standing, from evidence alone."""
     out = {}
     if signals.empty:
@@ -294,6 +333,7 @@ def verdicts(signals: pd.DataFrame, cells: pd.DataFrame, followed: pd.DataFrame,
         part = trades[trades["rule"] == rule] if not trades.empty else trades
         evidence = part[part["day"] >= EVIDENCE_FROM] if not part.empty else part
         out[f"S5 {rule}"] = filing_verdict(stats(evidence), stats(evidence, "excess"), stats(evidence, "net_2x"))
+    out["S6 profit drift"] = drift_verdict(stats(drift[0]), stats(drift[0], "excess"), drift[1])
     return out
 
 
@@ -328,7 +368,7 @@ def tracker(notify_owner: bool) -> None:
     filings, bars = filings_and_bars()
     followed, trades = follow_filings(filings, bars, cutoff), filing_trades(filings, bars, cutoff)
     day = now.date().isoformat()
-    standing = verdicts(signals, cells, followed, trades)
+    standing = verdicts(signals, cells, followed, trades, profit_drift(filings, bars, cutoff))
     text = summary(day, standing, trades, feed_line(signals))
     print(text)
     if not notify_owner:
@@ -360,6 +400,7 @@ def main() -> None:
     report_kinds(followed)
     report_results_hold(followed)
     report_filing_trades(filing_trades(filings, bars, today))
+    report_profit_drift(*profit_drift(filings, bars, today))
     report_feed(signals)
     report_unrecorded()
 
