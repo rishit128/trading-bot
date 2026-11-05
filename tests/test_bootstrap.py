@@ -20,6 +20,7 @@ def clean_env(monkeypatch, tmp_path):
     monkeypatch.setenv("GAPGO_DATABASE_URL", f"sqlite:///{tmp_path / 'gapgo.db'}")
     monkeypatch.setenv("GAPONLY_DATABASE_URL", f"sqlite:///{tmp_path / 'gaponly.db'}")
     monkeypatch.setenv("NEWS_DATABASE_URL", f"sqlite:///{tmp_path / 'news.db'}")
+    monkeypatch.setenv("CALLS_DATABASE_URL", f"sqlite:///{tmp_path / 'broker_calls.db'}")
 
 
 # -- refusing to start --------------------------------------------------------------------------------------------------------
@@ -160,7 +161,7 @@ def test_the_intraday_report_covers_each_account_on_its_own(monkeypatch, capsys)
         bootstrap, "print_positions", lambda settings, url: shown.append(Path(url.removeprefix("sqlite:///")).name)
     )
     bootstrap.show_intraday_reports(Settings())
-    assert shown == ["intraday.db", "gapgo.db", "gaponly.db", "news.db"]
+    assert shown == ["intraday.db", "gapgo.db", "gaponly.db", "news.db", "broker_calls.db"]
     out = capsys.readouterr().out
     assert "INTRADAY: opening-range breakout" in out and "GAP-ONLY (paper control for gap-and-go)" in out
 

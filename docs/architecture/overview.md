@@ -16,7 +16,7 @@ folders, and [dependency-map](dependency-map.md) for who imports whom.
 | `intraday-bot` | `main.py --intraday --paper-orders` | Three **intraday** paper strategies stepped together every 5 minutes, each in its own account: the opening-range breakout (ORB), gap-and-go, and gap-only (gap-and-go's control). No AI is involved. |
 
 Each account has its own SQLite database on the shared `/data` volume: `trading.db`, `intraday.db`, `gapgo.db`,
-`gaponly.db` ([database](../database.md)). Accounts never mix.
+`gaponly.db`, `news.db`, `broker_calls.db` ([database](../database.md)). Accounts never mix.
 
 ## The packages
 

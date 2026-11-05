@@ -134,10 +134,11 @@ def test_intraday_launcher_wires_the_engine_from_settings(monkeypatch, capsys):
     assert "3 stocks [Nifty 100 (hand-saved NSE file)]" in out and "PAPER ORDERS" in out and "no edge" in out
     assert "risk 1.00% of equity per trade" in out and "cap 25%" in out
     assert alerts == [
-        f"[{name}] started: PAPER ORDERS (separate intraday accounts)" for name in ("GAP-ONLY", "GAP-GO", "INTRADAY", "NEWS")
+        f"[{name}] started: PAPER ORDERS (separate intraday accounts)"
+        for name in ("GAP-ONLY", "GAP-GO", "INTRADAY", "NEWS", "BROKER-CALLS")
     ]  # stepped in this order: gap-only trades on one step and must not wait behind the others; the news engine goes last
     # breakouts past the position limit are recorded too, for all three engines
-    assert started["count"] == 4 and started["engine"].record_capped is True and started["news"] is news
+    assert started["count"] == 5 and started["engine"].record_capped is True and started["news"] is news
     assert "news-catalyst (own account)" in out
     # gap-and-go: the same universe and sizing, its own rule, label, version and entry window, and no second archive
     from src.intraday.strategy import (

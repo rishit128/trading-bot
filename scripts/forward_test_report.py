@@ -11,7 +11,7 @@ intraday accounts, the share of entries whose signal is gone on the final bars. 
                final bars; run scripts/reconcile_paper_replay.py before reading the result as the rule's.
 The thresholds are the protocol's, fixed 2026-10-26 before the first frozen session; change them only with a new protocol.
 
-    python scripts/forward_test_report.py [--account orb|gapgo|gaponly|news|swing]"""
+    python scripts/forward_test_report.py [--account orb|gapgo|gaponly|news|calls|swing]"""
 
 import argparse
 import sqlite3
@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.data.india import IST  # noqa: E402
 from src.research.significance import units_needed  # noqa: E402
-from src.versions import GAPGO_VERSION, GAPONLY_VERSION, INTRADAY_VERSION, NEWS_VERSION, STRATEGY_VERSION  # noqa: E402
+from src.versions import CALLS_VERSION, GAPGO_VERSION, GAPONLY_VERSION, INTRADAY_VERSION, NEWS_VERSION, STRATEGY_VERSION  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 FREEZE = "2026-11-04"  # the first full session under the frozen versions (the 09:30 feed fix and the trade-to-trade check)
@@ -58,6 +58,15 @@ ACCOUNTS = {
         "2026-11-05",
     ),
     "news": Account("news.db", NEWS_VERSION, 0.0025, None, "no backtest (needs results history)", True),
+    "calls": Account(
+        "broker_calls.db",
+        CALLS_VERSION,
+        0.0025,
+        -0.0003,
+        "first look at 15 BUY calls on saved Angel One bars",
+        True,
+        "2026-11-06",
+    ),
     "swing": Account("trading.db", STRATEGY_VERSION, 0.03, 0.081, "10-year live-configuration backtest", False, "2026-10-30"),
 }
 
@@ -88,6 +97,9 @@ def clustered(per_trade: pd.Series, days: pd.Series) -> tuple[float, float, pd.S
 def report(name: str, account: Account) -> None:
     db = ROOT / account.db
     print(f"\n=== {name}: frozen at {account.version} from {account.freeze} ({db.name}) ===")
+    if not db.exists():
+        print("no database yet: RUNNING")
+        return
     trades = _read(db, "select symbol, qty, entry_price, net_pnl, opened_at from paper_trades")
     if len(trades):
         trades["day"] = [pd.Timestamp(t).tz_localize("UTC").tz_convert(IST).date().isoformat() for t in trades["opened_at"]]

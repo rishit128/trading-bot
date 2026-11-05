@@ -448,7 +448,8 @@ def test_the_gap_engines_are_not_given_the_calls(label):
     import src.app.intraday_cli as cli
 
     source = inspect.getsource(cli.run_intraday)
-    assert source.count("house_calls_fn") == 1 and label in inspect.getsource(cli)  # only the breakout engine gets them
+    # only the breakout engine and the broker-calls account get them
+    assert source.count("house_calls_fn") == 2 and label in inspect.getsource(cli)
 
 
 def test_snapshot_times_are_handled_in_utc_and_ist(tmp_path):

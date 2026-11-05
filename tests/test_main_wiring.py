@@ -13,6 +13,7 @@ def side_accounts_in_tmp(monkeypatch, tmp_path):
     monkeypatch.setenv("INTRADAY_DATABASE_URL", f"sqlite:///{tmp_path / 'intraday.db'}")
     monkeypatch.setenv("GAPGO_DATABASE_URL", f"sqlite:///{tmp_path / 'gapgo.db'}")
     monkeypatch.setenv("GAPONLY_DATABASE_URL", f"sqlite:///{tmp_path / 'gaponly.db'}")
+    monkeypatch.setenv("CALLS_DATABASE_URL", f"sqlite:///{tmp_path / 'broker_calls.db'}")
 
 
 def sessions(tmp_path):

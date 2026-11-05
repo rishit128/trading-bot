@@ -294,6 +294,18 @@ class IntradayEngine:
                 cash -= (fill.filled_qty or 0) * (fill.avg_price or setup.signal_price)
         return f"scanned {len(bars)} stocks, entered {entered}" + (f", skipped {skipped}" if skipped else "")
 
+    def _entry_text(self, setup: st.Setup, qty: int) -> str:
+        """The Telegram message for an entry."""
+        exit_plan = (
+            f"target {setup.target:,.2f}"
+            if setup.target < setup.signal_price * (1 + st.NO_TARGET)
+            else "held to the 15:15 square-off"
+        )
+        return (
+            f"BUY {setup.symbol} x{qty} breakout above {setup.range_high:,.2f}; stop {setup.stop:,.2f}, "
+            f"{exit_plan}, volume {setup.volume_ratio:.1f}x average"
+        )
+
     def _enter(self, setup: st.Setup, equity: float, cash: float) -> Tuple[SignalOutcome, Optional[Fill]]:
         """Try to buy one breakout. Returns (outcome, fill); the fill is None unless a paper order was placed. Every outcome
         (ENTERED, SKIPPED, DRY_RUN, FAILED) is recorded with its reason."""
@@ -303,15 +315,7 @@ class IntradayEngine:
             log.info("intraday SKIP %s at %.2f: %s", setup.symbol, setup.signal_price, why)
             self._record(setup, SignalOutcome.SKIPPED, 0, why)
             return SignalOutcome.SKIPPED, None
-        exit_plan = (
-            f"target {setup.target:,.2f}"
-            if setup.target < setup.signal_price * (1 + st.NO_TARGET)
-            else "held to the 15:15 square-off"
-        )
-        text = (
-            f"BUY {setup.symbol} x{qty} breakout above {setup.range_high:,.2f}; stop {setup.stop:,.2f}, "
-            f"{exit_plan}, volume {setup.volume_ratio:.1f}x average"
-        )
+        text = self._entry_text(setup, qty)
         if not self.live:
             self._say("DRY RUN signal: " + text)
             self._record(setup, SignalOutcome.DRY_RUN, qty)

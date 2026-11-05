@@ -22,7 +22,13 @@ IST = ZoneInfo("Asia/Kolkata")
 STATE = ROOT / "logs" / "watchdog_state.json"
 BOTS = {"swing": "--loop 30 --live --holdout", "intraday": "--intraday --live"}  # as scripts/start_bots.sh starts them
 HEARTBEATS = {"swing": "heartbeat-bot", "intraday": "heartbeat-intraday"}  # named after each bot's log file by start_bots.sh
-INTRADAY_DBS = {"ORB": "intraday.db", "gap-and-go": "gapgo.db", "gap-only": "gaponly.db", "news": "news.db"}
+INTRADAY_DBS = {
+    "ORB": "intraday.db",
+    "gap-and-go": "gapgo.db",
+    "gap-only": "gaponly.db",
+    "news": "news.db",
+    "broker calls": "broker_calls.db",
+}
 KEEP_KEYS = 200
 
 

@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, NamedTuple, Optional, Set
 from sqlalchemy import select
 
 from src.app.wiring import (
+    calls_db_url,
     gapgo_db_url,
     gaponly_db_url,
     intraday_db_url,
@@ -26,6 +27,7 @@ from src.data.market_context import MarketContextProvider
 from src.data.market_regime import RegimeProvider, with_regime
 from src.database import PaperPositionRecord, make_session_factory
 from src.engine.costs import intraday_fees
+from src.intraday.calls import CALLS_CASH, CallsEngine
 from src.intraday.engine import IntradayEngine, run_together
 from src.intraday.strategy import (
     GAP_ENTRY_UNTIL,
@@ -128,7 +130,25 @@ def run_intraday(live: bool) -> None:
     )
     news = build_news_engine(settings, universe, bars, notify, live, angel) if settings.news_engine else None
     if news is not None:
-        engines.append(news)  # last: its AI work runs in the watcher's thread, and it must not delay the 09:30 gap step
+        engines.append(news)  # its AI work runs in the watcher's thread, and it must not delay the 09:30 gap step
+    calls_account = make_paper_broker(
+        dataclasses.replace(settings, paper_initial_cash=CALLS_CASH), calls_db_url(), fees=intraday_fees, stream=stream
+    )
+    engines.append(
+        CallsEngine(
+            calls_account,
+            [],
+            calls_account.clock,
+            fetch_bars=bars,
+            notify=notify,
+            live=live,
+            max_positions=settings.intraday_max_positions,
+            risk_pct=settings.intraday_risk_pct,
+            max_position_pct=settings.intraday_max_position_pct,
+            max_daily_loss_pct=settings.intraday_max_daily_loss_pct,
+            house_calls_fn=house_calls.current,
+        )
+    )
     mode = "PAPER ORDERS (separate intraday accounts)" if live else "DRY RUN (signals only)"
     print(f"intraday: opening-range breakout on {len(universe)} stocks [{label}], {mode}; square-off 15:15 IST")
     print(
@@ -153,6 +173,10 @@ def run_intraday(live: bool) -> None:
             "news-catalyst (own account): exchange filings (BSE feed, NSE as backup) read by the AI; long only on material "
             "news by fixed rules (STRATEGY.md, News-Catalyst v1). Untested: paper only"
         )
+    print(
+        f"broker calls (own account, Rs {CALLS_CASH:,.0f}): follows the broker's Intraday BUY calls; needs /research_start each day. "
+        "Not proven: paper only"
+    )
     if notify:
         for running in engines:
             notify(f"[{running.label}] started: {mode}")

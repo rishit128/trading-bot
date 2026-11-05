@@ -72,6 +72,11 @@ def gaponly_db_url() -> str:
     return os.getenv("GAPONLY_DATABASE_URL", "sqlite:///gaponly.db")
 
 
+def calls_db_url() -> str:
+    """The broker-calls paper account (src.intraday.calls), separate from every other account."""
+    return os.getenv("CALLS_DATABASE_URL", "sqlite:///broker_calls.db")
+
+
 def house_calls_db_url() -> str:
     """The latest snapshot of the broker's research calls: written by the research watch (swing container), read by the
     swing pipeline and the breakout engine (intraday container), so it lives in the volume both share."""

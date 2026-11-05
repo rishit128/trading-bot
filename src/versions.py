@@ -49,6 +49,8 @@ GAPONLY_VERSION = "gaponly-v4"
 # The news-catalyst paper strategy (its own account): a material exchange filing, read by the AI, traded long by fixed
 # rules (src.news.strategy).
 NEWS_VERSION = "news-v5"  # v5: v4 plus the trade-to-trade check of orb-v5; v2: gap floor 0% (was +2%), live order-book veto; v3: rule A until 12:00, filings after 14:30 roll over, no entry into an F&O short build-up; v4: rule A holds its stop within 0.6-3% instead of refusing the setup, no order-book balance veto (the spread veto stays)
+# The broker-calls paper account (its own account, Rs 30,000): the broker's Intraday BUY calls, followed (src.intraday.calls).
+CALLS_VERSION = "calls-v1"
 
 VERSIONS = {
     "feature": FEATURE_VERSION,

@@ -1335,6 +1335,12 @@ From the research search (Harshita, Singh & Yadav 2018: Nifty 500, 2002-2017; th
 
 Gate, evidence from filings of 2026-11-05: at least 100 finished trades over 20 entry weeks; mean net > 0; excess over the median stock > 0 with t >= 2.6 clustered by entry week and both halves > 0. A pass makes it a candidate for paper trading in the ORB account. Holds overlap, so even this t is generous. About 13% of filings qualify, so 100 trades needs several results seasons; a verdict is not expected before the second half of 2027.
 
+### Holding after an analyst earnings surprise: pre-declared test FAILED (2026-11-04; H2; no rule changed)
+
+Gate and method are in `scripts/research_earnings_surprise.py`, declared before any result was seen. Angel One daily candles; dates, reported EPS and estimates from Yahoo, with the owner's agreement. 355 stocks of today's list, so stocks that later left it are missing; 7,648 tradable results from 2016-07-13. Entered two sessions after the date, 1.05% round-trip costs. The data check passed: the top tenth of surprises reacted +2.31%, the bottom tenth -1.96%, t +10.3, so the surprise numbers do carry information.
+
+The cell judged, top 10% held 60 sessions: 638 trades, net +5.77%, +2.21% over the median stock, t 2.1, first half +3.32%, second +1.66%, deflated 0.24. It fails t >= 2.6. Most of the net is the market rising, not the signal. Its neighbours are weaker or no better: top 10% held 20 +0.00% (t -0.3) and held 40 +0.93% (t +0.3); top 20% held 60 +1.64% (t 2.5, deflated 0.38), which is not a second chance, as only one cell was to be judged. The bottom tenth trails at every hold (-0.87% at 60, t -0.8), the expected direction, and is not significant. The excess appears mostly late in the hold, so it is not a clean drift from the day of the news. This is suggestive but below the bar, and 201 variants had been tried across the project by then. Holds overlap, which makes even this t generous. Both downloaded files were deleted as declared. S6 goes on watching a similar idea forward in time on real filings.
+
 The insider test is not built. The search suggested following insider selling (Krishnan & Rangan: -7.32% over 12 months after sells, against -0.90% after buys, before costs). The filing feed does not carry these trades: it holds a handful of takeover-code disclosures and offers for sale, and the labels cannot be trusted to say which way those went. NSE's terms forbid automated collection, and BSE's page refused us and its terms could not be read. A test on this feed would record noise, so it waits for a licensed source.
 
 ### Why gap-only loses: read-only analysis (2026-11-04; A2; nothing adopted)
@@ -1352,3 +1358,13 @@ The owner chose to change the account directly to cut its losses, against the re
 Replay on the same 68 sessions the idea came from, so it flatters: -0.27% a trade on 705 becomes +0.44% on 151 (date t 1.2, both halves positive). The limit is on a cliff: 11 gives about zero and 12 loses. Expect about a fifth of the signals and fewer trades.
 
 Gap-only is no longer the plain control, so `scripts/compare_gap.py` no longer judges gap-and-go's timing edge from 2026-11-05: its earlier comparison stands as history, and the refused signals stay recorded should a control need rebuilding. The forward test restarts from 2026-11-05 with its usual verdicts.
+
+### Broker-calls paper account (2026-11-05, calls-v1; live from 2026-11-06; NOT proven)
+
+The owner chose to give the broker's intraday calls their own paper account with Rs 30,000 (`broker_calls.db`, `src/intraday/calls.py`). A first look had just found nothing either way, so this measures the calls and is no finding that they work. Every open Intraday BUY call published that day is bought at the next 5-minute step. It is refused, with the reason recorded, only when the price is already past the call's stop or target, 5 positions are open, or the size rules cannot buy a share (one share above 20% of equity, or no cash). No entry after the 15:00 bar. It leaves at the call's stop or target, when the broker closes the call (sold at the market price on the step that sees it), or at 15:15. Sizing and the 2% daily-loss limit match the other intraday accounts. SELL calls are not traded, as the paper account can only buy; `scripts/score_house_calls.py` still scores them.
+
+It depends on the research watch: one OTP on Telegram each day through `/research_start`, then a read every 10 minutes. No read means no entries, and it alerts. The read can make entries up to about 15 minutes later than a call, and a stock outside the 500 has Yahoo's bars as the backup, as ORB's added stocks do.
+
+First look before it started (saved Angel One bars, stop first, 0.21% costs, entry on the first bar after publication, the broker's "book profit" exit taken at its stated price): of 35 BUY calls, 15 were read while open and could be scored: 11 won, average win +0.34%, average loss -1.05%, mean -0.03%, date t about -0.2 on 6 dates. 9 were read only after closing and left out; 10 had no bars; 1 was still open. 8 SELL calls: mean -0.28%. Too few to judge either way.
+
+First verdict at 100 finished trades. Before any real money it must meet the project's bar: at least 300 trades, t >= 2.6, both halves positive, positive at twice the slippage.
