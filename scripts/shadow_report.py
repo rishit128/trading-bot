@@ -1,4 +1,5 @@
-"""The record-only tests: news-backed breakouts (S1), the swing AI against the rule (S2), filings (S3 to S5), the 09:30 feed fix, and swing positions
+"""The record-only tests: news-backed breakouts (S1), the swing AI against the rule (S2), filings (S3 to S6), results-day gaps (S7), the 09:30
+feed fix, and swing positions
 opened outside the normal order path. Read only. Evidence counts from EVIDENCE_FROM; what came before was seen while the tests
 were designed, so it is shown apart. Fixed in advance in src/research/shadow.py and STRATEGY.md.
 
@@ -30,6 +31,7 @@ from src.research.shadow import (  # noqa: E402
     FILING_RULES,
     HOLDS,
     JUDGED_HOLD,
+    RESULTS_GAP_FROM,
     Stats,
     ai_cells,
     ai_verdict,
@@ -41,6 +43,8 @@ from src.research.shadow import (  # noqa: E402
     filing_verdict,
     follow_filings,
     profit_rise_crore,
+    results_gap_trades,
+    results_gap_verdict,
     results_verdict,
     score_signal,
     stats,
@@ -269,6 +273,17 @@ def report_profit_drift(trades: pd.DataFrame, running: int) -> None:
     print(" verdict:", drift_verdict(stats(trades), stats(trades, "excess"), running))
 
 
+def report_results_gaps(gaps: pd.DataFrame) -> None:
+    print("\nS7 gap-and-go on the session after results (the live rule, net of 0.21% intraday costs):")
+    if gaps.empty:
+        print("  none yet")
+    seen = gaps[gaps["day"] < RESULTS_GAP_FROM] if not gaps.empty else gaps
+    evidence = gaps[gaps["day"] >= RESULTS_GAP_FROM] if not gaps.empty else gaps
+    print(line("seen, not evidence", stats(seen)))
+    print(line("evidence", stats(evidence)))
+    print(" verdict:", results_gap_verdict(stats(evidence), stats(evidence, "net_2x")))
+
+
 def report_feed(signals: pd.DataFrame) -> None:
     print("\nFeed check: entries whose signal is gone on the final bars, before 10:05 (the step that read Yahoo until the fix):")
     if signals.empty:
@@ -311,7 +326,9 @@ def session_cutoff(now: datetime) -> str:
     return (now.date() + timedelta(days=1) if now.time() >= SESSION_FINISHED else now.date()).isoformat()
 
 
-def verdicts(signals: pd.DataFrame, cells: pd.DataFrame, followed: pd.DataFrame, trades: pd.DataFrame, drift: tuple) -> dict:
+def verdicts(
+    signals: pd.DataFrame, cells: pd.DataFrame, followed: pd.DataFrame, trades: pd.DataFrame, drift: tuple, gaps: pd.DataFrame
+) -> dict:
     """Every judged test's standing, from evidence alone."""
     out = {}
     if signals.empty:
@@ -334,6 +351,8 @@ def verdicts(signals: pd.DataFrame, cells: pd.DataFrame, followed: pd.DataFrame,
         evidence = part[part["day"] >= EVIDENCE_FROM] if not part.empty else part
         out[f"S5 {rule}"] = filing_verdict(stats(evidence), stats(evidence, "excess"), stats(evidence, "net_2x"))
     out["S6 profit drift"] = drift_verdict(stats(drift[0]), stats(drift[0], "excess"), drift[1])
+    evidence = gaps[gaps["day"] >= RESULTS_GAP_FROM] if not gaps.empty else gaps
+    out["S7 results-day gap-and-go"] = results_gap_verdict(stats(evidence), stats(evidence, "net_2x"))
     return out
 
 
@@ -368,7 +387,8 @@ def tracker(notify_owner: bool) -> None:
     filings, bars = filings_and_bars()
     followed, trades = follow_filings(filings, bars, cutoff), filing_trades(filings, bars, cutoff)
     day = now.date().isoformat()
-    standing = verdicts(signals, cells, followed, trades, profit_drift(filings, bars, cutoff))
+    gaps = results_gap_trades(filings, bars, cutoff)
+    standing = verdicts(signals, cells, followed, trades, profit_drift(filings, bars, cutoff), gaps)
     text = summary(day, standing, trades, feed_line(signals))
     print(text)
     if not notify_owner:
@@ -401,6 +421,7 @@ def main() -> None:
     report_results_hold(followed)
     report_filing_trades(filing_trades(filings, bars, today))
     report_profit_drift(*profit_drift(filings, bars, today))
+    report_results_gaps(results_gap_trades(filings, bars, today))
     report_feed(signals)
     report_unrecorded()
 

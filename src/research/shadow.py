@@ -6,7 +6,8 @@ was published before the signal. S2 asks whether the swing AI's decisions add an
 follow each filing from the first bar after it was seen: which kinds of news move, and whether buying good results and holding for
 days beats the costs that a same-day trade cannot (S4 is the test; the moves are larger). S5 asks whether a same-day trade on a filing
 beats its costs when the rule looks at how far the price has already moved. S6 asks whether a large rise in profit keeps paying for
-about three months, as an Indian study found. Prices are Angel One's bars, dates the exchange filings'
+about three months, as an Indian study found. S7 asks whether the gap-and-go rule pays on the session after results, the one lead
+of the 8-year Angel One test (+0.35% a trade on 231, t 1.5). Prices are Angel One's bars, dates the exchange filings'
 own: no free history of either exists before 2026-10-21, so these run forward only."""
 
 import json
@@ -29,6 +30,7 @@ FIRST_ENTRY, LAST_ENTRY = "09:20", "14:30"  # S5: past the opening auction; late
 FRESH_BELOW, FADE_FROM = 1.0, 3.0  # S5: % ahead of the median stock since the previous close, at entry
 MIN_FILINGS, MIN_FILING_DATES, T_FILINGS = 100, 30, 2.6
 DRIFT_FROM, DRIFT_MIN_SCORE, DRIFT_HOLD = "2026-11-05", 1.0, 60  # S6: first filing session; % of market value; sessions held
+RESULTS_GAP_FROM = "2026-11-09"  # S7: the first session after its gate was fixed
 DRIFT_SPLIT_MOVE = 0.30  # Angel One's candles are not adjusted: an overnight move past this is probably a split or bonus
 MIN_DRIFT, MIN_DRIFT_WEEKS, T_DRIFT = 100, 20, 2.6
 CRORE_PER = (
@@ -322,3 +324,54 @@ def drift_verdict(net: Stats, excess: Stats, running: int) -> str:
         return f"RUNNING ({net.n} of {MIN_DRIFT} finished, {net.dates} of {MIN_DRIFT_WEEKS} weeks, {running} still held)"
     passed = net.mean > 0 and excess.mean > 0 and excess.t >= T_DRIFT and excess.first_half > 0 and excess.second_half > 0
     return "PASS: a candidate design for the ORB account, on paper" if passed else "FAIL: profit drift does not pay after costs"
+
+
+def results_gap_trades(filings: pd.DataFrame, bars: pd.DataFrame, today: str) -> pd.DataFrame:
+    """S7's signals: the live gap-and-go rule (src.intraday.strategy.first_gap_breakout: open at least 2% over the previous close,
+    the first close above the 09:15-09:30 high from 09:30 to 10:30) on a session only when the stock's results were seen from the
+    previous session's open up to this session's open, so the news was known before the bell. Entry at the signal bar's close, stop
+    at the opening-range low, no target, out at the last bar before the square-off, the stop first as the paper broker does.
+    `filings`: symbol, seen (aware), event_type; `bars`: symbol, day, t, open, high, low, close. Returns symbol, day, net, net_2x
+    in %, finished sessions only."""
+    from src.intraday.strategy import RANGE_BARS, first_gap_breakout
+
+    bars = bars[bars["day"] < today].sort_values("t")
+    results = filings[filings["event_type"] == "results"]
+    if bars.empty or results.empty:
+        return pd.DataFrame(columns=["symbol", "day", "net", "net_2x"])
+    days = sorted(bars["day"].unique())
+    closes = bars.groupby(["day", "symbol"])["close"].last().unstack()
+    sessions = {key: frame for key, frame in bars.groupby(["symbol", "day"])}
+    rows = []
+    for prev, day in zip(days, days[1:]):
+        start = pd.Timestamp(f"{prev} 09:15", tz="Asia/Kolkata")
+        end = pd.Timestamp(f"{day} 09:15", tz="Asia/Kolkata")
+        known = results[(results["seen"] >= start) & (results["seen"] < end)]
+        for symbol in sorted(set(known["symbol"])):
+            session = sessions.get((symbol, day))
+            before = closes.loc[prev].get(symbol, np.nan) if prev in closes.index else np.nan
+            if session is None or not np.isfinite(before) or len(session) <= RANGE_BARS:
+                continue
+            clock = session["t"].dt.tz_convert("Asia/Kolkata")
+            if clock.iloc[0].strftime("%H:%M") != "09:15" or (clock.iloc[RANGE_BARS - 1] - clock.iloc[0]) != BAR * (
+                RANGE_BARS - 1
+            ):
+                continue  # the opening range must be the real 09:15-09:30 bars
+            minutes = (clock.dt.hour * 60 + clock.dt.minute).to_numpy()
+            high, close = session["high"].to_numpy(float), session["close"].to_numpy(float)
+            i = first_gap_breakout(float(session["open"].iloc[0]), float(before), high, close, minutes)
+            if i is None:
+                continue
+            stop = float(session["low"].iloc[:RANGE_BARS].min())
+            scored = score_signal(session, session["t"].iloc[i], float(close[i]), stop, float("inf"))
+            if scored:
+                rows.append(dict(symbol=symbol, day=day, net=scored[1], net_2x=scored[1] - (COST_2X_PCT - COST_PCT)))
+    return pd.DataFrame(rows, columns=["symbol", "day", "net", "net_2x"])
+
+
+def results_gap_verdict(net: Stats, doubled: Stats) -> str:
+    """S7's gate, fixed before any of its evidence (2026-11-06)."""
+    if net.n < MIN_SIGNALS or net.dates < MIN_DATES:
+        return f"RUNNING ({net.n} of {MIN_SIGNALS} signals, {net.dates} of {MIN_DATES} dates)"
+    passed = net.mean > 0 and net.t >= T_GO and net.first_half > 0 and net.second_half > 0 and doubled.mean > 0
+    return "PASS: a candidate rule for the ORB account, on paper" if passed else "FAIL: results-day gaps do not beat their costs"

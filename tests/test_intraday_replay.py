@@ -87,7 +87,7 @@ def scripted(days=3, price_scale=1.0):
 
 
 def test_a_scripted_breakout_is_traded_exactly_as_the_live_engine_would():
-    result = replay(scripted(days=1), ReplayConfig(capital=20_000.0))
+    result = replay(scripted(days=1), ReplayConfig(capital=20_000.0), strategy="orb5")
     [trade] = result.trades.to_dict("records")
     # entry: the bar-10 close of 101 filled at the next bar's open + 0.05% slippage;
     # size = the 20% cap (Rs 4,000 / 101 = 39 shares)
@@ -100,7 +100,7 @@ def test_a_scripted_breakout_is_traded_exactly_as_the_live_engine_would():
 
 
 def test_an_account_carries_over_from_one_session_to_the_next():
-    result = replay(scripted(days=3), ReplayConfig(capital=20_000.0))
+    result = replay(scripted(days=3), ReplayConfig(capital=20_000.0), strategy="orb5")
     assert len(result.trades) == 3 and set(result.trades["reason"]) == {"TARGET"}
     assert result.daily_equity.is_monotonic_increasing and len(result.days) == 3
     assert result.daily_equity.iloc[-1] == pytest.approx(20_000 + result.trades["net_pnl"].sum())
@@ -142,7 +142,7 @@ def test_the_slippage_setting_reaches_the_broker():
 
 
 def test_the_summary_reports_return_drawdown_win_rate_exits_and_skips():
-    s = summarise(replay(scripted(days=3), ReplayConfig(capital=20_000.0)))
+    s = summarise(replay(scripted(days=3), ReplayConfig(capital=20_000.0), strategy="orb5"))
     assert (s.sessions, s.trades, s.win_rate, s.exits) == (3, 3, 1.0, {"TARGET": 3})
     assert s.total_return > 0 and s.end > s.start and s.max_drawdown == 0.0 and s.profitable_days == 1.0
     assert s.signals == {"ENTERED": 3} and s.fees > 0
@@ -208,7 +208,7 @@ def test_gap_and_go_replays_through_the_same_engine_with_the_previous_close_and_
     assert trade["exit_price"] == pytest.approx(104.5 * (1 - 0.0005))
     [signal] = result.signals.to_dict("records")
     assert signal["system_version"] == GAPGO_VERSION and signal["outcome"] == "ENTERED"
-    orb = replay(bars, ReplayConfig(capital=20_000.0))  # the breakout rule on the same bars takes its target
+    orb = replay(bars, ReplayConfig(capital=20_000.0), strategy="orb5")  # orb-v5's breakout on the same bars takes its target
     assert [t["reason"] for t in orb.trades.to_dict("records")] == ["TARGET"]
     with pytest.raises(ValueError, match="strategy"):
         replay(bars, strategy="nope")

@@ -20,6 +20,8 @@ from src.research.shadow import (
     filing_verdict,
     follow_filings,
     profit_rise_crore,
+    results_gap_trades,
+    results_gap_verdict,
     results_verdict,
     score_signal,
     stats,
@@ -336,3 +338,51 @@ def test_drift_verdict_gate():
     assert drift_verdict(Stats(120, 19, 2.0, 0.6, 3.0, 1.0, 1.0), good, 0).startswith("RUNNING")
     assert drift_verdict(good, Stats(120, 25, 2.0, 0.6, 2.5, 1.0, 1.0), 0).startswith("FAIL")
     assert drift_verdict(Stats(120, 25, -1.0, 0.6, 3.0, 1.0, 1.0), good, 0).startswith("FAIL")
+
+
+def _gap_bars(symbol="AAA", open_=103.0, later_low=103.0, last=106.0):
+    """A finished session on 2026-11-04 closing at 100, then 2026-11-05 opening at `open_` with a 09:15-09:30 range of 102.5-104 and
+    a 09:30 bar closing above it."""
+    rows = [
+        dict(symbol=symbol, day="2026-11-04", t=pd.Timestamp("2026-11-04 15:25", tz=IST), open=100, high=100, low=100, close=100)
+    ]
+    day = [("09:15", open_, 104, 102.5, 103.5), ("09:20", 103.5, 104, 103, 103.8), ("09:25", 103.8, 104, 103, 103.9)]
+    day += [("09:30", 103.9, 104.6, 103.8, 104.5), ("10:00", 104.5, 105, later_low, 104.8), ("15:10", 105, 106, 104.9, last)]
+    for hm, o, h, low, c in day:
+        rows.append(
+            dict(symbol=symbol, day="2026-11-05", t=pd.Timestamp(f"2026-11-05 {hm}", tz=IST), open=o, high=h, low=low, close=c)
+        )
+    return pd.DataFrame(rows)
+
+
+def _results(at, kind="results", symbol="AAA"):
+    return pd.DataFrame([dict(symbol=symbol, seen=pd.Timestamp(at, tz=IST), event_type=kind)])
+
+
+def test_results_gap_takes_the_live_gap_rule_after_results_known_before_the_open():
+    done = results_gap_trades(_results("2026-11-04 16:00"), _gap_bars(), "2026-11-06")
+    assert len(done) == 1 and done.iloc[0]["day"] == "2026-11-05"
+    assert done.iloc[0]["net"] == pytest.approx((106 / 104.5 - 1) * 100 - COST_PCT)
+    assert done.iloc[0]["net_2x"] == pytest.approx((106 / 104.5 - 1) * 100 - COST_2X_PCT)
+
+
+def test_results_gap_stops_at_the_range_low():
+    done = results_gap_trades(_results("2026-11-04 16:00"), _gap_bars(later_low=102.0), "2026-11-06")
+    assert done.iloc[0]["net"] == pytest.approx((102.5 / 104.5 - 1) * 100 - COST_PCT)
+
+
+def test_results_gap_needs_results_known_before_the_bell_a_gap_and_a_finished_session():
+    bars = _gap_bars()
+    assert results_gap_trades(_results("2026-11-05 10:00"), bars, "2026-11-06").empty  # seen after the open
+    assert results_gap_trades(_results("2026-11-03 16:00"), bars, "2026-11-06").empty  # before the previous session
+    assert results_gap_trades(_results("2026-11-04 16:00", kind="order_win"), bars, "2026-11-06").empty
+    assert results_gap_trades(_results("2026-11-04 16:00"), _gap_bars(open_=101.0), "2026-11-06").empty  # a 1% gap
+    assert results_gap_trades(_results("2026-11-04 16:00"), bars, "2026-11-05").empty  # the session has not finished
+
+
+def test_results_gap_verdict_gate():
+    good = Stats(120, 35, 0.5, 0.6, 3.0, 0.4, 0.6)
+    assert results_gap_verdict(good, good).startswith("PASS")
+    assert results_gap_verdict(Stats(90, 35, 0.5, 0.6, 3.0, 0.4, 0.6), good).startswith("RUNNING")
+    assert results_gap_verdict(Stats(120, 35, 0.5, 0.6, 3.0, -0.1, 0.6), good).startswith("FAIL")
+    assert results_gap_verdict(good, Stats(120, 35, -0.1, 0.6, 3.0, 0.4, 0.6)).startswith("FAIL")

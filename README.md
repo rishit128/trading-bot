@@ -238,11 +238,11 @@ dividends, sales and lots.
 - `scripts/backtest_live_config.py` - the live configuration (account size, sizing, exits, costs, scanner) on 10 years of
   Nifty 500 history (`--index 0` = every NSE stock), next to the Nifty 50 and an equal-weight basket.
 - `scripts/backtest_intraday.py` - the live intraday engine replayed over the archived 5-minute sessions (`--strategy gapgo` or
-  `gaponly`, `--bars-file` for a saved pickle of bars); `scripts/compare_gap.py` compares the two gap accounts;
-  `scripts/audit_intraday.py` and `scripts/research_intraday.py` re-run the intraday audit and the pre-declared ideas as
-  the archive grows.
+  `gaponly`, `--bars-file` for a saved pickle of bars); `scripts/audit_intraday.py` re-runs the intraday audit as the
+  archive grows; `scripts/shadow_report.py` and `scripts/forward_test_report.py` track the record-only tests and the
+  paper accounts' forward tests.
 - The finished experiments (signal research, exit and sizing grids, cash sweep, decomposition, calibration) are
-  recorded with their results in STRATEGY.md; their one-off scripts were removed on 2026-10-10 and remain in git
+  recorded with their results in STRATEGY.md; their one-off scripts were removed on 2026-10-10 and 2026-11-06 and remain in git
   history (commit 8284b54).
 
 ## Architecture diagrams
@@ -391,7 +391,7 @@ src/data/               NSE list, Yahoo data, indicators, universe scanner, mark
 src/database/           models, session (open + upgrade a file), migrations
 src/ops/                operational tools: holdout reserve, decision replay, ledger reconciliation, start-up checks
 src/research/           the simulator (backtest.py), the live-configuration backtest; for the intraday rule:
-                        intraday_replay (the live engine over stored bars), intraday_audit, intraday_hypotheses, gap_compare
+                        intraday_replay (the live engine over stored bars), intraday_audit, shadow (record-only tests), significance
 src/intraday/           opening-range-breakout, gap-and-go and gap-only rules (shared numpy cores), risk-based sizing, the 5-minute
                         engine (one per paper account, stepped together), the universe selector
 src/monitoring/         Telegram alerts and commands

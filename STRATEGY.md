@@ -1368,3 +1368,66 @@ It depends on the research watch: one OTP on Telegram each day through `/researc
 First look before it started (saved Angel One bars, stop first, 0.21% costs, entry on the first bar after publication, the broker's "book profit" exit taken at its stated price): of 35 BUY calls, 15 were read while open and could be scored: 11 won, average win +0.34%, average loss -1.05%, mean -0.03%, date t about -0.2 on 6 dates. 9 were read only after closing and left out; 10 had no bars; 1 was still open. 8 SELL calls: mean -0.28%. Too few to judge either way.
 
 First verdict at 100 finished trades. Before any real money it must meet the project's bar: at least 300 trades, t >= 2.6, both halves positive, positive at twice the slippage.
+
+### Six new intraday ideas for the ORB account: pre-declared test (2026-11-06; N1-N6; result below when run)
+
+Asked by the owner after ORB's 173 live trades lost Rs 1,739 (-0.20% a trade, its 8-year test said -0.23%). Declared at 11:00 IST on
+2026-11-06, before any of the data was downloaded: rules, data and gate are in the docstring of `scripts/research_new_intraday.py`
+and do not change after this point. Angel One 5-minute bars from 2018-01-01, the 200 most liquid stocks of the live feed plus
+NIFTYBEES and the Nifty 50. Each rule on its own: >= 300 trades, mean net > 0 with date-clustered t >= 2.6, both halves > 0, > 0 at
+twice the slippage, and (stock rules) excess over the median stock with t >= 2. A pass is a candidate for the ORB account in paper
+(orb-v6), the owner's decision.
+- N1 52-week high breakout above VWAP. N2 the day after an unexplained volume shock. N3 NR7 day, then an opening-range breakout.
+- N4 afternoon strength into the close. N5 exhaustion short after a 12% three-day run. N6 Nifty's first half hour sets the side
+  of NIFTYBEES for 14:45-15:15 (intraday market momentum).
+- Added at 11:07, still before any data was downloaded, at the owner's point that today's market may behave differently from
+  2018's: each rule is also judged on sessions from 2024-11-20 only (SEBI's F&O curbs): >= 150 trades, net > 0 with t >= 2.0,
+  both halves > 0, > 0 at twice the slippage, excess > 0 with t >= 1.5. A rule passing only there is a weaker candidate, for paper
+  only. Net by calendar year is printed for every rule.
+
+### E2, E4, E5 screens on the data at hand, and S7 (2026-11-06; owner's approval; nothing adopted)
+Angel One refused every candle request after the morning's reboot, so the owner asked for the approved experiments on the data at
+hand: the saved bars (72 sessions, mostly Yahoo, 501 stocks) and Yahoo's hourly Nifty and NIFTYBEES (about 3 years). Rules and screens
+were written into `scripts/research_yahoo_experiments.py` before it ran; a screen only qualifies a rule for the 8-year Angel One test.
+- **E4, ORB changes against the live rule on the same stock-days** (base 7,725 signals, gross +0.079%, net -0.127%). A 5-minute
+  opening range (E4a) loses less, +0.041% a date (t 2.7, both halves), but still -0.087% a trade: dropped, as the screen also needs
+  net > 0. Break-even stop after +1R (E4b) +0.004% (t 1.2) and a one-hour time stop (E4c) -0.014% change nothing.
+- **E5, sector-led ORB:** -0.094% a trade, -0.026% a date against the live rule's signals on the same dates (t -0.8).
+- **E2, the noise-area trend rule on NIFTYBEES:** 366 trades, gross +0.041%, net -0.165% (t -8.4), negative in both halves, both
+  sides and every year. The US result does not carry over at hourly checks.
+- **S7, record only** (`results_gap_trades` in `src/research/shadow.py`, in the 16:30 tracker): the live gap-and-go rule on a session
+  only when the stock's results were seen between the previous session's open and this one's. Gate fixed now: 100 signals on 30
+  dates, net > 0 with date t >= 2, both halves > 0, > 0 at twice the slippage; evidence from 2026-11-09. Before it, on the
+  saved Angel One bars: 9 signals, +0.92% a trade, 7 won (seen, not evidence). A pass makes it a candidate rule for the ORB account.
+
+### Angel One's real intraday fees, and ORB changed to the 5-minute range (2026-11-06; orb-v6; live from the restart that day)
+**Fees.** The owner asked whether the fees match Angel One's. They did not: brokerage was the lower of Rs 20 or 0.03% a side, Angel
+One's schedule since 2025-11-17 is the lower of Rs 20 or 0.1%, at least Rs 5 (its pricing page, read 2026-11-06), and its NSE
+transaction charge is 0.0030699%, not 0.00297%. STT 0.025% on sells, stamp 0.003% on buys, SEBI Rs 10 a crore and 18% GST matched;
+there is no intraday DP or clearing charge. A round trip on Rs 5,000 costs 0.27%, not 0.11%; on ORB's average Rs 3,738 position
+0.35%; on Rs 1 lakh about 0.08%, because of the Rs 20 cap. `intraday_fees` now follows Angel One (every intraday account, from the
+restart). Recorded trades keep the fees they were charged. Repriced at Angel One's schedule: ORB -Rs 1,739 becomes -Rs 3,261,
+gap-and-go +413 becomes +116, gap-only -367 becomes -924, news +569 becomes +490. Every intraday research figure above used about
+0.21% a round trip; at these position sizes the real cost with slippage is about 0.37%, so every one of those rules is worse than
+recorded. Small positions are the dearest way to trade intraday at this broker.
+
+**orb-v6, at the owner's request (NOT proven).** The breakout account's range is the 09:15 bar alone; the first close above its high
+from 09:20 to 14:00, above VWAP on 1.5x the earlier bars' volume, with the bar 0.3-2.5% wide; stop at its low; no target; out at 15:15
+(`strategy.find_orb_setup`; `find_setup` keeps orb-v5 for the replays). Evidence: screen E4a only, which lost less than orb-v5 on the
+same 72 sessions (+0.041% a date, t 2.7, both halves) and still lost money. The forward test restarts from 2026-11-09 against -0.25%
+a trade (E4a recosted); the rest of 2026-11-06 trades under orb-v6 but is not counted.
+
+### Clean-up (2026-11-06; no trading rule changed)
+Finished one-off research was removed, its results staying in this file and in `docs/trading/research-trials.csv`. The code is in
+git at commit 7d4673e: `scripts/research_swing_v2.py` to `v6b.py`, `research_core_sleeve.py`, `research_results_hold.py` (H1),
+`research_earnings_surprise.py` (H2), `research_intraday.py` with `src/research/intraday_hypotheses.py` (the Phase 2 and ORB-tune
+ideas), and `scripts/compare_gap.py` with `src/research/gap_compare.py`: gap-only stopped being gap-and-go's control with
+gaponly-v4. Their tests went with them, and so did the cached data only they read (`research_cache/ranked_nse_10y.pkl`,
+`signals_table.csv`, `results_dates.json`). An audit found no unused module, function or setting in the running code.
+
+### ORB account history reset (2026-11-06, after the close; at the owner's request)
+The ORB account (`intraday.db`) starts again at Rs 25,000 under orb-v6: its trades (174, -Rs 1,739 as recorded, -Rs 3,261 at Angel
+One's fees), open positions and recorded signals (2,618) were cleared after the 15:15 square-off. Every saved bar (`intraday_bars`,
+`angel_bars`) and the daily stock lists (`intraday_universe`) were kept. The full database before the reset is in
+`backups/intraday-before-reset-2026-11-06-*.db`. The orb-v1 to orb-v5 figures in this file and in the trial register stay as the
+record. S1 (breakouts on news) restarts on orb-v6 signals: its earlier evidence was orb-v5 signals, which the reset removed.

@@ -223,3 +223,44 @@ def test_a_zero_volume_history_gives_no_volume_signal_instead_of_an_infinite_rat
     volumes = [0.0] * 5 + [500.0] + [0.0] * 6
     assert core(closes=close_at(5, 101), volumes=volumes) is None  # no prior volume to be a surge against
     assert core(closes=close_at(5, 101), volumes=volumes, use_volume=False).index == 5
+
+
+# -- Angel One's intraday charges (src.engine.costs, read from its pricing page 2026-11-06) -------------------------------------
+def test_intraday_brokerage_is_the_lower_of_rs_20_or_0_1_percent_with_a_rs_5_floor():
+    def brokerage_of(value):  # the buy side less the charges that scale with the value
+        return (intraday_fees("BUY", value) - value * (0.000030699 + 0.000001 + 0.000000001) * 1.18 - 0.00003 * value) / 1.18
+
+    assert brokerage_of(2_000) == pytest.approx(5.0)  # 0.1% would be Rs 2: the Rs 5 minimum
+    assert brokerage_of(10_000) == pytest.approx(10.0)  # 0.1%
+    assert brokerage_of(100_000) == pytest.approx(20.0)  # capped
+
+
+def test_an_angel_one_round_trip_on_rs_5000_costs_about_0_27_percent():
+    round_trip = intraday_fees("BUY", 5_000) + intraday_fees("SELL", 5_000)
+    assert round_trip == pytest.approx(13.57, abs=0.01)
+    assert intraday_fees("SELL", 5_000) - intraday_fees("BUY", 5_000) == pytest.approx(5_000 * (0.00025 - 0.00003))
+
+
+# -- orb-v6: the 09:15 bar is the range, signals from 09:20, no target ----------------------------------------------------------
+ORB6 = dict(
+    closes=[100.0, 100.6, 100.5],
+    highs=[100.5, 100.7, 100.6],
+    lows=[99.9, 100.3, 100.4],
+    volumes=[1000.0, 2000.0, 1000.0],
+)
+
+
+def test_orb_v6_breaks_the_09_15_bar_from_09_20_with_its_low_as_the_stop_and_no_target():
+    s = st.find_orb_setup("AAA", make_bars(**ORB6))
+    assert s and s.signal_price == 100.6 and s.stop == pytest.approx(99.9) and s.range_high == pytest.approx(100.5)
+    assert s.bar_time.strftime("%H:%M") == "09:20"
+    assert s.target == pytest.approx(100.6 * (1 + st.NO_TARGET))  # none: out at the stop or the square-off
+    assert st.find_setup("AAA", make_bars(**ORB6)) is None  # orb-v5 waits for its 15-minute range
+
+
+def test_orb_v6_keeps_the_vwap_volume_and_range_width_filters():
+    quiet = dict(ORB6, volumes=[1000.0, 1400.0, 1000.0])  # 1.4x the 09:15 bar's volume
+    assert st.find_orb_setup("AAA", make_bars(**quiet)) is None
+    narrow = dict(ORB6, highs=[100.1, 100.7, 100.6], lows=[99.95, 100.3, 100.4])  # the 09:15 bar is 0.15% wide
+    assert st.find_orb_setup("AAA", make_bars(**narrow)) is None
+    assert st.find_orb_setup("AAA", make_bars(**ORB6, start=(9, 20))) is None  # no 09:15 bar: no range

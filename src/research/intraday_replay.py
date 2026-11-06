@@ -34,12 +34,15 @@ from src.engine.paper_broker import PaperBroker
 from src.engine.ports import BAR
 from src.intraday.engine import IntradayEngine
 from src.intraday.strategy import (
+    ENTRY_FROM,
     ENTRY_UNTIL,
     GAP_ENTRY_UNTIL,
     GAP_ONLY_ENTRY_UNTIL,
+    ORB_ENTRY_FROM,
     Setup,
     find_gap_only_setup,
     find_gap_setup,
+    find_orb_setup,
     find_setup,
 )
 from src.versions import GAPGO_VERSION, GAPONLY_VERSION, INTRADAY_VERSION
@@ -152,7 +155,8 @@ def _run_session(engine: IntradayEngine, feed: ReplayFeed, day: Date) -> None:
 # name -> (rule, last bar that may signal, Telegram label, version), as the launcher (src/app/intraday_cli.py) runs them
 Rule = Callable[[str, pd.DataFrame, Optional[float]], Optional[Setup]]
 STRATEGIES: Dict[str, Tuple[Rule, dtime, str, str]] = {
-    "orb": (find_setup, ENTRY_UNTIL, "INTRADAY", INTRADAY_VERSION),
+    "orb": (find_orb_setup, ENTRY_UNTIL, "INTRADAY", INTRADAY_VERSION),
+    "orb5": (find_setup, ENTRY_UNTIL, "INTRADAY", "orb-v5"),  # the breakout account's rule to 2026-11-06 (15-minute range, 2R)
     "gapgo": (find_gap_setup, GAP_ENTRY_UNTIL, "GAP-GO", GAPGO_VERSION),
     "gaponly": (find_gap_only_setup, GAP_ONLY_ENTRY_UNTIL, "GAP-ONLY", GAPONLY_VERSION),
 }
@@ -188,7 +192,10 @@ def replay(
             slippage=SLIPPAGE if config.slippage is None else config.slippage,
         )
         rule, until, label, version = STRATEGIES[strategy]
-        gap = strategy != "orb"  # the gap rules need the previous session's close and record capped signals, as live
+        gap = strategy not in (
+            "orb",
+            "orb5",
+        )  # the gap rules need the previous session's close and record capped signals, as live
         engine = IntradayEngine(
             broker,
             symbols,
@@ -202,6 +209,7 @@ def replay(
             universe_source="",
             now_fn=lambda: feed.now,
             find_setup=rule,
+            entry_from=ORB_ENTRY_FROM if strategy == "orb" else ENTRY_FROM,
             entry_until=until,
             label=label,
             version=version,

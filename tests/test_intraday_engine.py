@@ -12,6 +12,7 @@ from src.data.angel_quotes import EntryContext
 from src.data.india import IST
 from src.database import IntradaySignalRecord, IntradayUniverseRecord, PaperTradeRecord, make_session_factory
 from src.engine.paper_broker import PaperBroker
+from src.intraday import strategy as st
 from src.intraday.engine import IntradayEngine
 from tests.intraday_helpers import BREAKOUT, DAY, VOLS, make_bars
 from tests.test_paper_broker import FakeClock, FakeFeed
@@ -514,3 +515,17 @@ def test_nothing_is_verified_before_the_last_bar_or_without_signals(tmp_path):
     now[0] = at(15, 40).astimezone(timezone.utc)
     eng.step()  # after the close, but no signals today: nothing to download
     assert calls == [] and eng._verified == "2026-09-21"
+
+
+def test_the_orb_v6_account_scans_from_09_20_on_the_09_15_bar(tmp_path):
+    bars = make_bars(
+        [100.0, 100.6, 100.5], highs=[100.5, 100.7, 100.6], lows=[99.9, 100.3, 100.4], volumes=[1000.0, 2000.0, 1000.0]
+    )
+    eng, broker, *_ = engine(
+        tmp_path, {"AAA": bars}, at(9, 25), prices={"AAA": 100.6}, find_setup=st.find_orb_setup, entry_from=st.ORB_ENTRY_FROM
+    )
+    assert "entered 1" in eng.step() and [h["symbol"] for h in broker.holdings()] == ["AAA"]
+    early, *_ = engine(
+        tmp_path, {"AAA": bars}, at(9, 18), db="early.db", find_setup=st.find_orb_setup, entry_from=st.ORB_ENTRY_FROM
+    )
+    assert early.step() == "waiting for the opening range"

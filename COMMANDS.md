@@ -97,14 +97,12 @@ scripts/reconcile_paper.py                 # rebuilds cash from recorded fills, 
 scripts/paper_report.py                    # full history, both accounts: every trade, P&L by day/week/total
 scripts/analyze_mistakes.py                # judges every analysed stock against what then happened
 scripts/intraday_archive.py status|refresh|import-cache   # the archive of 5-minute bars (fills itself while the engine runs)
-scripts/compare_gap.py                     # gap-and-go vs its gap-only control: per trade, date by date, costs, drawdown
 scripts/score_house_calls.py                # the broker's research calls scored on the price (targets, stops, direction), not on the portal's own exits
 scripts/angel_report.py [--days 5]          # Angel One vs Yahoo bars per session (timing, agreement) and the clean-session count
 scripts/news_report.py [--sample 30]       # news-catalyst gate 1: do material filings move as the AI said? + labels to check by hand
 scripts/intraday_data_quality.py           # the intraday engines' live data vs the final bars (verdict after 10 sessions)
 scripts/backtest_intraday.py [--strategy gapgo|gaponly] [--bars-file F]   # the LIVE engine replayed over stored sessions (PAPER_INITIAL_CASH by default: Rs 25,000)
 scripts/audit_intraday.py                  # does the intraday rule beat a random entry? which filters add anything?
-scripts/research_intraday.py               # five pre-declared intraday ideas vs a random null; re-run as the archive grows
 scripts/backtest_live_config.py [--index 0|50|100|500]   # the live swing setup on 10 years of history (0 = every NSE stock)
 ```
 Run any of these with `python scripts/<name>.py` (some accept `--help` for their options).

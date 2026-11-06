@@ -46,7 +46,15 @@ class Account:
 
 
 ACCOUNTS = {
-    "orb": Account("intraday.db", INTRADAY_VERSION, 0.0025, -0.00225, "8 years Angel One, 116,908 trades", True),
+    "orb": Account(
+        "intraday.db",
+        INTRADAY_VERSION,
+        0.0025,
+        -0.0025,
+        "screen E4a, 72 sessions, -0.087% at the old fees, recosted at Angel One's",
+        True,
+        "2026-11-09",
+    ),
     "gapgo": Account("gapgo.db", GAPGO_VERSION, 0.0025, -0.0006, "8 years Angel One, 1,815 trades", True),
     "gaponly": Account(
         "gaponly.db",

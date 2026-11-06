@@ -34,11 +34,23 @@ def india_delivery_fees(side: str, value: float) -> float:
     return stt + stamp + exchange + sebi + gst + dp
 
 
+# Angel One's NSE equity intraday (MIS) schedule for retail clients, from its pricing page (read 2026-11-06; brokerage revised
+# 2025-11-17 from the lower of Rs 20 or 0.03%): brokerage the lower of Rs 20 or 0.1% per executed order, at least Rs 5.
+INTRADAY_BROKERAGE_PCT, INTRADAY_BROKERAGE_MAX, INTRADAY_BROKERAGE_MIN = 0.001, 20.0, 5.0
+INTRADAY_STT = 0.00025  # on the sell
+INTRADAY_STAMP = 0.00003  # on the buy
+NSE_TRANSACTION = 0.000030699  # both sides
+SEBI_FEE = 0.000001  # Rs 10 a crore, both sides
+NSE_IPFT = 0.000000001  # investor protection fund, both sides
+GST = 0.18  # on brokerage, transaction, SEBI and IPFT charges
+
+
 def intraday_fees(side: str, value: float) -> float:
-    """Approximate NSE intraday (MIS) equity costs with a flat-fee discount broker: brokerage min(Rs 20, 0.03%) per side,
-    STT 0.025% on sells, stamp 0.003% on buys, exchange 0.00297%, SEBI 0.0001%, 18% GST on brokerage+exchange+SEBI."""
-    brokerage = min(20.0, 0.0003 * value)
-    exchange, sebi = 0.0000297 * value, 0.000001 * value
-    stt = 0.00025 * value if side == Action.SELL else 0.0
-    stamp = 0.00003 * value if side == Action.BUY else 0.0
-    return brokerage + exchange + sebi + stt + stamp + 0.18 * (brokerage + exchange + sebi)
+    """Angel One's NSE equity intraday charges on one executed order of `value` rupees (see the constants above). Rates change:
+    check https://www.angelone.in/pricing. The Rs 5 minimum makes a small order dear (0.35% a round trip on Rs 3,700) and the Rs 20
+    cap makes a large one cheap (about 0.08% on Rs 1 lakh)."""
+    brokerage = min(INTRADAY_BROKERAGE_MAX, max(INTRADAY_BROKERAGE_MIN, INTRADAY_BROKERAGE_PCT * value))
+    charges = (NSE_TRANSACTION + SEBI_FEE + NSE_IPFT) * value
+    stt = INTRADAY_STT * value if side == Action.SELL else 0.0
+    stamp = INTRADAY_STAMP * value if side == Action.BUY else 0.0
+    return brokerage + charges + stt + stamp + GST * (brokerage + charges)

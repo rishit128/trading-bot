@@ -33,8 +33,10 @@ from src.intraday.strategy import (
     GAP_ENTRY_UNTIL,
     GAP_ONLY_ENTRY_UNTIL,
     GAP_ONLY_LATEST_START,
+    ORB_ENTRY_FROM,
     find_gap_only_setup,
     find_gap_setup,
+    find_orb_setup,
     gap_only_refusals,
 )
 from src.intraday.universe import select_universe
@@ -123,6 +125,8 @@ def run_intraday(live: bool) -> None:
             broker,
             fetch_bars=bars,
             archive=BarArchive(broker.sessions) if settings.intraday_archive else None,
+            find_setup=find_orb_setup,
+            entry_from=ORB_ENTRY_FROM,
             record_capped=True,
             house_calls_fn=house_calls.current,
             act_on_calls=settings.intraday_calls_act,
@@ -165,8 +169,8 @@ def run_intraday(live: bool) -> None:
         "Positive after costs in both years of the 2-year test but not proven: paper only, to gather forward evidence"
     )
     print(
-        "gap-only (own account, gap-and-go's control): the same gap, bought on the 09:30 close without a breakout; "
-        "compare the two with scripts/compare_gap.py"
+        "gap-only (own account): the same gap, bought on the 09:30 close without a breakout, skipping crowded gap days "
+        "and stocks already up 3% (gaponly-v4)"
     )
     if news is not None:
         print(

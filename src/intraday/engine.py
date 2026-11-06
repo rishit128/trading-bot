@@ -63,6 +63,7 @@ class IntradayEngine:
     archive: Optional[BarArchive] = None  # save every finished session's bars here; None = do not archive
     # (symbol, today's finished bars, previous session's close) -> a setup or None: the rule this account trades
     find_setup: Callable[[str, pd.DataFrame, Optional[float]], Optional[st.Setup]] = st.find_setup
+    entry_from: dtime = st.ENTRY_FROM  # no scan before this: the rule's opening range is not finished
     entry_until: dtime = st.ENTRY_UNTIL  # no bar starting at or after this can signal: the scan stops one bar later
     label: str = "INTRADAY"  # prefix of its Telegram messages
     version: str = INTRADAY_VERSION  # recorded with every signal and universe row
@@ -221,7 +222,7 @@ class IntradayEngine:
         self._report_exits(pf)
         if local.time() >= st.SQUARE_OFF:
             return self._square_off(pf)
-        if local.time() < st.ENTRY_FROM:
+        if local.time() < self.entry_from:
             return "waiting for the opening range"
         if (
             local >= datetime.combine(local.date(), self.entry_until, IST) + BAR

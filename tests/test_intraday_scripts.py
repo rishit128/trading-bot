@@ -8,7 +8,7 @@ import sys
 import pandas as pd
 import pytest
 
-from scripts import audit_intraday, backtest_intraday, intraday_archive, research_intraday
+from scripts import audit_intraday, backtest_intraday, intraday_archive
 from src.data.intraday_bars import BarArchive
 from src.database import make_session_factory
 from tests.test_intraday_audit import scripted_session, session
@@ -94,21 +94,3 @@ def test_the_audit_script_prints_all_four_sections(archive, monkeypatch, capsys)
     empty = BarArchive(make_session_factory("sqlite://"))
     with pytest.raises(SystemExit, match="archive is empty"):
         run(audit_intraday, monkeypatch, empty, "--seeds", "1")
-
-
-def test_the_research_script_reports_every_hypothesis_and_a_verdict(archive, monkeypatch, capsys):
-    filled(archive, days=4, stocks=10)
-    run(research_intraday, monkeypatch, archive, "--seeds", "1")
-    out = capsys.readouterr().out
-    for name in (
-        "C  ORB long (the live rule)",
-        "H1 ORB short",
-        "H2 gap-and-go",
-        "H3 gap fade",
-        "H4 first-hour momentum",
-        "H5 last-half-hour momentum",
-    ):
-        assert name in out
-    assert "CANDIDATES:" in out and "criteria: >= 300 trades" in out
-    with pytest.raises(SystemExit, match="archive is empty"):
-        run(research_intraday, monkeypatch, BarArchive(make_session_factory("sqlite://")), "--seeds", "1")

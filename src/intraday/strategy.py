@@ -45,6 +45,8 @@ from src.engine.ports import BAR
 RANGE_BARS = 3
 MARKET_OPEN = dtime(9, 15)
 ENTRY_FROM, ENTRY_UNTIL, SQUARE_OFF = dtime(9, 30), dtime(14, 0), dtime(15, 15)
+# orb-v6 (2026-11-06): the breakout account's range is the 09:15 bar alone, signals from 09:20, no target (screen E4a)
+ORB_RANGE_BARS, ORB_ENTRY_FROM = 1, dtime(9, 20)
 MIN_RANGE, MAX_RANGE = 0.003, 0.025
 VOLUME_MULT = 1.5
 TARGET_R = 2.0
@@ -117,21 +119,23 @@ def first_breakout(
     use_range: bool = True,
     use_vwap: bool = True,
     use_volume: bool = True,
+    range_bars: int = RANGE_BARS,
+    entry_from: dtime = ENTRY_FROM,
 ) -> Optional[Breakout]:
     """The first bar after the opening range that closes above its high, above VWAP, on a volume surge, inside the entry
     window; or None. Works on whole-session numpy arrays (`minutes` = minutes since midnight per bar) and is the one place
     the rule is written down: the live engine reaches it through `find_setup`, the audit through switches that disable a
     filter to measure what it adds. Every value at bar i uses bars up to and including i only."""
     n = len(close)
-    if n <= RANGE_BARS:
+    if n <= range_bars:
         return None
-    range_high, range_low = float(high[:RANGE_BARS].max()), float(low[:RANGE_BARS].min())
+    range_high, range_low = float(high[:range_bars].max()), float(low[:range_bars].min())
     width = (range_high - range_low) / range_high
     if use_range and not MIN_RANGE <= width <= MAX_RANGE:
         return None
     vwap, ratio = session_vwap_and_volume_ratio(high, low, close, volume)
-    ok = (close > range_high) & (minutes >= minute_of_day(ENTRY_FROM)) & (minutes < minute_of_day(ENTRY_UNTIL))
-    ok[:RANGE_BARS] = False
+    ok = (close > range_high) & (minutes >= minute_of_day(entry_from)) & (minutes < minute_of_day(ENTRY_UNTIL))
+    ok[:range_bars] = False
     if use_vwap:
         ok &= close > vwap
     if use_volume:
@@ -172,22 +176,35 @@ def gap_only_bar(open_price: float, prev_close: Optional[float], minutes: np.nda
     return int(hits[0]) if len(hits) else None
 
 
-def opening_range_intact(day_bars: pd.DataFrame) -> bool:
+def opening_range_intact(day_bars: pd.DataFrame, range_bars: int = RANGE_BARS) -> bool:
     """True when the first RANGE_BARS bars are the real opening bars: the first starts at 09:15 and they follow each other
     without a gap. Yahoo drops a bar a stock did not trade in, so an illiquid stock's "first three bars" can be 09:25-09:35
     -- a range of the wrong period, which would fire a breakout signal on a range that never existed."""
-    if len(day_bars) < RANGE_BARS:
+    if len(day_bars) < range_bars:
         return False
-    idx = day_bars.index[:RANGE_BARS]
+    idx = day_bars.index[:range_bars]
     if idx[0].time() != MARKET_OPEN:
         return False
-    return all(idx[i + 1] - idx[i] == BAR for i in range(RANGE_BARS - 1))
+    return all(idx[i + 1] - idx[i] == BAR for i in range(range_bars - 1))
 
 
 def find_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float] = None) -> Optional[Setup]:
-    """The day's first breakout in `day_bars` (one session's completed 5-minute bars, IST index), or None. One trade per
-    stock per day means only the first signal counts. `prev_close` is unused (the same signature as `find_gap_setup`)."""
-    if not opening_range_intact(day_bars):
+    """The orb-v5 rule (to 2026-11-06, kept for the research replays): the day's first breakout of the 09:15-09:30 range in
+    `day_bars` (one session's completed 5-minute bars, IST index), target 2R; or None. One trade per stock per day means only
+    the first signal counts. `prev_close` is unused (the same signature as `find_gap_setup`)."""
+    return _breakout_setup(symbol, day_bars, RANGE_BARS, ENTRY_FROM, TARGET_R)
+
+
+def find_orb_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float] = None) -> Optional[Setup]:
+    """The breakout account's rule from orb-v6: the first close above the 09:15 bar's high from 09:20 to 14:00, above VWAP on
+    1.5x volume, the 09:15 bar 0.3-2.5% wide; stop at its low, no target (out at the square-off)."""
+    return _breakout_setup(symbol, day_bars, ORB_RANGE_BARS, ORB_ENTRY_FROM, None)
+
+
+def _breakout_setup(
+    symbol: str, day_bars: pd.DataFrame, range_bars: int, entry_from: dtime, target_r: Optional[float]
+) -> Optional[Setup]:
+    if not opening_range_intact(day_bars, range_bars):
         return None
     index = pd.DatetimeIndex(day_bars.index)
     found = first_breakout(
@@ -196,6 +213,8 @@ def find_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float] 
         day_bars["Close"].to_numpy(float),
         day_bars["Volume"].to_numpy(float),
         (index.hour * 60 + index.minute).to_numpy(),
+        range_bars=range_bars,
+        entry_from=entry_from,
     )
     if found is None:
         return None
@@ -206,7 +225,7 @@ def find_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float] 
         symbol,
         entry,
         found.range_low,
-        entry + TARGET_R * risk,
+        entry + target_r * risk if target_r is not None else entry * (1 + NO_TARGET),
         found.range_high,
         found.range_low,
         day_bars.index[found.index],
