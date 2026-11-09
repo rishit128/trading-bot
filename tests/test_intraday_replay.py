@@ -9,7 +9,7 @@ import pytest
 
 from src.data.india import IST
 from src.research.intraday_replay import ReplayConfig, ReplayFeed, format_summary, replay, session_days, summarise
-from src.versions import GAPGO_VERSION, GAPONLY_VERSION
+from src.versions import GAPONLY_VERSION
 from tests.test_intraday_audit import DAY0, scripted_session
 
 D1 = datetime(2026, 9, 21, tzinfo=IST)  # a Monday
@@ -198,16 +198,16 @@ def test_the_default_configuration_is_the_settings_defaults_and_from_settings_re
     assert ReplayConfig.from_settings(settings).capital == settings.paper_initial_cash
 
 
-def test_gap_and_go_replays_through_the_same_engine_with_the_previous_close_and_no_target():
+def test_gap_only_replays_through_the_same_engine_with_the_previous_close_and_no_target():
     flat = scripted_session(0).copy()
     flat[["Open", "High", "Low", "Close"]] = 97.0  # yesterday closed at 97
-    bars = {"AAA": pd.concat([flat, scripted_session(1)])}  # today opens at 100: a 3.1% gap, breakout at 10:05
-    result = replay(bars, ReplayConfig(capital=20_000.0), strategy="gapgo")
+    bars = {"AAA": pd.concat([flat, scripted_session(1)])}  # today opens at 100: a 3.1% gap, bought on the 09:25 bar's close
+    result = replay(bars, ReplayConfig(capital=20_000.0), strategy="gaponly")
     [trade] = result.trades.to_dict("records")
-    assert trade["entry_price"] == pytest.approx(101 * 1.0005) and trade["reason"] == "SIGNAL"  # no target: squared off
+    assert trade["entry_price"] == pytest.approx(100 * 1.0005) and trade["reason"] == "SIGNAL"  # no target: squared off
     assert trade["exit_price"] == pytest.approx(104.5 * (1 - 0.0005))
     [signal] = result.signals.to_dict("records")
-    assert signal["system_version"] == GAPGO_VERSION and signal["outcome"] == "ENTERED"
+    assert signal["system_version"] == GAPONLY_VERSION and signal["outcome"] == "ENTERED"
     orb = replay(bars, ReplayConfig(capital=20_000.0), strategy="orb5")  # orb-v5's breakout on the same bars takes its target
     assert [t["reason"] for t in orb.trades.to_dict("records")] == ["TARGET"]
     with pytest.raises(ValueError, match="strategy"):

@@ -21,7 +21,7 @@ tail -n 50 logs/intraday.log            # intraday engines
 python main.py --report                 # swing account; --intraday-report for the three intraday accounts
 ```
 
-Telegram: `/status`, `/positions`, `/pnl`, `/intraday`, `/gapgo`, `/gaponly`. Reports:
+Telegram: `/status`, `/positions`, `/pnl`, `/intraday`, `/gaponly`. Reports:
 `scripts/paper_report.py` (every trade), `scripts/forward_test_report.py` (each account against its backtest),
 `scripts/reconcile_paper.py` (does the ledger tie out; non-zero exit on drift).
 

@@ -7,7 +7,7 @@ dear for the account, no cash), a dry-run signal, or a failed order. The univers
 next session's first cycle: this account is meant to be flat every night. With an archive, each finished session's
 5-minute bars are saved after the close (see src.data.intraday_bars), so history for testing rules keeps growing.
 
-The rule is pluggable (`find_setup`): the opening-range breakout by default, or gap-and-go (`strategy.find_gap_setup`),
+The rule is pluggable (`find_setup`): the opening-range breakout by default, or gap-only (`strategy.find_gap_only_setup`),
 each in its own paper account and database, run side by side by `run_together`.
 
 Broker research calls (`house_calls_fn`, the breakout engine only): each recorded signal notes the open call on its stock,

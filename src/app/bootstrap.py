@@ -20,7 +20,6 @@ from src.app.reports import print_positions
 from src.app.wiring import (
     build_market_wiring,
     calls_db_url,
-    gapgo_db_url,
     gaponly_db_url,
     intraday_db_url,
     load_settings_or_exit,
@@ -74,10 +73,9 @@ def build_pipeline(live: bool) -> TradingPipeline:
         current = regime.current()
         return current.text() if current else "The market regime is unavailable (no index data)."
 
-    intraday_broker = gapgo_broker = gaponly_broker = news_broker = calls_broker = None
+    intraday_broker = gaponly_broker = news_broker = calls_broker = None
     try:
         intraday_broker = make_paper_broker(settings, intraday_db_url(), fees=intraday_fees)
-        gapgo_broker = make_paper_broker(settings, gapgo_db_url(), fees=intraday_fees)
         gaponly_broker = make_paper_broker(settings, gaponly_db_url(), fees=intraday_fees)
         news_broker = make_paper_broker(settings, news_db_url(), fees=intraday_fees)
         calls_broker = make_paper_broker(
@@ -109,7 +107,6 @@ def build_pipeline(live: bool) -> TradingPipeline:
                 settings,
                 intraday_broker,
                 extra,
-                gapgo_broker,
                 gaponly_broker,
                 news_broker,
                 calls_broker,
@@ -241,8 +238,7 @@ def show_intraday_reports(settings: Settings) -> None:
     """--intraday-report: positions, trade history and status of each intraday paper account."""
     for title, url in (
         ("INTRADAY: opening-range breakout", intraday_db_url()),
-        ("GAP-AND-GO (paper experiment)", gapgo_db_url()),
-        ("GAP-ONLY (paper control for gap-and-go)", gaponly_db_url()),
+        ("GAP-ONLY (paper experiment)", gaponly_db_url()),
         ("NEWS-CATALYST (paper experiment)", news_db_url()),
         ("BROKER CALLS (paper experiment)", calls_db_url()),
     ):

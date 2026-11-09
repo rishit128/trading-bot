@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.app.wiring import gapgo_db_url, gaponly_db_url, intraday_db_url  # noqa: E402
+from src.app.wiring import gaponly_db_url, intraday_db_url  # noqa: E402
 from src.database import make_session_factory  # noqa: E402
 from src.intraday.data_quality import MIN_SESSIONS, data_quality_report  # noqa: E402
 
@@ -20,7 +20,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--min-sessions", type=int, default=MIN_SESSIONS)
     args = ap.parse_args()
-    for label, url in (("INTRADAY", intraday_db_url()), ("GAP-GO", gapgo_db_url()), ("GAP-ONLY", gaponly_db_url())):
+    for label, url in (("INTRADAY", intraday_db_url()), ("GAP-ONLY", gaponly_db_url())):
         print(data_quality_report(make_session_factory(url), label, args.min_sessions))
         print()
 

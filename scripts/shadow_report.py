@@ -274,7 +274,7 @@ def report_profit_drift(trades: pd.DataFrame, running: int) -> None:
 
 
 def report_results_gaps(gaps: pd.DataFrame) -> None:
-    print("\nS7 gap-and-go on the session after results (the live rule, net of 0.21% intraday costs):")
+    print("\nS7 the gap-and-go entry rule on the session after results (net of 0.21% intraday costs):")
     if gaps.empty:
         print("  none yet")
     seen = gaps[gaps["day"] < RESULTS_GAP_FROM] if not gaps.empty else gaps

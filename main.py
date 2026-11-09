@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     intraday.add_argument(
         "--intraday",
         action="store_true",
-        help="run the intraday engines: breakout, gap-and-go and gap-only, each with its own paper account "
+        help="run the intraday engines: breakout, gap-only, news and broker calls, each with its own paper account "
         "(add --paper-orders to place paper orders)",
     )
     intraday.add_argument(

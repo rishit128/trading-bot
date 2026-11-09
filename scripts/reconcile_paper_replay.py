@@ -21,7 +21,7 @@ Otherwise the paper losses are the rule's, and work belongs on the rule, not the
 the share of exits whose bar touched both the stop and the target (the broker books the stop, the pessimistic reading;
 5-minute bars cannot say which came first). Too few matched trades (< 30) gives no verdict for that strategy.
 
-    python scripts/reconcile_paper_replay.py [--strategy orb|gapgo|gaponly|all] [--csv logs/reconcile.csv]"""
+    python scripts/reconcile_paper_replay.py [--strategy orb|gaponly|all] [--csv logs/reconcile.csv]"""
 
 import argparse
 import json
@@ -42,7 +42,7 @@ from src.data.india import IST  # noqa: E402
 from src.research.intraday_replay import ReplayConfig, replay  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-DATABASES = {"orb": "intraday.db", "gapgo": "gapgo.db", "gaponly": "gaponly.db"}
+DATABASES = {"orb": "intraday.db", "gaponly": "gaponly.db"}
 E1_ENTRY, E2_RETURN, E2_T, E3_SHARE, MIN_MATCHED = 0.0005, -0.0005, 2.0, 0.10, 30
 
 

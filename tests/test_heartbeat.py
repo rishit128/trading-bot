@@ -85,7 +85,10 @@ def test_the_intraday_loop_reports_which_engine_failed_and_the_others_still_run(
 
     marks, steps = [], []
     hb = SimpleNamespace(beat=lambda ok, detail="": marks.append((ok, detail)))
-    engines = [SimpleNamespace(label="INTRADAY", step=broken), SimpleNamespace(label="GAP-GO", step=lambda: steps.append("ran"))]
+    engines = [
+        SimpleNamespace(label="INTRADAY", step=broken),
+        SimpleNamespace(label="GAP-ONLY", step=lambda: steps.append("ran")),
+    ]
     sleeps = []
 
     def sleep(seconds):

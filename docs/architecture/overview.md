@@ -13,9 +13,9 @@ folders, and [dependency-map](dependency-map.md) for who imports whom.
 | Process (Docker service) | Command | What it does |
 | --- | --- | --- |
 | `trading-bot` | `main.py --loop 30 --paper-orders --holdout` | The **swing** bot: every 30 minutes while the market is open, scan the NSE, analyse the best candidates with the AI, decide, size, and place paper orders. Also serves the Telegram commands and the daily/weekly learning jobs. |
-| `intraday-bot` | `main.py --intraday --paper-orders` | Three **intraday** paper strategies stepped together every 5 minutes, each in its own account: the opening-range breakout (ORB), gap-and-go, and gap-only (gap-and-go's control). No AI is involved. |
+| `intraday-bot` | `main.py --intraday --paper-orders` | Three **intraday** paper strategies stepped together every 5 minutes, each in its own account: the opening-range breakout (ORB) and gap-only, beside the news-catalyst and broker-calls accounts. Only the news account uses the AI. |
 
-Each account has its own SQLite database on the shared `/data` volume: `trading.db`, `intraday.db`, `gapgo.db`,
+Each account has its own SQLite database on the shared `/data` volume: `trading.db`, `intraday.db`,
 `gaponly.db`, `news.db`, `broker_calls.db` ([database](../database.md)). Accounts never mix.
 
 ## The packages

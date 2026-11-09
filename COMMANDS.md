@@ -12,7 +12,7 @@ pgrep -af main.py                          # are both running? (--loop 30 --live
 tail -f logs/watchdog.log                  # what the watchdog found and did (scripts/watchdog.py, every 2 minutes from cron)
 ./venv/bin/python scripts/shadow_report.py # record-only tests: news-backed breakouts, AI against the rule, the 09:30 feed check
 tail -f logs/bot.log                       # watch the swing bot live (Ctrl+C stops watching, not the bot)
-tail -f logs/intraday.log                  # watch the intraday engines (ORB, gap-and-go, gap-only)
+tail -f logs/intraday.log                  # watch the intraday engines (ORB, gap-only, news, broker calls)
 pkill -f "main.py --loop"; pkill -f "main.py --intraday"                              # stop both
 pkill -f "main.py --loop"; pkill -f "main.py --intraday"; sleep 5; ./scripts/start_bots.sh   # restart (after changing .env or code)
 ```
@@ -27,8 +27,7 @@ days: the bots only trade while it is running. Settings are in `/home/rishit/tra
 /history              closed trades
 /pnl                  profit/loss by day and week, every paper account and all combined
 /intraday             intraday (breakout) account and open positions; /intraday_history for its closed trades
-/gapgo                gap-and-go paper account and open positions; /gapgo_history for its closed trades
-/gaponly              gap-only control account (gap-and-go without the breakout); /gaponly_history
+/gaponly              gap-only paper account (the 2% gap bought at 09:30); /gaponly_history
 /news                 news-catalyst paper account (exchange filings read by the AI); /news_history
 /portfolio            read your real Integrated account (read-only); it will ask for the OTP here
 /research_start       each morning (~9:00): log in once (OTP here); the broker's research calls are read every 10 min until 15:35
@@ -56,7 +55,7 @@ python main.py                    # one dry-run cycle: scan + AI + risk check, r
 python main.py --loop 30          # repeat every 30 min while NSE is open (dry run)
 python main.py --loop 30 --live   # same, but trade in the built-in paper simulator
 python main.py --intraday [--live]     # intraday breakout engine, its own paper account
-python main.py --intraday-report       # the intraday accounts (breakout, gap-and-go, gap-only, news): positions, history, status
+python main.py --intraday-report       # the intraday accounts (breakout, gap-only, news, broker calls): positions, history, status
 ```
 **Don't start a second copy while the background bots are running** — they'd fight over the same Telegram bot and databases.
 
@@ -101,7 +100,7 @@ scripts/score_house_calls.py                # the broker's research calls scored
 scripts/angel_report.py [--days 5]          # Angel One vs Yahoo bars per session (timing, agreement) and the clean-session count
 scripts/news_report.py [--sample 30]       # news-catalyst gate 1: do material filings move as the AI said? + labels to check by hand
 scripts/intraday_data_quality.py           # the intraday engines' live data vs the final bars (verdict after 10 sessions)
-scripts/backtest_intraday.py [--strategy gapgo|gaponly] [--bars-file F]   # the LIVE engine replayed over stored sessions (PAPER_INITIAL_CASH by default: Rs 25,000)
+scripts/backtest_intraday.py [--strategy orb|gaponly] [--bars-file F]   # the LIVE engine replayed over stored sessions (PAPER_INITIAL_CASH by default: Rs 25,000)
 scripts/audit_intraday.py                  # does the intraday rule beat a random entry? which filters add anything?
 scripts/backtest_live_config.py [--index 0|50|100|500]   # the live swing setup on 10 years of history (0 = every NSE stock)
 ```

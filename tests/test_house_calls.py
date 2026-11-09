@@ -441,15 +441,14 @@ def test_a_failing_call_reader_never_stops_the_breakout_engine(tmp_path):
     assert "entered 1" in eng.step()
 
 
-@pytest.mark.parametrize("label", ["GAP-GO", "GAP-ONLY"])
-def test_the_gap_engines_are_not_given_the_calls(label):
+def test_the_gap_engine_is_not_given_the_calls():
     import inspect
 
     import src.app.intraday_cli as cli
 
     source = inspect.getsource(cli.run_intraday)
     # only the breakout engine and the broker-calls account get them
-    assert source.count("house_calls_fn") == 2 and label in inspect.getsource(cli)
+    assert source.count("house_calls_fn") == 2 and "GAP-ONLY" in inspect.getsource(cli)
 
 
 def test_snapshot_times_are_handled_in_utc_and_ist(tmp_path):

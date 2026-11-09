@@ -38,6 +38,7 @@ must agree, advisors confirm or veto); today there is one lead, the technical ag
 after 30 days (`DRAWDOWN_PAUSE_DAYS`) or at once with `/rebase`; `/pause` blocks all orders; `MARKET_PULSE=false` and
 `TREND_EXIT` switch those features off.
 
+**Gap-and-go was removed on 2026-11-09** (account, engine, commands and tests; see the last section): the paragraphs below describe it as it ran.
 **Intraday** (three separate paper accounts, each Rs 25,000, paper only, squared off at 15:15): the opening-range breakout
 (ORB, 09:30-14:00), gap-and-go (gap >= 2%, then a close above the opening range by 10:30) and gap-only (the same gap bought
 on the 09:30 close: gap-and-go's control). Sized by risk (0.5% of equity per trade) under a 20% position cap, 5 positions,
@@ -1431,3 +1432,37 @@ One's fees), open positions and recorded signals (2,618) were cleared after the 
 `angel_bars`) and the daily stock lists (`intraday_universe`) were kept. The full database before the reset is in
 `backups/intraday-before-reset-2026-11-06-*.db`. The orb-v1 to orb-v5 figures in this file and in the trial register stay as the
 record. S1 (breakouts on news) restarts on orb-v6 signals: its earlier evidence was orb-v5 signals, which the reset removed.
+
+### Gap-and-go retired; four multi-day gap rules tested and failed (2026-11-09, G1-G4; at the owner's request)
+The owner asked for a different strategy for the account or its removal after 37 live trades (19 won, 18 lost, a net loss). The
+live result matched its 8-year test: gross +0.15% a trade against costs of 0.21% (0.27-0.37% at Angel One's real fees on Rs 5,000).
+Published evidence is thin: SEBI's July 2024 study of individual intraday equity traders found about 71% lost money, costs added
+57% to the losers' losses, and the most frequent traders did worst; a CMT study found next-day continuation after a gap-up not
+profitable; an Indian study found overnight returns do not reverse, which argues against gap-down bounces.
+
+Since the intraday cost is paid every trade, the same trigger was tried held for days, where one round trip of costs meets a move of
+several percent (`scripts/research_gap_swing.py`, rules, data and gate declared in its docstring before any result). 10 years of
+daily bars, 1,920 NSE stocks, Rs 5,000 a trade, delivery fees 0.541% + slippage 0.10% a round trip. Gate as in N1-N6 plus profit
+in at least 6 calendar years. **None passed**; each earned a small gross edge that the costs more than took:
+
+| rule | trades | gross | net | net t | halves | years > 0 | excess over the median stock (t) |
+|---|---|---|---|---|---|---|---|
+| G1 gap up 3-15% on 2x volume, strong close above MA50, hold 10 | 913 | +0.28% | -0.36% | -1.7 | -0.58 / -0.63 | 5 of 10 | +0.02% (0.1) |
+| G2 gap down 3-12% rejected in an MA200 uptrend, hold 5 | 642 | +0.17% | -0.47% | -2.2 | -0.41 / -0.86 | 3 of 9 | +0.16% (0.8) |
+| G3 gap up unfilled for 3 sessions, enter D+4, hold 10 | 1,114 | +0.49% | -0.15% | -0.7 | -0.22 / -0.20 | 4 of 10 | +0.59% (2.1) |
+| G4 gap to a 252-session closing high, hold 20 | 1,452 | +0.42% | -0.23% | +0.3 | +0.47 / -0.23 | 4 of 10 | -0.17% (1.1) |
+
+On the recent market alone (from 2024-11-20) none passes either. G3 is the closest: it beats a random entry (excess +0.59%, t 2.1)
+but its gross edge is below the round-trip cost, and a smaller cost is not a second chance (no variant is re-run). The earlier
+tests of the intraday rule (8 years, 1,815 trades, net -0.06% at the old costs; weak-gap days, break-even stop, breadth,
+bigger gaps first all no help) and these four leave no gap rule to put in the account.
+
+**Decision: the account is removed** (the owner's instruction after the research above). Gone from the code: the engine in the
+launcher, `gapgo_db_url` and `GAPGO_DATABASE_URL`, `GAPGO_VERSION`, the `/gapgo` and `/gapgo_history` Telegram commands, its
+sections in `paper_report.py`, `forward_test_report.py`, `reconcile_paper_replay.py`, `intraday_data_quality.py` and the watchdog, the
+`gapgo` replay strategy, `find_gap_setup`, and its tests (`tests/test_gap_and_go.py` became `tests/test_gap_only.py`, which keeps every
+gap-only test). Kept: `first_gap_breakout`, the entry test, because the record-only S7 test still uses it, and this history. The
+swing, ORB, gap-only, news and broker-calls accounts are unchanged. Gap-only (gaponly-v4) is no longer a control for anything; it
+stays as its own experiment. Wherever the bots run, a `gapgo.db` left on disk is now unread and can be deleted by hand; the copy
+on this PC (18 October, 3 trades) is in `Documents/trading-bot-final-backup/old-local-dbs/`. The 37 live trades were not
+analysed: their database was not available here.

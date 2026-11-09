@@ -11,7 +11,7 @@ intraday accounts, the share of entries whose signal is gone on the final bars. 
                final bars; run scripts/reconcile_paper_replay.py before reading the result as the rule's.
 The thresholds are the protocol's, fixed 2026-10-26 before the first frozen session; change them only with a new protocol.
 
-    python scripts/forward_test_report.py [--account orb|gapgo|gaponly|news|calls|swing]"""
+    python scripts/forward_test_report.py [--account orb|gaponly|news|calls|swing]"""
 
 import argparse
 import sqlite3
@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.data.india import IST  # noqa: E402
 from src.research.significance import units_needed  # noqa: E402
-from src.versions import CALLS_VERSION, GAPGO_VERSION, GAPONLY_VERSION, INTRADAY_VERSION, NEWS_VERSION, STRATEGY_VERSION  # noqa: E402
+from src.versions import CALLS_VERSION, GAPONLY_VERSION, INTRADAY_VERSION, NEWS_VERSION, STRATEGY_VERSION  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 FREEZE = "2026-11-04"  # the first full session under the frozen versions (the 09:30 feed fix and the trade-to-trade check)
@@ -55,7 +55,6 @@ ACCOUNTS = {
         True,
         "2026-11-09",
     ),
-    "gapgo": Account("gapgo.db", GAPGO_VERSION, 0.0025, -0.0006, "8 years Angel One, 1,815 trades", True),
     "gaponly": Account(
         "gaponly.db",
         GAPONLY_VERSION,

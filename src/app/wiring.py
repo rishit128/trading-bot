@@ -57,18 +57,13 @@ def intraday_db_url() -> str:
     return os.getenv("INTRADAY_DATABASE_URL", "sqlite:///intraday.db")
 
 
-def gapgo_db_url() -> str:
-    """The gap-and-go paper strategy's own account, separate from the breakout account and from swing."""
-    return os.getenv("GAPGO_DATABASE_URL", "sqlite:///gapgo.db")
-
-
 def news_db_url() -> str:
     """The news-catalyst paper strategy's own account and its filing log (src.news)."""
     return os.getenv("NEWS_DATABASE_URL", "sqlite:///news.db")
 
 
 def gaponly_db_url() -> str:
-    """The gap-only control's own account (gap-and-go without waiting for the breakout)."""
+    """The gap-only paper account (a 2% gap bought on the 09:30 close, no breakout)."""
     return os.getenv("GAPONLY_DATABASE_URL", "sqlite:///gaponly.db")
 
 

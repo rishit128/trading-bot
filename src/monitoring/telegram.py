@@ -18,8 +18,7 @@ API = "https://api.telegram.org"
 HELP = (
     "/status - equity, cash, mode\n/positions - open positions with profit/loss\n/history - closed trades\n/pnl - profit/loss by day and week, all accounts\n"
     "/intraday - intraday account and open positions\n/intraday_history - intraday closed trades\n"
-    "/gapgo - gap-and-go paper account\n/gapgo_history - gap-and-go closed trades\n"
-    "/gaponly - gap-only control account\n/gaponly_history - gap-only closed trades\n"
+    "/gaponly - gap-only paper account\n/gaponly_history - gap-only closed trades\n"
     "/news - news-catalyst paper account\n/news_history - news-catalyst closed trades\n"
     "/calls - broker-calls paper account\n/calls_history - broker-calls closed trades\n/pause - stop placing orders\n/resume - allow orders again\n"
     "/rebase - reset the peak-equity baseline (clears a drawdown halt)"
@@ -257,7 +256,6 @@ def handle_command(
     settings,
     intraday=None,
     extra: Optional[Mapping[str, Tuple[str, Callable[[], str]]]] = None,
-    gapgo=None,
     gaponly=None,
     news=None,
     calls=None,
@@ -280,7 +278,6 @@ def handle_command(
         paper = (
             ("Swing", broker),
             ("Intraday (ORB)", intraday),
-            ("Gap-and-go", gapgo),
             ("Gap-only", gaponly),
             ("News", news),
             ("Broker calls", calls),
@@ -293,7 +290,7 @@ def handle_command(
             ],
             cur,
         )
-    for name, account in (("intraday", intraday), ("gapgo", gapgo), ("gaponly", gaponly), ("news", news), ("calls", calls)):
+    for name, account in (("intraday", intraday), ("gaponly", gaponly), ("news", news), ("calls", calls)):
         if account is not None:
             handlers[f"/{name}"] = partial(_account_view, account, name, False, cur)
             handlers[f"/{name}_history"] = partial(_account_view, account, name, True, cur)
@@ -303,15 +300,14 @@ def handle_command(
 
 
 def _account_view(account, name: str, history: bool, cur: str) -> str:
-    """/intraday, /gapgo, /gaponly, /news and /calls (equity, cash, open positions) and their _history variants (closed trades)."""
+    """/intraday, /gaponly, /news and /calls (equity, cash, open positions) and their _history variants (closed trades)."""
     if history:
         return format_history(account.trade_history(), cur)
     p, held = account.valuation()  # a view: settles nothing and writes nothing (the engines own the database)
     day = f"{(p.equity / p.start_of_day_equity - 1):+.2%} today" if p.start_of_day_equity else "n/a"
     title = {
         "intraday": "INTRADAY account",
-        "gapgo": "GAP-AND-GO paper account",
-        "gaponly": "GAP-ONLY control account",
+        "gaponly": "GAP-ONLY paper account",
         "news": "NEWS-CATALYST paper account",
         "calls": "BROKER-CALLS paper account",
     }[name]

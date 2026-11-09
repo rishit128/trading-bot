@@ -16,20 +16,19 @@ live engine and every research script, so nothing that is tested differs from wh
 An audit of this rule on 58 sessions of Nifty 100 bars (STRATEGY.md, 2026-09-28) found no edge: it does no better than
 entering at a random time with the same stop and target, and neither the VWAP nor the volume filter adds anything.
 
-Gap-and-go (`find_gap_setup`, a second paper strategy since 2026-10-10): the stock opened at least 2% above the previous
-session's close, and a 5-minute bar between 09:30 and 10:30 closes above the opening range high. Stop at the range low, no
-profit target: held to the 15:15 square-off. The only idea that stayed positive after costs in both years of the 2-year
-test (STRATEGY.md, 2026-10-10), but not proven: it runs in its own paper account to gather forward evidence.
+Gap-and-go (`first_gap_breakout`; its paper account ran from 2026-10-10 and was removed on 2026-11-09, STRATEGY.md): the stock
+opened at least 2% above the previous session's close, and a 5-minute bar between 09:30 and 10:30 closes above the opening
+range high. Only the entry test remains, because the record-only S7 test (src.research.shadow) still asks whether it pays on
+the session after results.
 
-Gap-only (`find_gap_only_setup`, a paper CONTROL for gap-and-go since 2026-10-10): the same 2% gap, but no breakout is
-waited for. Frozen rules:
+Gap-only (`find_gap_only_setup`, a paper account since 2026-10-10): the same 2% gap, but no breakout is waited for. Frozen rules:
   * entry on the close of the 09:25-09:30 bar (the last opening-range bar), on the 09:30 cycle only: if that bar is not
     available by then (late or missing data) the stock is not traded that day, never chased later;
-  * stop at the opening range low, no target, squared off at 15:15 like gap-and-go;
+  * stop at the opening range low, no target, squared off at 15:15;
   * skipped when the previous close is unknown, the opening range is not the real 09:15-09:30 bars, or the entry is not
     above the stop (the stop would already be breached);
   * at most the account's position limit; further eligible stocks are recorded as SKIPPED, not silently dropped.
-It answers one question: does waiting for the breakout add anything over simply buying the big gaps?"""
+Its history answers one question: does buying the big gaps on the 09:30 close pay?"""
 
 from dataclasses import dataclass
 from datetime import date
@@ -50,7 +49,7 @@ ORB_RANGE_BARS, ORB_ENTRY_FROM = 1, dtime(9, 20)
 MIN_RANGE, MAX_RANGE = 0.003, 0.025
 VOLUME_MULT = 1.5
 TARGET_R = 2.0
-GAP_MIN = 0.02  # gap-and-go: open at least 2% above the previous session's close...
+GAP_MIN = 0.02  # a gap: open at least 2% above the previous session's close...
 GAP_ENTRY_UNTIL = dtime(10, 30)  # ...and break the opening range high within the first hour
 NO_TARGET = 1.0  # a +100% "target" for a strategy that has none: it exits at the stop or the square-off
 GAP_ONLY_BAR = dtime(9, 25)  # gap-only: enter on the close of this bar (09:25-09:30, the last opening-range bar)...
@@ -156,8 +155,7 @@ def first_gap_breakout(
     min_gap: float = GAP_MIN,
 ) -> Optional[int]:
     """The gap-and-go entry bar: the session opened at least `min_gap` above `prev_close` and this is the first bar from
-    09:30 to 10:30 that closes above the opening range high; or None. Shared by the live engine (`find_gap_setup`) and the
-    research tests, like `first_breakout`."""
+    09:30 to 10:30 that closes above the opening range high; or None. Used by the record-only S7 test (src.research.shadow)."""
     if not prev_close or open_price / prev_close - 1 < min_gap or len(close) <= RANGE_BARS:
         return None
     range_high = float(high[:RANGE_BARS].max())
@@ -191,7 +189,7 @@ def opening_range_intact(day_bars: pd.DataFrame, range_bars: int = RANGE_BARS) -
 def find_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float] = None) -> Optional[Setup]:
     """The orb-v5 rule (to 2026-11-06, kept for the research replays): the day's first breakout of the 09:15-09:30 range in
     `day_bars` (one session's completed 5-minute bars, IST index), target 2R; or None. One trade per stock per day means only
-    the first signal counts. `prev_close` is unused (the same signature as `find_gap_setup`)."""
+    the first signal counts. `prev_close` is unused (the same signature as `find_gap_only_setup`)."""
     return _breakout_setup(symbol, day_bars, RANGE_BARS, ENTRY_FROM, TARGET_R)
 
 
@@ -231,24 +229,6 @@ def _breakout_setup(
         day_bars.index[found.index],
         strength,
         found.volume_ratio,
-    )
-
-
-def find_gap_setup(symbol: str, day_bars: pd.DataFrame, prev_close: Optional[float]) -> Optional[Setup]:
-    """The day's gap-and-go entry in `day_bars` (one session's completed 5-minute bars), or None. Needs the previous
-    session's close; the opening range must be the real 09:15-09:30 bars, as for the breakout rule."""
-    if prev_close is None or not opening_range_intact(day_bars):
-        return None
-    index = pd.DatetimeIndex(day_bars.index)
-    high, low = day_bars["High"].to_numpy(float), day_bars["Low"].to_numpy(float)
-    close, volume = day_bars["Close"].to_numpy(float), day_bars["Volume"].to_numpy(float)
-    i = first_gap_breakout(float(day_bars["Open"].iloc[0]), prev_close, high, close, (index.hour * 60 + index.minute).to_numpy())
-    if i is None:
-        return None
-    entry, range_high, range_low = float(close[i]), float(high[:RANGE_BARS].max()), float(low[:RANGE_BARS].min())
-    _, ratio = session_vwap_and_volume_ratio(high, low, close, volume)
-    return Setup(
-        symbol, entry, range_low, entry * (1 + NO_TARGET), range_high, range_low, day_bars.index[i], volume_ratio=float(ratio[i])
     )
 
 
