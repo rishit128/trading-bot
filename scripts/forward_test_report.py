@@ -63,7 +63,7 @@ ACCOUNTS = {
         0.0044,
         "replay of 68 sessions, 151 trades, the sample the rule came from",
         True,
-        "2026-11-05",
+        "2026-11-09",
     ),
     "news": Account("news.db", NEWS_VERSION, 0.0025, None, "no backtest (needs results history)", True),
     "calls": Account(
@@ -73,7 +73,7 @@ ACCOUNTS = {
         -0.0003,
         "first look at 15 BUY calls on saved Angel One bars",
         True,
-        "2026-11-06",
+        "2026-11-09",
     ),
     "swing": Account("trading.db", STRATEGY_VERSION, 0.03, 0.081, "10-year live-configuration backtest", False, "2026-10-30"),
 }

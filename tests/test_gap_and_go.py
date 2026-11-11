@@ -215,6 +215,29 @@ def test_signals_the_position_limit_leaves_out_are_recorded_for_the_gap_accounts
     assert [(r.symbol, r.outcome) for r in signals(broker)] == [("AAA", "ENTERED")]  # unchanged: nothing extra
 
 
+def test_gaponly_v5_splits_the_free_cash_among_the_stocks_that_qualify(tmp_path):
+    from src.intraday.engine import split_cap
+
+    assert split_cap(0.20, 25_000, 25_000, 2) == pytest.approx(0.49)  # two stocks: about half each
+    assert split_cap(0.20, 25_000, 25_000, 5) == pytest.approx(0.20)  # five: never under 20%
+    assert split_cap(0.20, 25_000, 25_000, 0) == 0.20
+    # Wide stops (risk allows many shares): two qualifiers at 100.2 each get about Rs 12,000, not the old 20% cap of 49 shares.
+    bars = {s: with_previous_session(make_bars(BREAKOUT, volumes=VOLS), 98.0) for s in ("AAA", "BBB")}
+    eng, broker, *_ = gap_only_engine(
+        tmp_path, bars, at(9, 30), split_cash=True, risk_pct=0.05, cash=25_000.0, prices={"AAA": 100.2, "BBB": 100.2}
+    )
+    eng.universe = ["AAA", "BBB"]
+    assert "entered 2" in eng.step()
+    qty = [h["qty"] for h in broker.holdings()]
+    assert qty == [122, 122]  # 49% of Rs 25,000 each (cash only: 2 x 122 x 100.2 = Rs 24,449)
+    eng, broker, *_ = gap_only_engine(  # without the split: the 20% cap
+        tmp_path, bars, at(9, 30), risk_pct=0.05, cash=25_000.0, prices={"AAA": 100.2, "BBB": 100.2}, db="old.db"
+    )
+    eng.universe = ["AAA", "BBB"]
+    eng.step()
+    assert [h["qty"] for h in broker.holdings()] == [49, 49]
+
+
 def test_gap_only_in_dry_run_places_nothing(tmp_path):
     bars = {"AAA": with_previous_session(make_bars(BREAKOUT, volumes=VOLS), 98.0)}
     eng, broker, *_ = gap_only_engine(tmp_path, bars, at(9, 30), live=False)
@@ -251,5 +274,6 @@ def test_a_refused_gap_is_recorded_not_bought_and_only_a_setup_pays_for_the_coun
 
 
 def test_only_gap_only_carries_the_refusals():
-    wired = {row[0]: row[-1] for row in GAP_EXPERIMENTS}
+    wired = {row[0]: row[6] for row in GAP_EXPERIMENTS}
     assert wired == {"GAP-ONLY": st.gap_only_refusals, "GAP-GO": None}
+    assert {row[0]: row[7] for row in GAP_EXPERIMENTS} == {"GAP-ONLY": True, "GAP-GO": False}  # gaponly-v5 splits the cash

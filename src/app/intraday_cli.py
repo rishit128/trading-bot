@@ -46,9 +46,10 @@ from src.ops.shadow_watch import ShadowWatch
 from src.versions import GAPGO_VERSION, GAPONLY_VERSION
 
 # The gap experiments, in the order they are stepped: (Telegram label, database, rule, last bar that may signal, version,
-# latest start of the 09:30 step). Gap-only goes first because it trades on that one step and must not wait behind the
-# others' work (the first engine also pays for the shared download); the breakout engine, which has all day, goes last.
-# Same sizing and universe as the breakout engine; the 5-day download supplies the previous session's close.
+# latest start of the 09:30 step, refusals, whether one scan's setups share the free cash). Gap-only goes first because it
+# trades on that one step and must not wait behind the others' work (the first engine also pays for the shared download); the
+# breakout engine, which has all day, goes last. Same universe as the breakout engine; the 5-day download supplies the previous
+# session's close.
 GAP_EXPERIMENTS = (
     (
         "GAP-ONLY",
@@ -58,8 +59,9 @@ GAP_EXPERIMENTS = (
         GAPONLY_VERSION,
         GAP_ONLY_LATEST_START,
         gap_only_refusals,
+        True,
     ),
-    ("GAP-GO", gapgo_db_url, find_gap_setup, GAP_ENTRY_UNTIL, GAPGO_VERSION, None, None),
+    ("GAP-GO", gapgo_db_url, find_gap_setup, GAP_ENTRY_UNTIL, GAPGO_VERSION, None, None, False),
 )
 
 
@@ -117,8 +119,9 @@ def run_intraday(live: bool) -> None:
             step_deadline=deadline,
             refusals_fn=refusals,
             record_capped=True,
+            split_cash=split,
         )
-        for name, db_url, rule, until, version, deadline, refusals in GAP_EXPERIMENTS
+        for name, db_url, rule, until, version, deadline, refusals, split in GAP_EXPERIMENTS
     ]
     engines.append(
         engine(
@@ -146,9 +149,7 @@ def run_intraday(live: bool) -> None:
             fetch_bars=bars,
             notify=notify,
             live=live,
-            max_positions=settings.intraday_max_positions,
             risk_pct=settings.intraday_risk_pct,
-            max_position_pct=settings.intraday_max_position_pct,
             max_daily_loss_pct=settings.intraday_max_daily_loss_pct,
             house_calls_fn=house_calls.current,
         )
@@ -170,7 +171,7 @@ def run_intraday(live: bool) -> None:
     )
     print(
         "gap-only (own account): the same gap, bought on the 09:30 close without a breakout, skipping crowded gap days "
-        "and stocks already up 3% (gaponly-v4)"
+        "and stocks already up 3%; the stocks that qualify share the free cash (gaponly-v5)"
     )
     if news is not None:
         print(

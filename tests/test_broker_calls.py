@@ -79,10 +79,10 @@ def test_an_open_intraday_buy_call_is_bought_at_the_calls_stop_and_target(tmp_pa
     eng, broker, _, messages = setup(tmp_path, [call()])
     assert "entered 1" in eng.step()
     held = broker.holdings()[0]
-    assert held["symbol"] == "AAA" and held["qty"] == 60 and held["stop"] == 99.0  # the 20% limit of Rs 30,000 at Rs 100
+    assert held["symbol"] == "AAA" and held["qty"] == 93 and held["stop"] == 99.0  # Rs 28,000 / 3 at Rs 100
     row = signals(broker)["AAA"]
     assert (
-        row.outcome == "ENTERED" and row.system_version == "calls-v1" and row.target == 102.0 and row.house_call == "Intraday buy"
+        row.outcome == "ENTERED" and row.system_version == "calls-v2" and row.target == 102.0 and row.house_call == "Intraday buy"
     )
     assert "broker's Intraday call" in messages[0] and "breakout" not in messages[0]
 
@@ -153,3 +153,18 @@ def test_the_telegram_view_names_the_account(tmp_path):
     _, broker, _, _ = setup(tmp_path, [])
     view = handle_command("/calls", None, None, SimpleNamespace(currency="Rs "), calls=broker)
     assert "BROKER-CALLS paper account" in view and "30,000" in view and "/calls - broker-calls paper account" in HELP
+
+
+def test_the_account_holds_three_calls_sharing_rs_28000(tmp_path):
+    names = ["AAA", "BBB", "CCC", "DDD"]
+    eng, broker, _, _ = setup(tmp_path, [call(n) for n in names], {n: bars() for n in names})
+    assert "entered 3" in eng.step()
+    assert [h["qty"] for h in broker.holdings()] == [93, 93, 93]
+    assert broker.portfolio().cash >= 2_000  # the rest stays as cash
+    assert "position limit reached (3 open)" in signals(broker)["DDD"].reason
+
+
+def test_the_risk_rule_still_caps_a_call_with_a_wide_stop(tmp_path):
+    eng, broker, _, _ = setup(tmp_path, [call(stop=95.0)])
+    eng.step()
+    assert broker.holdings()[0]["qty"] == 30  # 0.5% of Rs 30,000 = Rs 150 at risk over a Rs 5 stop distance

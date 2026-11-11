@@ -1431,3 +1431,27 @@ One's fees), open positions and recorded signals (2,618) were cleared after the 
 `angel_bars`) and the daily stock lists (`intraday_universe`) were kept. The full database before the reset is in
 `backups/intraday-before-reset-2026-11-06-*.db`. The orb-v1 to orb-v5 figures in this file and in the trial register stay as the
 record. S1 (breakouts on news) restarts on orb-v6 signals: its earlier evidence was orb-v5 signals, which the reset removed.
+
+### Broker-calls account sizing (2026-11-06; calls-v2; live from the restart at 15:20)
+At the owner's request: 3 positions sharing Rs 28,000 of the Rs 30,000, each up to 28/90 of equity (about Rs 9,333), with the rest
+kept as cash for fees and slippage. The shared intraday setting (5 x 20%, about Rs 6,000 each) had left most of the balance idle:
+the broker publishes 2-3 Intraday calls a day, and MANKIND was bought as 2 shares (Rs 5,035) with Rs 24,900 unused. The 0.5% risk
+rule still caps a call with a wide stop. A rule change, so the forward test restarts from 2026-11-09 under calls-v2.
+
+## Gap-only sizing: the qualifying stocks share the cash (gaponly-v5, 2026-11-06)
+
+After the v4 filters most days leave only one or two gap-only stocks, and each was still capped at 20% of equity, so on
+2026-11-06 the account bought BHARTIARTL x2 and MPHASIS x1 (about Rs 6,800 of Rs 24,600). From gaponly-v5 the stocks that
+qualify at the 09:30 step are bought together and share 98% of the free cash evenly (never less than 20% of equity each).
+The stop-loss limit is unchanged: a stop-out still costs at most 0.5% of equity, so a tight-stop stock is not made bigger
+than that allows. Entries, exits and filters are unchanged. The owner's decision, not tested; it scales profit and loss
+alike and cannot make the rule profitable by itself. Forward test of v5 from 2026-11-09.
+
+## N1-N6 on 8 years of Angel One bars: none passed (2026-11-06)
+
+The pre-declared test (declared 11:00 IST, rules unchanged) ran on 200 stocks plus NIFTY and NIFTYBEES, 2,193 sessions
+2018-01-01 to 2026-11-06, at Angel One's real fees (0.271% at Rs 5,000) plus 0.10% slippage a round trip. Net a trade:
+N1 -0.42% (6,562 trades), N2 -0.44%, N3 -0.38%, N4 -0.25%, N5 -0.20% (923 trades, t -2.2), N6 -0.37%. Every rule lost in
+both halves, at twice the slippage and in almost every calendar year; the recent-market route (from 2024-11-20) found none
+either. Before costs only N4 (+0.12%) and N5 (+0.18%) were positive, far below the 0.37% cost of a round trip at this
+account size. Candidates: none. Bars kept in research_cache/angel5m/.

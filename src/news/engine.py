@@ -263,14 +263,17 @@ class NewsEngine(IntradayEngine):
                 s.get(NewsFilingRecord, row.id).context_json = json.dumps(context.note)
                 s.commit()
 
-    def _enter(self, setup: st.Setup, equity: float, cash: float) -> Tuple[SignalOutcome, Optional[Fill]]:
-        qty, _ = st.position_size(equity, setup.signal_price, setup.stop, self.risk_pct, self.max_position_pct, cash)
+    def _enter(
+        self, setup: st.Setup, equity: float, cash: float, cap_pct: Optional[float] = None
+    ) -> Tuple[SignalOutcome, Optional[Fill]]:
+        cap = self.max_position_pct if cap_pct is None else cap_pct
+        qty, _ = st.position_size(equity, setup.signal_price, setup.stop, self.risk_pct, cap, cash)
         if 0 < qty and qty * setup.signal_price < self.min_position_value:
             self._done_today.add(setup.symbol)
             why = f"position Rs {qty * setup.signal_price:,.0f} is under the Rs {self.min_position_value:,.0f} minimum"
             self._record(setup, SignalOutcome.SKIPPED, 0, why)
             return SignalOutcome.SKIPPED, None
-        return super()._enter(setup, equity, cash)
+        return super()._enter(setup, equity, cash, cap_pct)
 
     # ------------------------------------------------------------------ exits
     def _breakeven(self) -> None:

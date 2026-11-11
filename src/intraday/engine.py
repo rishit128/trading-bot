@@ -45,6 +45,17 @@ MIN_COVERAGE = 0.8  # a scan that returns bars for fewer of the stocks asked for
 STALE_FILL = timedelta(minutes=10)  # a fill priced from a bar that started longer ago than this raises an alert
 
 
+SPLIT_SPARE = 0.98  # with split_cash, the share of the free cash handed out: the rest pays slippage and fees
+
+
+def split_cap(min_pct: float, cash: float, equity: float, n: int) -> float:
+    """The largest position, as a fraction of equity, when `n` setups share the free cash: an even split of it, never less
+    than `min_pct`."""
+    if n < 1 or equity <= 0:
+        return min_pct
+    return max(min_pct, SPLIT_SPARE * cash / equity / n)
+
+
 @dataclass
 class IntradayEngine:
     """One engine per intraday paper account. `broker` is a PaperBroker on its own database with intraday fees."""
@@ -70,6 +81,9 @@ class IntradayEngine:
     # (this scan's bars, today) -> (symbol) -> why a found setup is not bought, or None: refusals that need the whole scan. None = no such rule
     refusals_fn: Optional[Callable[[Dict[str, pd.DataFrame], date], Callable[[str], Optional[str]]]] = None
     record_capped: bool = False  # also record (as SKIPPED) the signals the position limit left out: the gap experiments
+    # True: the setups of one scan are bought together, the free cash split evenly among them (never under max_position_pct of
+    # equity each; the risk_pct stop-loss limit still applies), so 2 qualifying stocks get far more than 20% each. Gap-only.
+    split_cash: bool = False
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     house_calls_fn: Optional[Callable[[], List[HouseCall]]] = None  # broker research calls; None = not used
     act_on_calls: bool = True  # False: the calls are only noted on each signal (the live setting is INTRADAY_CALLS_ACT)
@@ -255,9 +269,10 @@ class IntradayEngine:
         )
         entered = skipped = 0
         cash = pf.cash
+        pending: List[st.Setup] = []  # with split_cash: this scan's setups, bought after the scan
         refusal = None  # worked out at the first setup: most scans find none, and the 09:30 step must not be late
         for sym, df in bars.items():
-            full = len(pf.positions) + entered >= self.max_positions
+            full = len(pf.positions) + entered + len(pending) >= self.max_positions
             if full and not self.record_capped:
                 break
             finished = df[(pd.DatetimeIndex(df.index) + BAR) <= pd.Timestamp(local)]
@@ -287,7 +302,18 @@ class IntradayEngine:
                 self._record(setup, SignalOutcome.SKIPPED, 0, f"position limit reached ({self.max_positions} open)")
                 skipped += 1
                 continue
+            if self.split_cash:
+                pending.append(setup)
+                continue
             outcome, fill = self._enter(setup, pf.equity, cash)
+            if outcome == SignalOutcome.SKIPPED:
+                skipped += 1
+            elif fill is not None:
+                entered += 1
+                cash -= (fill.filled_qty or 0) * (fill.avg_price or setup.signal_price)
+        cap_pct = split_cap(self.max_position_pct, cash, pf.equity, len(pending))
+        for setup in pending:
+            outcome, fill = self._enter(setup, pf.equity, cash, cap_pct)
             if outcome == SignalOutcome.SKIPPED:
                 skipped += 1
             elif fill is not None:
@@ -307,10 +333,13 @@ class IntradayEngine:
             f"{exit_plan}, volume {setup.volume_ratio:.1f}x average"
         )
 
-    def _enter(self, setup: st.Setup, equity: float, cash: float) -> Tuple[SignalOutcome, Optional[Fill]]:
+    def _enter(
+        self, setup: st.Setup, equity: float, cash: float, cap_pct: Optional[float] = None
+    ) -> Tuple[SignalOutcome, Optional[Fill]]:
         """Try to buy one breakout. Returns (outcome, fill); the fill is None unless a paper order was placed. Every outcome
         (ENTERED, SKIPPED, DRY_RUN, FAILED) is recorded with its reason."""
-        qty, why = st.position_size(equity, setup.signal_price, setup.stop, self.risk_pct, self.max_position_pct, cash)
+        cap = self.max_position_pct if cap_pct is None else cap_pct
+        qty, why = st.position_size(equity, setup.signal_price, setup.stop, self.risk_pct, cap, cash)
         self._done_today.add(setup.symbol)  # one attempt per stock per day, filled or not
         if qty <= 0:
             log.info("intraday SKIP %s at %.2f: %s", setup.symbol, setup.signal_price, why)

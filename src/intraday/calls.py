@@ -34,6 +34,11 @@ from src.versions import CALLS_VERSION
 log = logging.getLogger(__name__)
 
 CALLS_CASH = 30_000.0  # this account's starting balance; the other paper accounts use PAPER_INITIAL_CASH
+# calls-v2 (2026-11-06, the owner's decision): the broker publishes 2-3 Intraday calls a day, so 3 positions sharing Rs 28,000 of the
+# Rs 30,000 (each up to 28/90 of equity, about Rs 9,333) instead of the shared 5 x 20%, which left most of the balance idle. The rest
+# stays as cash for fees and slippage. The 0.5% risk rule still applies.
+CALLS_MAX_POSITIONS, CALLS_DEPLOYED = 3, 28_000 / CALLS_CASH
+CALLS_MAX_POSITION_PCT = CALLS_DEPLOYED / CALLS_MAX_POSITIONS
 ENTRY_UNTIL = dtime(15, 0)  # the broker publishes all day; nothing is bought in the last few steps before the square-off
 ALERT_FROM = dtime(9, 35)  # no fresh read by now: tell the owner, as the account cannot trade without one
 
@@ -49,6 +54,8 @@ class CallsEngine(IntradayEngine):
     """See the module docstring. `universe` is empty: the day's calls are the only stocks it looks at."""
 
     entry_until: dtime = ENTRY_UNTIL
+    max_positions: int = CALLS_MAX_POSITIONS
+    max_position_pct: float = CALLS_MAX_POSITION_PCT
     label: str = "BROKER-CALLS"
     version: str = CALLS_VERSION
     record_capped: bool = True
