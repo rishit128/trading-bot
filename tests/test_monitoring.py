@@ -304,12 +304,12 @@ class HistoryOnly:
 
 
 def test_pnl_lists_every_paper_account_and_their_sum():
-    swing, orb, gap, only, news = HistoryOnly(100.0), HistoryOnly(-30.0), HistoryOnly(50.0), HistoryOnly(), HistoryOnly(-5.0)
-    reply = handle_command("/pnl", None, swing, SimpleNamespace(currency="Rs "), intraday=orb, gapgo=gap, gaponly=only, news=news)
-    for name in ("Swing", "Intraday (ORB)", "Gap-and-go", "Gap-only", "News"):
+    swing, orb, only, news = HistoryOnly(100.0), HistoryOnly(-30.0), HistoryOnly(), HistoryOnly(-5.0)
+    reply = handle_command("/pnl", None, swing, SimpleNamespace(currency="Rs "), intraday=orb, gaponly=only, news=news)
+    for name in ("Swing", "Intraday (ORB)", "Gap-only", "News"):
         assert f"<b>{name}</b>" in reply
     assert "+Rs 100" in reply and "-Rs 30" in reply and "no closed trades yet" in reply
-    assert "<b>All accounts</b>  +Rs 115" in reply  # 100 - 30 + 50 + 0 - 5
+    assert "<b>All accounts</b>  +Rs 65" in reply  # 100 - 30 + 0 - 5
 
 
 def test_pnl_with_only_the_swing_account_has_no_combined_block():

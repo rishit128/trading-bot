@@ -36,16 +36,14 @@ from src.intraday.engine import IntradayEngine
 from src.intraday.strategy import (
     ENTRY_FROM,
     ENTRY_UNTIL,
-    GAP_ENTRY_UNTIL,
     GAP_ONLY_ENTRY_UNTIL,
     ORB_ENTRY_FROM,
     Setup,
     find_gap_only_setup,
-    find_gap_setup,
     find_orb_setup,
     find_setup,
 )
-from src.versions import GAPGO_VERSION, GAPONLY_VERSION, INTRADAY_VERSION
+from src.versions import GAPONLY_VERSION, INTRADAY_VERSION
 
 FIRST_CYCLE, LAST_CYCLE = dtime(9, 20, 15), dtime(15, 25, 15)  # the engine's cycles, 15 s past each 5-minute boundary
 
@@ -86,7 +84,7 @@ class ReplayFeed:
         return view[pd.DatetimeIndex(view.index).tz_convert("UTC") > pd.Timestamp(since).tz_convert("UTC")]
 
     def recent(self, symbols: List[str]) -> Dict[str, pd.DataFrame]:
-        """What the gap-and-go engine's 5-day download returns: the last week's bars up to now, so the previous session's
+        """What the gap engines' 5-day download returns: the last week's bars up to now, so the previous session's
         close is there."""
         session_start = pd.Timestamp(self.now).tz_convert(IST).normalize().tz_convert("UTC").value
         since = session_start - 7 * 24 * 3600 * 10**9  # a week back, in nanoseconds like the bar index
@@ -157,7 +155,6 @@ Rule = Callable[[str, pd.DataFrame, Optional[float]], Optional[Setup]]
 STRATEGIES: Dict[str, Tuple[Rule, dtime, str, str]] = {
     "orb": (find_orb_setup, ENTRY_UNTIL, "INTRADAY", INTRADAY_VERSION),
     "orb5": (find_setup, ENTRY_UNTIL, "INTRADAY", "orb-v5"),  # the breakout account's rule to 2026-11-06 (15-minute range, 2R)
-    "gapgo": (find_gap_setup, GAP_ENTRY_UNTIL, "GAP-GO", GAPGO_VERSION),
     "gaponly": (find_gap_only_setup, GAP_ONLY_ENTRY_UNTIL, "GAP-ONLY", GAPONLY_VERSION),
 }
 
@@ -173,7 +170,7 @@ def replay(
 ) -> ReplayResult:
     """Run the live engine over every stored session in [start, end] and return what it did. One continuous account, so
     equity compounds and drawdowns carry across days exactly as they would live. `strategy` picks the rule the same way
-    the launcher (src/app/intraday_cli.py) does: "orb", "gapgo" or "gaponly"."""
+    the launcher (src/app/intraday_cli.py) does: "orb", "orb5" or "gaponly"."""
     if strategy not in STRATEGIES:
         raise ValueError(f"strategy must be one of {sorted(STRATEGIES)}, got {strategy!r}")
     days = session_days(bars, start, end)

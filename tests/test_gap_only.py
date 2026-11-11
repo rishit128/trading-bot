@@ -1,5 +1,6 @@
-"""Gap-and-go, the second intraday paper strategy: the shared rule, the live setup, the engine running it in its own account,
-both engines stepped together, its Telegram view, and the Docker database path."""
+"""Gap-only, the intraday paper account that buys a 2% gap on the 09:30 close: the shared gap-and-go entry test (still used by the
+record-only S7 test), the live setup, the engine running it in its own account, both engines stepped together, its refusals, its
+Telegram view and the Docker database path. (The gap-and-go account itself was removed on 2026-11-09.)"""
 
 from datetime import timedelta, timezone
 from pathlib import Path
@@ -8,10 +9,11 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from src.app.intraday_cli import GAP_EXPERIMENTS
 from src.intraday import strategy as st
 from src.intraday.engine import run_together
 from src.monitoring.telegram import HELP, handle_command
-from src.versions import GAPGO_VERSION
+from src.versions import GAPONLY_VERSION
 from tests.intraday_helpers import BREAKOUT, VOLS, make_bars
 from tests.test_intraday_engine import at, engine, signals
 
@@ -30,126 +32,6 @@ def arrays(df):
     return df["High"].to_numpy(float), df["Close"].to_numpy(float), (idx.hour * 60 + idx.minute).to_numpy()
 
 
-# -- the rule ----------------------------------------------------------------------------------------------------------------
-def test_the_rule_needs_a_2pct_gap_and_a_close_above_the_range_in_the_first_hour():
-    high, close, minutes = arrays(make_bars(BREAKOUT, volumes=VOLS))  # opens at 100, breaks the 100.5 range high at 09:35
-    assert st.first_gap_breakout(100.0, 98.0, high, close, minutes) == 4  # gap +2.04%
-    assert st.first_gap_breakout(100.0, 98.2, high, close, minutes) is None  # gap +1.83%: too small
-    assert st.first_gap_breakout(100.0, None, high, close, minutes) is None  # no previous close known
-    assert st.first_gap_breakout(100.0, 98.2, high, close, minutes, min_gap=0.01) == 4
-    late = make_bars([100, 100.4, 100.2] + [100.3] * 12 + [101.5])  # the first close above the range at 10:30
-    assert st.first_gap_breakout(100.0, 98.0, *arrays(late)) is None
-
-
-def test_the_live_setup_stops_at_the_range_low_and_has_no_target():
-    setup = st.find_gap_setup("AAA", make_bars(BREAKOUT, volumes=VOLS), prev_close=98.0)
-    assert setup.signal_price == pytest.approx(101.5) and setup.stop == pytest.approx(99.9)
-    assert setup.target == pytest.approx(203.0) and setup.range_high == pytest.approx(100.5)
-    assert setup.bar_time.strftime("%H:%M") == "09:35" and setup.volume_ratio == pytest.approx(3.0)
-    assert st.find_gap_setup("AAA", make_bars(BREAKOUT, volumes=VOLS), prev_close=None) is None
-    assert st.find_gap_setup("AAA", make_bars(BREAKOUT, start=(9, 20)), prev_close=98.0) is None  # no real opening range
-
-
-# -- the engine running it ---------------------------------------------------------------------------------------------------
-def gap_engine(tmp_path, bars, now, **kw):
-    return engine(
-        tmp_path,
-        bars,
-        now,
-        find_setup=st.find_gap_setup,
-        entry_until=st.GAP_ENTRY_UNTIL,
-        label="GAP-GO",
-        version=GAPGO_VERSION,
-        **kw,
-    )
-
-
-def test_the_gap_engine_enters_records_its_version_and_holds_to_the_square_off(tmp_path):
-    bars = {"AAA": with_previous_session(make_bars(BREAKOUT, volumes=VOLS), 98.0)}
-    eng, broker, feed, now, messages = gap_engine(tmp_path, bars, at(9, 45))
-    assert "entered 1" in eng.step()
-    [h] = broker.holdings()
-    assert h["stop"] == pytest.approx(99.9)
-    assert any(m.startswith("[GAP-GO] BUY AAA") and "held to the 15:15 square-off" in m for m in messages)
-    [row] = signals(broker)
-    assert (row.outcome, row.system_version) == ("ENTERED", GAPGO_VERSION) and row.target == pytest.approx(203.0)
-    now[0] = at(15, 16).astimezone(timezone.utc)
-    assert eng.step() == "square-off: closed 1" and broker.holdings() == []
-
-
-def test_without_the_previous_session_there_is_no_gap_and_no_trade(tmp_path):
-    eng, broker, *_ = gap_engine(tmp_path, {"AAA": make_bars(BREAKOUT, volumes=VOLS)}, at(9, 45))
-    eng.step()
-    assert broker.holdings() == [] and signals(broker) == []
-
-
-def test_the_last_bar_of_each_window_is_still_traded_on_the_cycle_that_sees_it(tmp_path):
-    """The 10:25 bar (gap-and-go) and the 13:55 bar (breakout) finish at 10:30 / 14:00 and are first seen a few seconds
-    later: closing the scan at 10:30 / 14:00 sharp would silently drop them."""
-    gap_bars = with_previous_session(make_bars([100, 100.4, 100.2] + [100.3] * 11 + [101.5]), 98.0)  # breakout bar 10:25
-    eng, broker, *_ = gap_engine(tmp_path, {"AAA": gap_bars}, at(10, 30))
-    assert "entered 1" in eng.step()
-    closes = [100, 100.4, 100.2] + [100.3] * 53 + [101.5]  # breakout bar 13:55
-    orb_bars = make_bars(closes, volumes=[1000] * 56 + [3000])
-    eng, broker, *_ = engine(tmp_path, {"AAA": orb_bars}, at(14, 0), db="orb.db")
-    assert "entered 1" in eng.step()
-    eng, broker, *_ = engine(tmp_path, {"AAA": orb_bars}, at(14, 5), db="late.db")
-    assert eng.step() == "entry window closed: managing open positions only" and broker.holdings() == []
-
-
-def test_after_its_window_the_gap_engine_stops_scanning_but_still_squares_off(tmp_path):
-    calls = []
-    eng, broker, *_ = gap_engine(tmp_path, {}, at(10, 35))
-    eng.fetch_bars = lambda symbols: calls.append(symbols) or {}
-    assert eng.step() == "entry window closed: managing open positions only" and calls == []
-
-
-def test_both_engines_are_stepped_every_cycle_and_one_failure_does_not_stop_the_other():
-    class Stop(BaseException):
-        pass
-
-    steps = []
-
-    def broken():
-        steps.append("orb")
-        raise ConnectionError("yahoo down")
-
-    engines = [SimpleNamespace(label="INTRADAY", step=broken), SimpleNamespace(label="GAP-GO", step=lambda: steps.append("gap"))]
-    sleeps = []
-
-    def sleep(seconds):
-        sleeps.append(seconds)
-        if len(sleeps) == 2:
-            raise Stop()
-
-    with pytest.raises(Stop):
-        run_together(engines, sleep)
-    assert steps == ["orb", "gap", "orb", "gap"] and all(s >= 30 for s in sleeps)
-
-
-# -- seeing it: Telegram and the deployment ----------------------------------------------------------------------------------
-def test_telegram_shows_the_gap_account_and_its_trades(tmp_path):
-    bars = {"AAA": with_previous_session(make_bars(BREAKOUT, volumes=VOLS), 98.0)}
-    eng, broker, *_ = gap_engine(tmp_path, bars, at(9, 45))
-    eng.step()
-    settings = SimpleNamespace(currency="Rs ")
-    view = handle_command("/gapgo", None, None, settings, gapgo=broker)
-    assert "GAP-AND-GO paper account" in view and "AAA" in view
-    assert handle_command("/gapgo_history", None, None, settings, gapgo=broker) == "No closed trades yet."
-    assert handle_command("/gapgo", None, None, settings) == HELP  # not configured: the help text, never a crash
-    assert "/gapgo - gap-and-go paper account" in HELP
-
-
-def test_the_docker_image_keep_the_gap_account_on_the_data_volume():
-    for name in ("Dockerfile",):
-        assert "ENV GAPGO_DATABASE_URL=sqlite:////data/gapgo.db" in (ROOT / name).read_text(encoding="utf-8")
-
-
-# == gap-only ==========================================================================================
-from src.app.intraday_cli import GAP_EXPERIMENTS  # noqa: E402
-from src.versions import GAPONLY_VERSION  # noqa: E402
-
-
 def gap_only_engine(tmp_path, bars, now, **kw):
     return engine(
         tmp_path,
@@ -164,6 +46,56 @@ def gap_only_engine(tmp_path, bars, now, **kw):
     )
 
 
+# -- the shared gap-and-go entry test (S7 uses it) ---------------------------------------------------------------------------
+def test_the_gap_and_go_entry_needs_a_2pct_gap_and_a_close_above_the_range_in_the_first_hour():
+    high, close, minutes = arrays(make_bars(BREAKOUT, volumes=VOLS))  # opens at 100, breaks the 100.5 range high at 09:35
+    assert st.first_gap_breakout(100.0, 98.0, high, close, minutes) == 4  # gap +2.04%
+    assert st.first_gap_breakout(100.0, 98.2, high, close, minutes) is None  # gap +1.83%: too small
+    assert st.first_gap_breakout(100.0, None, high, close, minutes) is None  # no previous close known
+    assert st.first_gap_breakout(100.0, 98.2, high, close, minutes, min_gap=0.01) == 4
+    late = make_bars([100, 100.4, 100.2] + [100.3] * 12 + [101.5])  # the first close above the range at 10:30
+    assert st.first_gap_breakout(100.0, 98.0, *arrays(late)) is None
+
+
+# -- the breakout engine's last window bar ------------------------------------------------------------------------------------
+def test_the_last_bar_of_the_breakout_window_is_still_traded_on_the_cycle_that_sees_it(tmp_path):
+    """The 13:55 bar finishes at 14:00 and is first seen a few seconds later: closing the scan at 14:00 sharp would silently
+    drop it."""
+    closes = [100, 100.4, 100.2] + [100.3] * 53 + [101.5]  # breakout bar 13:55
+    orb_bars = make_bars(closes, volumes=[1000] * 56 + [3000])
+    eng, broker, *_ = engine(tmp_path, {"AAA": orb_bars}, at(14, 0), db="orb.db")
+    assert "entered 1" in eng.step()
+    eng, broker, *_ = engine(tmp_path, {"AAA": orb_bars}, at(14, 5), db="late.db")
+    assert eng.step() == "entry window closed: managing open positions only" and broker.holdings() == []
+
+
+def test_the_engines_are_stepped_every_cycle_and_one_failure_does_not_stop_the_other():
+    class Stop(BaseException):
+        pass
+
+    steps = []
+
+    def broken():
+        steps.append("orb")
+        raise ConnectionError("yahoo down")
+
+    engines = [
+        SimpleNamespace(label="INTRADAY", step=broken),
+        SimpleNamespace(label="GAP-ONLY", step=lambda: steps.append("gap")),
+    ]
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise Stop()
+
+    with pytest.raises(Stop):
+        run_together(engines, sleep)
+    assert steps == ["orb", "gap", "orb", "gap"] and all(s >= 30 for s in sleeps)
+
+
+# == gap-only ==========================================================================================
 def test_the_gap_only_rule_enters_on_the_0925_bar_close_with_the_range_low_stop_and_no_target():
     bars = make_bars(BREAKOUT, volumes=VOLS)  # 09:25 bar closes at 100.2; range 99.9..100.5
     setup = st.find_gap_only_setup("AAA", bars, prev_close=98.0)
@@ -174,6 +106,12 @@ def test_the_gap_only_rule_enters_on_the_0925_bar_close_with_the_range_low_stop_
     assert st.find_gap_only_setup("AAA", make_bars(BREAKOUT, start=(9, 20)), 98.0) is None  # no real opening range
     breached = make_bars([100, 100.4, 99.95], lows=[99.95, 100.0, 99.95])  # entry at the range low itself
     assert st.find_gap_only_setup("AAA", breached, prev_close=98.0) is None
+
+
+def test_without_the_previous_session_there_is_no_gap_and_no_trade(tmp_path):
+    eng, broker, *_ = gap_only_engine(tmp_path, {"AAA": make_bars(BREAKOUT, volumes=VOLS)}, at(9, 30))
+    eng.step()
+    assert broker.holdings() == [] and signals(broker) == []
 
 
 def test_gap_only_trades_on_the_0930_cycle_only_and_never_chases_a_late_bar(tmp_path):
@@ -190,6 +128,14 @@ def test_gap_only_trades_on_the_0930_cycle_only_and_never_chases_a_late_bar(tmp_
     assert broker.holdings() == [] and signals(broker) == []
 
 
+def test_gap_only_holds_to_the_square_off(tmp_path):
+    bars = {"AAA": with_previous_session(make_bars(BREAKOUT, volumes=VOLS), 98.0)}
+    eng, broker, feed, now, _ = gap_only_engine(tmp_path, bars, at(9, 30))
+    eng.step()
+    now[0] = at(15, 16).astimezone(timezone.utc)
+    assert eng.step() == "square-off: closed 1" and broker.holdings() == []
+
+
 def test_a_restart_never_buys_the_same_stock_twice_in_a_day(tmp_path):
     bars = {"AAA": with_previous_session(make_bars(BREAKOUT, volumes=VOLS), 98.0)}
     first, broker, *_ = gap_only_engine(tmp_path, bars, at(9, 30))
@@ -200,7 +146,7 @@ def test_a_restart_never_buys_the_same_stock_twice_in_a_day(tmp_path):
     assert [r.outcome for r in signals(broker2)] == ["ENTERED"]  # no second order, no second record
 
 
-def test_signals_the_position_limit_leaves_out_are_recorded_for_the_gap_accounts_only(tmp_path):
+def test_signals_the_position_limit_leaves_out_are_recorded_for_the_gap_account_only(tmp_path):
     bars = {s: with_previous_session(make_bars(BREAKOUT, volumes=VOLS), 98.0) for s in ("AAA", "BBB")}
     eng, broker, *_ = gap_only_engine(tmp_path, bars, at(9, 30), max_positions=1, prices={"AAA": 100.2, "BBB": 100.2})
     eng.universe = ["AAA", "BBB"]
@@ -249,16 +195,19 @@ def test_telegram_shows_the_gap_only_account(tmp_path):
     bars = {"AAA": with_previous_session(make_bars(BREAKOUT, volumes=VOLS), 98.0)}
     eng, broker, *_ = gap_only_engine(tmp_path, bars, at(9, 30))
     eng.step()
-    view = handle_command("/gaponly", None, None, SimpleNamespace(currency="Rs "), gaponly=broker)
-    assert "GAP-ONLY control account" in view and "AAA" in view and "/gaponly - gap-only control account" in HELP
+    settings = SimpleNamespace(currency="Rs ")
+    view = handle_command("/gaponly", None, None, settings, gaponly=broker)
+    assert "GAP-ONLY paper account" in view and "AAA" in view and "/gaponly - gap-only paper account" in HELP
+    assert handle_command("/gaponly", None, None, settings) == HELP  # not configured: the help text, never a crash
+    assert handle_command("/gapgo", None, None, settings, gaponly=broker) == HELP  # the removed account's command is unknown now
 
 
-def test_the_docker_image_keep_the_gap_only_account_on_the_data_volume():
-    for name in ("Dockerfile",):
-        assert "ENV GAPONLY_DATABASE_URL=sqlite:////data/gaponly.db" in (ROOT / name).read_text(encoding="utf-8")
+def test_the_docker_image_keeps_the_gap_only_account_on_the_data_volume():
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "ENV GAPONLY_DATABASE_URL=sqlite:////data/gaponly.db" in text and "GAPGO" not in text
 
 
-# -- the comparison ----------------------------------------------------------------------------------------------------------
+# -- the refusals ------------------------------------------------------------------------------------------------------------
 def test_a_refused_gap_is_recorded_not_bought_and_only_a_setup_pays_for_the_count(tmp_path):
     bars = {"AAA": with_previous_session(make_bars(BREAKOUT, volumes=VOLS), 98.0)}
     eng, broker, *_ = gap_only_engine(tmp_path, bars, at(9, 30), refusals_fn=lambda scan, day: lambda symbol: "crowded gap day")
@@ -273,7 +222,6 @@ def test_a_refused_gap_is_recorded_not_bought_and_only_a_setup_pays_for_the_coun
     assert asked == []
 
 
-def test_only_gap_only_carries_the_refusals():
-    wired = {row[0]: row[6] for row in GAP_EXPERIMENTS}
-    assert wired == {"GAP-ONLY": st.gap_only_refusals, "GAP-GO": None}
-    assert {row[0]: row[7] for row in GAP_EXPERIMENTS} == {"GAP-ONLY": True, "GAP-GO": False}  # gaponly-v5 splits the cash
+def test_only_gap_only_is_a_gap_experiment_and_carries_the_refusals():
+    assert {row[0]: row[6] for row in GAP_EXPERIMENTS} == {"GAP-ONLY": st.gap_only_refusals}
+    assert {row[0]: row[7] for row in GAP_EXPERIMENTS} == {"GAP-ONLY": True}  # gaponly-v5 splits the cash

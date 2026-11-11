@@ -37,17 +37,12 @@ STRATEGY_VERSION = "swing-v6"
 #           its low, no target (out at 15:15). Screen E4a: lost less than orb-v5 on the same stock-days (+0.041% a date, t 2.7, both
 #           halves) but still lost money. Fees follow Angel One's schedule from the same day (src.engine.costs.intraday_fees).
 INTRADAY_VERSION = "orb-v6"
-# The gap-and-go paper strategy (its own account): gap >= 2% then a close above the opening range by 10:30, stop at
-# the range low, held to the square-off.
-# gapgo-v2: v1 plus the 500-stock universe (live since 2026-10-19) and the Angel One entry checks (2026-10-23, 10-26) that
-# orb-v4 also carries (bumped 2026-10-26).
-# gapgo-v3: v2 plus the trade-to-trade check of orb-v5.
-GAPGO_VERSION = "gapgo-v3"
-# The gap-only paper control (its own account): the same gap, bought on the 09:30 close with no breakout.
+# The gap-only paper strategy (its own account): a gap >= 2%, bought on the 09:30 close with no breakout. (The gap-and-go account,
+# a gap plus a breakout by 10:30, ran as gapgo-v1 to v3 and was removed on 2026-11-09.)
 # gaponly-v2: v1 plus the universe and Angel One entry checks of orb-v4 (bumped 2026-10-26).
 # gaponly-v3: v2 plus the trade-to-trade check of orb-v5.
 # gaponly-v4 (2026-11-04, the owner's decision): no entry on a day more than 10 stocks gapped up, nor in a stock up more than 3% the
-# session before the gap. It is no longer the plain control for gap-and-go; the refused signals stay recorded.
+# session before the gap; the refused signals stay recorded.
 # gaponly-v5 (2026-11-06, the owner's decision): the stocks that qualify at 09:30 share the free cash evenly (never under 20% of
 # equity each; the 0.5%-of-equity stop-loss limit still applies), instead of at most 20% each. Entries unchanged.
 GAPONLY_VERSION = "gaponly-v5"

@@ -1,6 +1,6 @@
 """Launcher for the intraday engines, each in its own paper account (dry run unless live), stepped together every five
-minutes: the opening-range breakout, gap-and-go, gap-only (gap-and-go's control: the same gaps, no breakout) and the
-news-catalyst engine (exchange filings read by the AI, with its filing watcher in a background thread)."""
+minutes: the opening-range breakout, gap-only (the 2% gap bought at 09:30, no breakout), the news-catalyst engine
+(exchange filings read by the AI, with its filing watcher in a background thread) and the broker-calls account."""
 
 import dataclasses
 import os
@@ -10,7 +10,6 @@ from sqlalchemy import select
 
 from src.app.wiring import (
     calls_db_url,
-    gapgo_db_url,
     gaponly_db_url,
     intraday_db_url,
     load_settings_or_exit,
@@ -30,12 +29,10 @@ from src.engine.costs import intraday_fees
 from src.intraday.calls import CALLS_CASH, CallsEngine
 from src.intraday.engine import IntradayEngine, run_together
 from src.intraday.strategy import (
-    GAP_ENTRY_UNTIL,
     GAP_ONLY_ENTRY_UNTIL,
     GAP_ONLY_LATEST_START,
     ORB_ENTRY_FROM,
     find_gap_only_setup,
-    find_gap_setup,
     find_orb_setup,
     gap_only_refusals,
 )
@@ -43,7 +40,7 @@ from src.intraday.universe import select_universe
 from src.monitoring.heartbeat import Heartbeat
 from src.monitoring.telegram import Notifier
 from src.ops.shadow_watch import ShadowWatch
-from src.versions import GAPGO_VERSION, GAPONLY_VERSION
+from src.versions import GAPONLY_VERSION
 
 # The gap experiments, in the order they are stepped: (Telegram label, database, rule, last bar that may signal, version,
 # latest start of the 09:30 step, refusals, whether one scan's setups share the free cash). Gap-only goes first because it
@@ -61,7 +58,6 @@ GAP_EXPERIMENTS = (
         gap_only_refusals,
         True,
     ),
-    ("GAP-GO", gapgo_db_url, find_gap_setup, GAP_ENTRY_UNTIL, GAPGO_VERSION, None, None, False),
 )
 
 
@@ -164,10 +160,6 @@ def run_intraday(live: bool) -> None:
     print(
         "note: the backtest of this rule LOST money and an audit found no edge (see STRATEGY.md); "
         "this is paper trading to gather live evidence"
-    )
-    print(
-        "gap-and-go (own account): gap >= 2%, then a close above the opening range by 10:30; held to the square-off. "
-        "Positive after costs in both years of the 2-year test but not proven: paper only, to gather forward evidence"
     )
     print(
         "gap-only (own account): the same gap, bought on the 09:30 close without a breakout, skipping crowded gap days "

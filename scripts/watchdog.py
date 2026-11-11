@@ -24,7 +24,6 @@ BOTS = {"swing": "--loop 30 --live --holdout", "intraday": "--intraday --live"} 
 HEARTBEATS = {"swing": "heartbeat-bot", "intraday": "heartbeat-intraday"}  # named after each bot's log file by start_bots.sh
 INTRADAY_DBS = {
     "ORB": "intraday.db",
-    "gap-and-go": "gapgo.db",
     "gap-only": "gaponly.db",
     "news": "news.db",
     "broker calls": "broker_calls.db",
