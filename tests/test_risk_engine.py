@@ -195,7 +195,7 @@ def _engine(fee_drag=0.04, fees=india_delivery_fees):
 
 def test_a_one_share_position_whose_fixed_sale_charge_dwarfs_it_is_refused():
     squeezed = Portfolio(cash=400, equity=20_000)  # only Rs 400 of cash/exposure room left: one Rs 363 share fits
-    tiny = _engine().evaluate("BUY", 0.8, "TINY", 363.0, squeezed)  # the Rs 15.93 sale charge alone is ~4.4%
+    tiny = _engine().evaluate("BUY", 0.8, "TINY", 363.0, squeezed)  # the fixed DP charge on the sale alone is over 6%
     assert not tiny.approved and "fees would cost" in tiny.reason
     room = Portfolio(cash=20_000, equity=20_000)
     fine = _engine().evaluate("BUY", 0.8, "FINE", 950.0, room)  # Rs 950: fees ~1.9%

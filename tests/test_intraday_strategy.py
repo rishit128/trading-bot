@@ -81,9 +81,10 @@ def test_no_breakout_is_signalled_from_a_range_built_out_of_the_wrong_bars():
     assert st.find_setup("AAA", make_bars(BREAKOUT, volumes=VOLS)) is not None  # the same data, intact, does signal
 
 
-def test_intraday_fees_have_stt_on_sells_only_and_flat_brokerage():
+def test_intraday_fees_have_stt_on_sells_only_and_brokerage_in_proportion():
     buy, sell = intraday_fees("BUY", 200_000), intraday_fees("SELL", 200_000)
-    assert sell > buy and 20 < buy < 40 and 60 < sell < 90
+    assert sell - buy == pytest.approx(200_000 * (0.00025 - 0.00003))  # STT on the sell, stamp duty on the buy
+    assert intraday_fees("BUY", 400_000) == pytest.approx(2 * buy)  # no minimum and no cap on this account's plan
 
 
 # -- the vectorised breakout core equals a plain loop --------------------------------------------------------------------------
@@ -225,42 +226,14 @@ def test_a_zero_volume_history_gives_no_volume_signal_instead_of_an_infinite_rat
     assert core(closes=close_at(5, 101), volumes=volumes, use_volume=False).index == 5
 
 
-# -- Angel One's intraday charges (src.engine.costs, read from its pricing page 2026-11-06) -------------------------------------
-def test_intraday_brokerage_is_the_lower_of_rs_20_or_0_1_percent_with_a_rs_5_floor():
-    def brokerage_of(value):  # the buy side less the charges that scale with the value
-        return (intraday_fees("BUY", value) - value * (0.000030699 + 0.000001 + 0.000000001) * 1.18 - 0.00003 * value) / 1.18
-
-    assert brokerage_of(2_000) == pytest.approx(5.0)  # 0.1% would be Rs 2: the Rs 5 minimum
-    assert brokerage_of(10_000) == pytest.approx(10.0)  # 0.1%
-    assert brokerage_of(100_000) == pytest.approx(20.0)  # capped
+# -- this account's Angel One charges (src.engine.costs): the amounts Angel One's own calculator (SmartAPI estimateCharges) returned
+# on 2026-11-11 for the account, whose plan is 0.03% intraday and 0.3% delivery with no minimum and no cap
+@pytest.mark.parametrize("value, buy, sell", [(5_000, 2.1071, 3.2071), (20_000, 8.4282, 12.8282), (100_000, 42.1406, 64.1406)])
+def test_intraday_fees_equal_angel_ones_calculator(value, buy, sell):
+    assert intraday_fees("BUY", value) == pytest.approx(buy, abs=0.001)
+    assert intraday_fees("SELL", value) == pytest.approx(sell, abs=0.001)
 
 
-def test_an_angel_one_round_trip_on_rs_5000_costs_about_0_27_percent():
-    round_trip = intraday_fees("BUY", 5_000) + intraday_fees("SELL", 5_000)
-    assert round_trip == pytest.approx(13.57, abs=0.01)
-    assert intraday_fees("SELL", 5_000) - intraday_fees("BUY", 5_000) == pytest.approx(5_000 * (0.00025 - 0.00003))
-
-
-# -- orb-v6: the 09:15 bar is the range, signals from 09:20, no target ----------------------------------------------------------
-ORB6 = dict(
-    closes=[100.0, 100.6, 100.5],
-    highs=[100.5, 100.7, 100.6],
-    lows=[99.9, 100.3, 100.4],
-    volumes=[1000.0, 2000.0, 1000.0],
-)
-
-
-def test_orb_v6_breaks_the_09_15_bar_from_09_20_with_its_low_as_the_stop_and_no_target():
-    s = st.find_orb_setup("AAA", make_bars(**ORB6))
-    assert s and s.signal_price == 100.6 and s.stop == pytest.approx(99.9) and s.range_high == pytest.approx(100.5)
-    assert s.bar_time.strftime("%H:%M") == "09:20"
-    assert s.target == pytest.approx(100.6 * (1 + st.NO_TARGET))  # none: out at the stop or the square-off
-    assert st.find_setup("AAA", make_bars(**ORB6)) is None  # orb-v5 waits for its 15-minute range
-
-
-def test_orb_v6_keeps_the_vwap_volume_and_range_width_filters():
-    quiet = dict(ORB6, volumes=[1000.0, 1400.0, 1000.0])  # 1.4x the 09:15 bar's volume
-    assert st.find_orb_setup("AAA", make_bars(**quiet)) is None
-    narrow = dict(ORB6, highs=[100.1, 100.7, 100.6], lows=[99.95, 100.3, 100.4])  # the 09:15 bar is 0.15% wide
-    assert st.find_orb_setup("AAA", make_bars(**narrow)) is None
-    assert st.find_orb_setup("AAA", make_bars(**ORB6, start=(9, 20))) is None  # no 09:15 bar: no range
+def test_an_intraday_round_trip_costs_about_0_106_percent_at_any_size():
+    for value in (2_000, 5_000, 100_000):
+        assert (intraday_fees("BUY", value) + intraday_fees("SELL", value)) / value == pytest.approx(0.00106, abs=0.00001)

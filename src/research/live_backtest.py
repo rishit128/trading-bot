@@ -2,7 +2,7 @@
 same account size as the paper account.
 
 Earlier research used a large account (Rs 10 lakh, 10 positions of 5%) and a percent-of-equity engine. That says nothing
-about a Rs 20,000 account with 5 positions of 10-25%, where whole shares, a fixed Rs 15.93 charge per sale and the
+about a Rs 20,000 account with 5 positions of 10-25%, where whole shares, a fixed DP charge per sale and the
 inability to buy a Rs 9,000 stock all matter. This module runs the actual pipeline pieces instead:
 
   * entry candidates:  `screen_symbol` (the scanner's own filter) + 12-1 momentum ranking, every decision day,

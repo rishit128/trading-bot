@@ -17,40 +17,54 @@ When a decision is made after the close, those are the same session; the residua
 next open is the paper-vs-backtest difference and is intentionally left visible (see the parity test rather than
 being smoothed away). Other simplifications to remember: no circuit-limit modelling and no partial fills."""
 
+from typing import Callable
+
 from src.engine.enums import Action
 
 SLIPPAGE = 0.0005  # 5 bps per side: the paper broker's default and every backtest path's (buy fills higher, sell lower)
-ROUND_TRIP_COST = 0.0035  # estimated fees + slippage for a delivery round trip, used to judge outcomes net of costs
-
-
-def india_delivery_fees(side: str, value: float) -> float:
-    """Approximate NSE delivery (CNC) charges with a zero-brokerage discount broker: STT 0.1% both sides, stamp duty
-    0.015% on buys, exchange 0.00297%, SEBI 0.0001%, 18% GST on those two, DP charge Rs 15.93 per sell. Rates change."""
-    stt = 0.001 * value
-    stamp = 0.00015 * value if side == Action.BUY else 0.0
-    exchange, sebi = 0.0000297 * value, 0.000001 * value
-    gst = 0.18 * (exchange + sebi)
-    dp = 15.93 if side == Action.SELL else 0.0
-    return stt + stamp + exchange + sebi + gst + dp
-
-
-# Angel One's NSE equity intraday (MIS) schedule for retail clients, from its pricing page (read 2026-11-06; brokerage revised
-# 2025-11-17 from the lower of Rs 20 or 0.03%): brokerage the lower of Rs 20 or 0.1% per executed order, at least Rs 5.
-INTRADAY_BROKERAGE_PCT, INTRADAY_BROKERAGE_MAX, INTRADAY_BROKERAGE_MIN = 0.001, 20.0, 5.0
+# This account's Angel One brokerage plan (the owner confirmed it from the app on 2026-11-11, and Angel One's own calculator,
+# SmartAPI estimateCharges, returned exactly these amounts the same day): 0.03% of the order value intraday and 0.3% on delivery,
+# NSE and BSE, with no minimum and no cap. It is NOT the public "lower of Rs 20 or 0.1%, minimum Rs 5" plan of the pricing page,
+# which the model wrongly used from 2026-11-06 to 2026-11-11. Statutory charges as the calculator returned them.
+INTRADAY_BROKERAGE = 0.0003
+DELIVERY_BROKERAGE = 0.003
 INTRADAY_STT = 0.00025  # on the sell
+DELIVERY_STT = 0.001  # both sides
 INTRADAY_STAMP = 0.00003  # on the buy
+DELIVERY_STAMP = 0.00015  # on the buy
 NSE_TRANSACTION = 0.000030699  # both sides
 SEBI_FEE = 0.000001  # Rs 10 a crore, both sides
 NSE_IPFT = 0.000000001  # investor protection fund, both sides
 GST = 0.18  # on brokerage, transaction, SEBI and IPFT charges
+DP_CHARGE = 23.60  # per stock per day sold from the demat account: Rs 20 + GST (Angel One support page; not in the calculator)
+
+
+def _charges(value: float, brokerage: float, stt: float, stamp: float) -> float:
+    taxed = (brokerage + NSE_TRANSACTION + SEBI_FEE + NSE_IPFT) * value
+    return taxed * (1 + GST) + (stt + stamp) * value
+
+
+def india_delivery_fees(side: str, value: float) -> float:
+    """This account's NSE delivery (CNC) charges on one executed order of `value` rupees: 0.3% brokerage, STT 0.1% both sides, stamp
+    duty 0.015% on buys, exchange and SEBI fees, 18% GST, and the DP charge on each sale. About 0.93% of the value a round trip plus
+    Rs 23.60: 2.0% on Rs 2,200, 1.2% on Rs 10,000. Rates change."""
+    buy = side == Action.BUY
+    return _charges(value, DELIVERY_BROKERAGE, DELIVERY_STT, DELIVERY_STAMP if buy else 0.0) + (0.0 if buy else DP_CHARGE)
 
 
 def intraday_fees(side: str, value: float) -> float:
-    """Angel One's NSE equity intraday charges on one executed order of `value` rupees (see the constants above). Rates change:
-    check https://www.angelone.in/pricing. The Rs 5 minimum makes a small order dear (0.35% a round trip on Rs 3,700) and the Rs 20
-    cap makes a large one cheap (about 0.08% on Rs 1 lakh)."""
-    brokerage = min(INTRADAY_BROKERAGE_MAX, max(INTRADAY_BROKERAGE_MIN, INTRADAY_BROKERAGE_PCT * value))
-    charges = (NSE_TRANSACTION + SEBI_FEE + NSE_IPFT) * value
-    stt = INTRADAY_STT * value if side == Action.SELL else 0.0
-    stamp = INTRADAY_STAMP * value if side == Action.BUY else 0.0
-    return brokerage + charges + stt + stamp + GST * (brokerage + charges)
+    """This account's NSE equity intraday (MIS) charges on one executed order of `value` rupees: 0.03% brokerage, STT 0.025% on the
+    sell, stamp duty 0.003% on the buy, exchange and SEBI fees, 18% GST. About 0.106% a round trip at any size. Rates change."""
+    buy = side == Action.BUY
+    return _charges(value, INTRADAY_BROKERAGE, 0.0 if buy else INTRADAY_STT, INTRADAY_STAMP if buy else 0.0)
+
+
+# Fees and slippage of a delivery round trip on a typical Rs 2,200 swing position, used to judge outcomes net of costs.
+ROUND_TRIP_COST = (india_delivery_fees(Action.BUY, 2200.0) + india_delivery_fees(Action.SELL, 2200.0)) / 2200.0 + 2 * SLIPPAGE
+
+
+def net_return(entry: float, exit_price: float, qty: float, fees: Callable[[str, float], float]) -> float:
+    """A closed long trade's return after `fees` on both fills, as a fraction of the money put in. The fill prices already carry
+    the slippage. Reports use it to judge every recorded trade at today's fee schedule, whatever was booked at the time."""
+    bought, sold = entry * qty, exit_price * qty
+    return (sold - bought - fees(Action.BUY, bought) - fees(Action.SELL, sold)) / bought

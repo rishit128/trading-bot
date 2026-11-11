@@ -27,6 +27,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 import pandas as pd
 from sqlalchemy import func, select
 
+from src.control import Control
 from src.data.angel_quotes import EntryContext
 from src.data.house_calls import HouseCall, intraday_buys, open_sells
 from src.data.india import IST
@@ -43,8 +44,7 @@ log = logging.getLogger(__name__)
 ARCHIVE_FROM = dtime(15, 35)  # the session's last bar (15:25-15:30) is published by then
 MIN_COVERAGE = 0.8  # a scan that returns bars for fewer of the stocks asked for than this raises an alert
 STALE_FILL = timedelta(minutes=10)  # a fill priced from a bar that started longer ago than this raises an alert
-
-
+STEP_IN_TIME = "step_in_time"  # control flag: the last day whose 09:30 step started by its deadline
 SPLIT_SPARE = 0.98  # with split_cash, the share of the free cash handed out: the rest pays slippage and fees
 
 
@@ -370,12 +370,16 @@ class IntradayEngine:
 
     def _check_start(self, local: datetime) -> None:
         """Alert when the day's first step at or after 09:30 starts after `step_deadline` (gap-only trades on that one step,
-        so a late start means a missed day)."""
+        so a late start means a missed day). A step that started in time is noted in the account's database, so a restart
+        later the same day does not raise the alert again."""
         today = local.date().isoformat()
         if self.step_deadline is None or self._deadline_day == today or local.time() < st.ENTRY_FROM:
             return
         self._deadline_day = today
-        if local.time() > self.step_deadline:
+        control = Control(self.broker.sessions)
+        if local.time() <= self.step_deadline:
+            control.set_flag(STEP_IN_TIME, today)
+        elif control.get_flag(STEP_IN_TIME) != today:
             self._say(
                 f"⚠️ ALERT: the {st.ENTRY_FROM:%H:%M} step started late, at {local:%H:%M:%S} (it must start by "
                 f"{self.step_deadline:%H:%M}); today's entries may have been missed"

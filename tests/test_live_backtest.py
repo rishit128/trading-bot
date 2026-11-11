@@ -6,6 +6,7 @@ import pytest
 
 from src.config import RiskLimits
 from src.data.universe import Candidate, ScreenConfig, UniverseScreener, screen_bars, select_candidates
+from src.engine.costs import DP_CHARGE
 from src.research.backtest import simulate
 from src.research.live_backtest import make_buy_source, ranked_candidates, run_live_config, summarize_run
 
@@ -134,6 +135,6 @@ def test_live_config_run_uses_live_limits_costs_and_reports_expectancy():
     held = run.result.open_at_end + s["trades"]
     assert held >= 1
     assert "CCC" not in {t.symbol for t in run.result.trades}  # ~Rs 5,000+/share can't be bought with Rs 20,000 at 10%
-    # fixed sale charge is really charged: any closed trade paid at least the Rs 15.93 DP fee
-    assert all(t.fees >= 15.93 for t in run.result.trades)
+    # fixed sale charge is really charged: any closed trade paid at least the DP charge
+    assert all(t.fees >= DP_CHARGE for t in run.result.trades)
     assert run.result.equity.iloc[0] == pytest.approx(20_000.0, rel=0.05)

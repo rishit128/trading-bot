@@ -201,6 +201,9 @@ def test_a_late_start_of_the_0930_step_alerts_once_a_timely_one_does_not(tmp_pat
     timely, _, _, _, told, _ = session(tmp_path / "timely", now_ist=at(9, 31), step_deadline=dtime(9, 33))
     timely.step()
     assert alerts(told) == []
+    restarted, *_, told, _ = session(tmp_path / "timely", now_ist=at(12, 14), step_deadline=dtime(9, 33))
+    restarted.step()  # a new process on the same database, hours later: the 09:30 step was in time, so no alert
+    assert alerts(told) == []
     late, _, _, now, told, _ = session(tmp_path / "late", now_ist=at(9, 36), step_deadline=dtime(9, 33))
     late.step()
     [a] = alerts(told)

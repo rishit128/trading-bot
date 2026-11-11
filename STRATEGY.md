@@ -1490,3 +1490,96 @@ swing, ORB, gap-only, news and broker-calls accounts are unchanged. Gap-only (ga
 stays as its own experiment. Wherever the bots run, a `gapgo.db` left on disk is now unread and can be deleted by hand; the copy
 on this PC (18 October, 3 trades) is in `Documents/trading-bot-final-backup/old-local-dbs/`. The 37 live trades were not
 analysed: their database was not available here.
+
+## The account's real brokerage plan, and what it changes (2026-11-11)
+
+**The plan.** The owner's Angel One account is on a percentage plan: **0.03% of the order value intraday and 0.3% on delivery**,
+NSE and BSE, with no minimum and no cap. Confirmed twice on 2026-11-11: by the owner from the app, and by Angel One's own
+calculator (SmartAPI `estimateCharges`, logged in as the account), whose amounts `src/engine/costs.py` now reproduces to the paisa
+(tests pin them). It is not the public "lower of Rs 20 or 0.1%, minimum Rs 5" plan of the pricing page.
+
+| Round trip, fees only | Was modelled | Real |
+|---|---|---|
+| Intraday, any size | 0.271% at Rs 5,000 (the 2026-11-06 "correction", wrong for this account) | **0.106%** |
+| Delivery, Rs 2,200 | 0.95% (zero brokerage, DP charge Rs 15.93) | **2.00%** (0.93% + the Rs 23.60 DP charge on the sale) |
+| Delivery, Rs 10,000 | 0.38% | **1.17%** |
+
+**Intraday.** With 0.10% slippage a round trip costs 0.21%, the figure every test before 2026-11-06 used, so those results stand
+and the 0.37% quoted from 2026-11-06 to 2026-11-11 was wrong. The record-only tests (S1, S5, S7) never left 0.21%. The paper
+accounts booked the wrong schedule on 2026-11-06, 09 and 11 (about 0.17% too much a round trip); the booked rows are left as they
+are, and `scripts/forward_test_report.py` now costs every trade from its fill prices at today's schedule, so no verdict mixes
+schedules. N1-N6 were run again on the 8 years at the real costs: N1 -0.26%, N2 -0.27%, N3 -0.22%, N4 -0.09%, N5 -0.03% (t -0.4),
+N6 -0.21% net a trade; none passes, on the full period or the recent market.
+
+**Swing.** This is the finding that matters: every swing backtest and the paper account charged less than half the real cost.
+The gap rules G1-G4 (2026-11-09) were costed at 0.54% + slippage on Rs 5,000; the real figure is 1.40% + slippage, so they fail by
+more. The live configuration re-run at the real costs is in the next section.
+
+**Also fixed the same day.** (1) The "09:30 step started late" alert fired after every restart; a step that started in time is now
+noted in the account's database (`control_flags`, `step_in_time`) and a later restart stays quiet. (2) The forward-test report
+shows the swing account's profit next to the same money put into the Nifty 50 on the same days (on 2026-11-11: account
+Rs -836, index Rs +2,398). (3) A half-finished merge with the 2026-11-09 commit that removed gap-and-go had left two version
+lines and the removed account's row in the launcher; resolved, gap-and-go stays removed.
+
+## Monthly ETF rotation: pre-declared test FAILED (2026-11-11, R1-R2)
+
+Idea: with delivery brokerage at 0.3% a side, a rule that trades a few large positions a few times a year pays far less in costs
+than fifteen small stock positions. `scripts/research_etf_rotation.py` (rules and gate in its docstring before any result): each
+month end rank NIFTYBEES, JUNIORBEES and GOLDBEES by 12-month return, hold the best one (R1) or the best two (R2), cash for one
+that does not beat cash; Rs 25,000, the account's delivery fees, 0.05% slippage. Angel One daily bars 2010-01-04 to 2026-11-09
+(already split-adjusted), reported from 2011.
+
+| | Full: CAGR / Sharpe / worst drawdown | 1st half | 2nd half | CAGR at twice the costs |
+|---|---|---|---|---|
+| R1 best one | +9.5% / 0.58 / -52.1% | +10.5% / 0.71 / -22.7% | +8.5% / 0.50 / -52.1% | +7.2% |
+| R2 best two | +9.1% / 0.74 / -21.6% | +9.0% / 0.80 / -15.9% | +9.1% / 0.70 / -20.3% | +7.8% |
+| NIFTYBEES bought and held | +10.3% / 0.73 / -36.3% | +7.9% / 0.60 / -24.8% | +12.7% / 0.86 / -36.3% | +10.3% |
+
+**Neither passed** (the gate needed more return, a higher Sharpe and a shallower drawdown than the benchmark in both halves). R2
+did what trend rules usually do, a much shallower drawdown for a lower return, and lost to the index in the second half. No
+account is added and no variant is re-run. What it shows for the owner's goal: on this account's costs, holding the index ETF
+(about 10% a year here, one purchase) is the bar, and nothing tested in this project has cleared it.
+
+## Swing at the real delivery costs: the core sleeve passes, the stock picks cost 2% a round trip (2026-11-11)
+
+`scripts/research_swing_costs.py` (both questions and their gates declared in its docstring before the results), the live
+configuration on 2,601 NSE stocks, 2017-10 to 2026-10, today's listings (survivorship bias lifts every row alike).
+
+**The live configuration costed properly.** At the old zero-brokerage costs it returned +349% (Sharpe 0.93, drawdown -44.7%,
+2026-10-23). At the real plan: **+235%, CAGR 14.7%, Sharpe 0.78, drawdown -49.4%, 329 trades, fees 62% of the starting capital**
+over nine years. The bias in this number is about 9 points a year (section 1), so after it the stock picks are not shown to
+beat the index, which is what the live month says too (account Rs -836, the same money in the Nifty 50 Rs +2,398).
+
+**Core sleeve (`blend`), the 2026-10-26 test and gate repeated word for word at the real costs: PASSED.**
+
+| Core weight | Full: return / Sharpe / maxDD | Last 3y: return / Sharpe / maxDD |
+|---|---|---|
+| 0% | +226% / 0.76 / -49.4% | +48% / 0.70 / -34.8% |
+| 25% (live) | +214% / 0.82 / -44.2% | +47% / 0.77 / -29.5% |
+| 40% | +204% / 0.84 / -41.5% | +46% / 0.82 / -26.2% |
+| 50% | +197% / 0.85 / -39.6% | +45% / 0.84 / -24.4% |
+| 60% | +189% / 0.86 / -37.8% | +44% / 0.87 / -23.2% |
+| 100% | +151% / 0.77 / -34.3% | +37% / 0.85 / -20.5% |
+
+25%, 40%, 50% and 60% all pass (Sharpe at least 0.05 higher, drawdown no worse, return within a quarter, in both windows, with
+passing neighbours). The rule fixed beforehand takes the smallest: **25%, the sleeve the account already holds**
+(`CORE_SLEEVE=NIFTYBEES:0.10,MID150BEES:0.15`). Nothing changes in the account; the sleeve is no longer only a risk preference.
+The trend across the table (more index, higher Sharpe, shallower drawdown, a little less of a biased return) is the honest
+direction of travel if the stock picks still lag the index when their forward test ends.
+
+**Position count at the real costs: none passed, the live count stays.** n positions of 0.90/n each against the live 15 x 8.8%:
+
+| Setup | Full: return / Sharpe / maxDD / fees of capital | Last 3y: return / Sharpe / maxDD |
+|---|---|---|
+| base (live) | +235% / 0.78 / -49.4% / 62% | +90% / 1.05 / -38.0% |
+| 4 x 22.5% | +299% / 0.76 / -50.1% / 53% | +232% / 1.58 / -40.2% |
+| 5 x 18% | +179% / 0.63 / -54.4% / 40% | +238% / 1.66 / -38.6% |
+| 6 x 15% | +228% / 0.73 / -52.2% / 41% | +161% / 1.36 / -32.5% |
+| 8 x 11.2% | +178% / 0.67 / -52.5% / 47% | +130% / 1.28 / -33.1% |
+| 10 x 9% | +189% / 0.71 / -52.1% / 50% | +93% / 1.10 / -34.3% |
+| 12 x 7.5% | +272% / 0.85 / -46.7% / 59% | +122% / 1.30 / -31.6% |
+
+Fewer, larger positions looked far better in the last three years and worse over the full period: no ordering holds in both
+windows, the same path noise as on 2026-10-23. Only 12 x 7.5% beats the base's Sharpe and drawdown in both windows, and its
+neighbour 10 x 9% does not, so it is not a plateau. Larger positions do not rescue the costs either: fees still take 40-59% of the
+starting capital. The swing parameters stay; swing-v6 and its forward test are untouched.

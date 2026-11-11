@@ -17,7 +17,7 @@ to take that out. Volume is not split-adjusted, so a session that opens more tha
 Common to every rule. At the signal session D (known at its close): the previous close is Rs 100 or more (on adjusted prices) and
 the 20-session average traded value before D is Rs 10 crore or more. Entry at the OPEN of the session after the signal (D+1; for
 G3, D+4), never at a price already seen. Rs 5,000 a trade, 5 bps slippage a side, delivery fees as in src.engine.costs
-(india_delivery_fees: STT both sides, stamp, DP charge Rs 15.93 a sale). A stop is checked on every session's low from the entry
+(india_delivery_fees: STT both sides, stamp, a DP charge on each sale). A stop is checked on every session's low from the entry
 session on; it fills at the stop, or at the open when a session opens below it. A stop more than 12% away, or at or above the
 entry open, means no trade. Exit at the open of session entry+hold. One trade per stock at a time (a signal while a trade in that
 stock is open is skipped). Long only. No position limit and no daily cap (each trade is judged alone, as in the earlier tests).

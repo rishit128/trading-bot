@@ -35,7 +35,7 @@ STRATEGY_VERSION = "swing-v6"
 #           becomes ICICILIFE in the universe (renamed). All four intraday accounts carry both.
 #   orb-v6 (2026-11-06, the owner's decision; NOT proven): the opening range is the 09:15 bar alone, signals from 09:20, stop at
 #           its low, no target (out at 15:15). Screen E4a: lost less than orb-v5 on the same stock-days (+0.041% a date, t 2.7, both
-#           halves) but still lost money. Fees follow Angel One's schedule from the same day (src.engine.costs.intraday_fees).
+#           halves) but still lost money. Fees: src.engine.costs.intraday_fees (the account's 0.03% plan).
 INTRADAY_VERSION = "orb-v6"
 # The gap-only paper strategy (its own account): a gap >= 2%, bought on the 09:30 close with no breakout. (The gap-and-go account,
 # a gap plus a breakout by 10:30, ran as gapgo-v1 to v3 and was removed on 2026-11-09.)

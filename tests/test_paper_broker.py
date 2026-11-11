@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from src.database import PaperPositionRecord, PaperTradeRecord, make_session_factory
-from src.engine.costs import india_delivery_fees
+from src.engine.costs import DP_CHARGE, india_delivery_fees, intraday_fees, net_return
 from src.engine.paper_broker import PaperBroker
 
 T0 = datetime(2026, 9, 21, 4, 0, tzinfo=timezone.utc)  # 09:30 IST, a Monday
@@ -99,11 +99,29 @@ def test_slippage_is_adverse_on_both_sides(tmp_path):
         assert s.scalar(select(PaperTradeRecord.exit_price)) == pytest.approx(99.5)
 
 
-def test_indian_delivery_fees_are_realistic():
-    buy, sell = india_delivery_fees("BUY", 100_000), india_delivery_fees("SELL", 100_000)
-    assert 118 < buy < 120  # STT 100 + stamp 15 + exchange/SEBI/GST ~3.6
-    assert 119 < sell < 121  # STT 100 + exchange/SEBI/GST ~3.6 + DP 15.93
-    assert 0.0022 < (buy + sell) / 100_000 < 0.0026  # ~0.24% round trip
+@pytest.mark.parametrize("value, buy, sell", [(2_200, 10.4003, 10.0703), (10_000, 47.274, 45.774)])
+def test_delivery_fees_equal_angel_ones_calculator_plus_the_dp_charge_on_a_sale(value, buy, sell):
+    """The amounts Angel One's calculator returned on 2026-11-11 for this account (0.3% brokerage); it leaves the DP charge out."""
+    assert india_delivery_fees("BUY", value) == pytest.approx(buy, abs=0.001)
+    assert india_delivery_fees("SELL", value) == pytest.approx(sell + DP_CHARGE, abs=0.001)
+    assert DP_CHARGE == pytest.approx(20 * 1.18)
+
+
+def test_a_small_delivery_round_trip_is_dear():
+    def round_trip(value):
+        return (india_delivery_fees("BUY", value) + india_delivery_fees("SELL", value)) / value
+
+    assert round_trip(2_200) == pytest.approx(0.0200, abs=0.0002)  # the DP charge alone is 1.07% of Rs 2,200
+    assert round_trip(10_000) == pytest.approx(0.0117, abs=0.0002)
+
+
+def test_net_return_costs_a_trade_from_its_fills_at_the_schedule_given():
+    """What the forward report uses, so a trade booked at an old schedule is judged at today's."""
+    flat = net_return(100.0, 100.0, 50, intraday_fees)  # Rs 5,000 in and out at the same price: the fees alone
+    assert flat == pytest.approx(-0.00106, abs=0.00001)
+    assert net_return(100.0, 101.0, 50, intraday_fees) == pytest.approx(0.01 + flat, abs=0.00002)
+    assert net_return(100.0, 100.0, 22, india_delivery_fees) == pytest.approx(-0.0200, abs=0.0002)  # Rs 2,200 delivery
+    assert net_return(100.0, 101.0, 50, lambda side, value: 0.0) == pytest.approx(0.01)
 
 
 def test_sell_records_trade_with_fees_and_updates_cash(tmp_path):
@@ -116,7 +134,7 @@ def test_sell_records_trade_with_fees_and_updates_cash(tmp_path):
         assert s.get(PaperPositionRecord, "AAA") is None
     gross = 1_000.0
     assert trade.reason == "SIGNAL" and trade.net_pnl == pytest.approx(gross - trade.fees)
-    assert 20 < trade.fees < 40
+    assert 115 < trade.fees < 125  # 0.93% of about Rs 10,500 traded each way, plus the Rs 23.60 DP charge
     assert broker.portfolio().cash == pytest.approx(1_000_000.0 + trade.net_pnl)
 
 

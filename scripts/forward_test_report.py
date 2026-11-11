@@ -3,7 +3,9 @@
 Per account: the trades made since the freeze under the frozen version only (a trade under another version means the rule
 changed and the test restarted), their mean net return and date-clustered t, how many trading dates the test needs to see
 the target edge (from the spread of its own per-date results), drift against the backtest's expectation, and, for the
-intraday accounts, the share of entries whose signal is gone on the final bars. Then the protocol's verdict:
+intraday accounts, the share of entries whose signal is gone on the final bars. Every trade is costed from its fill prices at
+today's fee schedule (src.engine.costs), not at what was booked: the intraday accounts were booked at a wrong schedule from
+2026-11-06 to 2026-11-11 and the swing account at a zero-brokerage plan until 2026-11-11. Then the protocol's verdict:
   RUNNING      fewer dates than needed (or fewer than MIN_DATES): no verdict, nothing to change;
   GO           enough dates, mean net > 0, t >= 2 and both halves > 0: eligible for a small real-money trial;
   REDESIGN     enough dates and not GO: the frozen rule has no forward edge; design a new version (paper keeps running);
@@ -26,6 +28,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.data.india import IST  # noqa: E402
+from src.data.price_history import load_index_close  # noqa: E402
+from src.engine.costs import india_delivery_fees, intraday_fees, net_return  # noqa: E402
 from src.research.significance import units_needed  # noqa: E402
 from src.versions import CALLS_VERSION, GAPONLY_VERSION, INTRADAY_VERSION, NEWS_VERSION, STRATEGY_VERSION  # noqa: E402
 
@@ -50,8 +54,8 @@ ACCOUNTS = {
         "intraday.db",
         INTRADAY_VERSION,
         0.0025,
-        -0.0025,
-        "screen E4a, 72 sessions, -0.087% at the old fees, recosted at Angel One's",
+        -0.0009,
+        "screen E4a, 72 sessions, 9,478 trades",
         True,
         "2026-11-09",
     ),
@@ -101,16 +105,56 @@ def clustered(per_trade: pd.Series, days: pd.Series) -> tuple[float, float, pd.S
     return float(per_trade.mean()), float(per_date.mean() / (per_date.std(ddof=1) / np.sqrt(len(per_date)))), per_date
 
 
+def against_the_index(db: Path) -> None:
+    """The swing account's profit next to what the same money, put in on the same days, would have made in the Nifty 50. Money
+    added later (the budget was raised once) shows as the one jump in equity that matches initial_cash less the first equity."""
+    equity = _read(db, "select created_at as at, equity from equity_history order by created_at")
+    paid_in = _read(db, "select initial_cash from paper_account")["initial_cash"]
+    if len(equity) < 2 or paid_in.empty:
+        return
+    try:
+        nifty = load_index_close("^NSEI", 3)
+    except Exception as e:  # the report must not fail on a missing index cache
+        print(f"account against the Nifty 50: index not available ({type(e).__name__})")
+        return
+    days = pd.DatetimeIndex(equity["at"]).normalize()
+    index = nifty.copy()
+    index.index = pd.DatetimeIndex(index.index).tz_localize(None).normalize()
+    index = index.loc[: days[-1]]
+    if index.loc[days[0] :].empty:
+        return
+
+    def level(day: pd.Timestamp) -> float:
+        return float(index.loc[:day].iloc[-1]) if len(index.loc[:day]) else float(index.iloc[0])
+
+    first, added = float(equity["equity"].iloc[0]), float(paid_in.iloc[0]) - float(equity["equity"].iloc[0])
+    in_index = first * level(days[-1]) / level(days[0])
+    step = equity["equity"].diff()
+    if added > 0.01 * first and abs(step.max() - added) < 0.2 * added:
+        in_index += added * level(days[-1]) / level(days[int(step.idxmax())])
+    else:
+        added = 0.0
+    put_in = first + added
+    print(
+        f"since {days[0].date()} on Rs {put_in:,.0f} put in: account Rs {equity['equity'].iloc[-1] - put_in:+,.0f} "
+        f"({equity['equity'].iloc[-1] / put_in - 1:+.1%}); the same money in the Nifty 50 Rs {in_index - put_in:+,.0f} "
+        f"({in_index / put_in - 1:+.1%})"
+    )
+
+
 def report(name: str, account: Account) -> None:
     db = ROOT / account.db
     print(f"\n=== {name}: frozen at {account.version} from {account.freeze} ({db.name}) ===")
     if not db.exists():
         print("no database yet: RUNNING")
         return
-    trades = _read(db, "select symbol, qty, entry_price, net_pnl, opened_at from paper_trades")
+    trades = _read(db, "select symbol, qty, entry_price, exit_price, opened_at from paper_trades")
     if len(trades):
+        fees = india_delivery_fees if name == "swing" else intraday_fees
         trades["day"] = [pd.Timestamp(t).tz_localize("UTC").tz_convert(IST).date().isoformat() for t in trades["opened_at"]]
-        trades["net"] = trades["net_pnl"] / (trades["entry_price"] * trades["qty"])
+        trades["net"] = [net_return(t.entry_price, t.exit_price, t.qty, fees) for t in trades.itertuples()]
+    if name == "swing":
+        against_the_index(db)
     before = trades[trades["day"] < account.freeze] if len(trades) else trades
     test = trades[trades["day"] >= account.freeze] if len(trades) else trades
     if len(before):

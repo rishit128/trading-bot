@@ -1,9 +1,7 @@
 """Runtime switches shared through the database: the kill switch and the drawdown-baseline reset."""
 
 from datetime import datetime, timezone
-from typing import Optional
-
-from sqlalchemy.orm import sessionmaker
+from typing import Any, Callable, Optional
 
 from src.database import ControlFlag
 
@@ -15,7 +13,7 @@ DRAWDOWN_SINCE = "drawdown_halt_since"
 class Control:
     """Kill switch shared between the trading loop and the Telegram listener via the database."""
 
-    def __init__(self, session_factory: sessionmaker):
+    def __init__(self, session_factory: Callable[..., Any]):  # a sessionmaker, or anything that opens a session
         self.sessions = session_factory
 
     def get_flag(self, key: str) -> Optional[str]:

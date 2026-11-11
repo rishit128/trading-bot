@@ -18,7 +18,7 @@ from typing import Dict, Iterable, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-COST_PCT = 0.21  # round trip: fees plus 0.05% slippage a side
+COST_PCT = 0.21  # round trip: this account's intraday fees (0.106%, src.engine.costs) plus 0.05% slippage a side
 BAR = pd.Timedelta(minutes=5)
 SQUARE_OFF = "15:15"
 MIN_SIGNALS, MIN_DATES, T_GO = 100, 30, 2.0
