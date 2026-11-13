@@ -17,13 +17,14 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 from datetime import time as dtime
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import pandas as pd
 
 from src.data.house_calls import INTRADAY_KINDS, HouseCall
 from src.data.india import IST
 from src.data.intraday_bars import session_rows
+from src.data.market_regime import WEAK_BREADTH
 from src.database import IntradaySignalRecord
 from src.engine.enums import SignalOutcome
 from src.engine.ports import BAR
@@ -59,6 +60,9 @@ class CallsEngine(IntradayEngine):
     label: str = "BROKER-CALLS"
     version: str = CALLS_VERSION
     record_capped: bool = True
+    # calls-v3: the share of stocks above their previous close right now, or None when it cannot be measured; a call is not
+    # followed while it is under WEAK_BREADTH (a long against a falling market). None = no such check
+    breadth_fn: Optional[Callable[[], Optional[float]]] = None
 
     def step(self) -> str:
         status = super().step()
@@ -116,6 +120,9 @@ class CallsEngine(IntradayEngine):
             return f"price {price:,.2f} is already outside the call's stop {call.stop:,.2f} and target {call.target:,.2f}"
         if held >= self.max_positions:
             return f"position limit reached ({self.max_positions} open)"
+        breadth = self.breadth_fn() if self.breadth_fn else None
+        if breadth is not None and breadth < WEAK_BREADTH:
+            return f"weak market: {breadth:.0%} of stocks are up (needs {WEAK_BREADTH:.0%})"
         return None
 
     def _entry_text(self, setup: st.Setup, qty: int) -> str:

@@ -1583,3 +1583,91 @@ Fewer, larger positions looked far better in the last three years and worse over
 windows, the same path noise as on 2026-10-23. Only 12 x 7.5% beats the base's Sharpe and drawdown in both windows, and its
 neighbour 10 x 9% does not, so it is not a plateau. Larger positions do not rescue the costs either: fees still take 40-59% of the
 starting capital. The swing parameters stay; swing-v6 and its forward test are untouched.
+
+## ORB entries after midday: pre-declared test FAILED, the 14:00 limit stays (2026-11-12)
+
+The owner asked why orb-v6 still buys after 12:00, with little of the session left. One hypothesis, declared in
+`scripts/research_orb_entry_time.py` before it ran: move the last entry from 14:00 to 12:00 only if entries from 12:00 lose
+money, lose more than the earlier ones on the same dates (t <= -2.0), in both halves and from 2024-11-20. Data: the 8-year
+Angel One 5-minute cache, 200 stocks, 148,432 orb-v6 signals on 2,182 dates, every signal taken, costs 0.206% a round trip.
+
+| signal bar | trades | gross | net | stopped |
+|---|---|---|---|---|
+| 09:20-09:55 | 52,097 | -0.092% | -0.357% | 37% |
+| 10:00-10:55 | 40,937 | +0.003% | -0.267% | 28% |
+| 11:00-11:55 | 24,684 | +0.017% | -0.255% | 23% |
+| 12:00-12:55 | 17,460 | +0.013% | -0.235% | 18% |
+| 13:00-13:55 | 13,254 | +0.057% | -0.217% | 13% |
+
+The opposite of the hypothesis: late entries lose less than early ones (+0.069% a date, t +5.0; both halves; level from
+2024-11-20, -0.005%, t -0.2). The limit stays at 14:00 and orb-v6 is unchanged. The table is not a reason to trade later
+either: every hour loses after costs, and before costs no hour earns more than 0.06% against a cost of 0.21%. The live
+5-position limit and stock list are not in this test. Log: `logs/research_orb_entry_time.log`.
+
+## orb-v7: leaders in a rising market, strongest first (2026-11-12; the owner's decision; NOT proven)
+
+The owner asked for a rule built on judgement about the present market instead of another pass or fail on old data. The
+reasoning: a close above the 09:15 bar's high is bought by every screen and algorithm, so by itself it carries no information
+(gross -0.02% a trade over 8 years, above). It can only mean something when money is really moving into the stock and the market
+is not pulling against it. orb-v6 also gave its five positions to the first five signals in the stock list's order, which is
+chance, not choice.
+
+Rule, from the restart after the close of 2026-11-12 (`strategy.orb_leaders`, `strategy.day_gains`, the engine's `priority_fn`):
+- the orb-v6 signal, stop and exit, unchanged (first close above the 09:15 bar's high, 09:20-14:00, above VWAP, 1.5x volume; stop
+  at that bar's low; out at 15:15);
+- bought only when at least 60% of the scanned stocks are above their previous close (a rising market);
+- bought only when the stock itself is up at least 2% on its previous close (a leader);
+- one scan's signals are tried strongest first (largest gain on the day);
+- every other signal is still recorded, as SKIPPED with its reason, so S1 keeps its full record (`scripts/shadow_report.py` now
+  reads orb-v4, orb-v6 and orb-v7 signals).
+If under half the scanned stocks have a previous close, the market cannot be measured and nothing is bought that scan.
+
+What the data says about it (a check made while choosing, not a pre-declared test, so not evidence): on the 8-year Angel One
+bars the signals that meet both conditions lose -0.13% a trade against -0.23% for all signals and -0.35% for the first five a day
+in list order; in 2026, -0.09% (2,110 signals) against -0.22%. A replay of 2026-10-28 to 2026-11-11 (10 sessions, far too few):
+orb-v7 30 trades +2.6%, orb-v6 67 trades +7.2%. So the judgement is that it loses less and trades less; nothing shows a profit
+yet. The forward test restarts from 2026-11-13 against -0.09% a trade. The replay tool follows it: `--strategy orb` is orb-v7,
+`orb6` the rule before.
+
+## The market details the bot already has now decide entries (2026-11-12; the owner's decision; NOT proven)
+
+Until now the market's state (the regime, today's breadth) was written next to each intraday entry and changed no decision, and
+the intraday accounts knew nothing about industry groups. The owner asked for both to be used before a stock is selected.
+
+- **Sectors** (`src/data/sectors.py`): Yahoo Finance's eleven sectors, one request a stock, kept in
+  `research_cache/sectors.json` and looked up in the background for stocks the cache lacks; a stock without one has no sector
+  check. (NSE's finer industry list is not used: NSE's terms forbid automated downloads.) A sector's gain on the day is the
+  median of its scanned stocks (`strategy.sector_gains`, at least 3 stocks).
+- **orb-v7** (above) also refuses a breakout in a stock whose group is down on the day. On the 8-year bars (with NSE's industry groups, read once by hand for
+  the check) 97% of orb-v7's signals already had a rising group, so this changes little there.
+- **gaponly-v6**: no entry while under 40% of the scanned stocks are above their previous close (the regime's own WEAK line),
+  nor in a stock whose group is down on the day. In the account's own record, entries on WEAK days lost -0.86% a trade (20
+  trades, 5 days, -Rs 758) against -0.19% on STRONG days (23 trades): seen in 10 days, so a reason, not evidence.
+- **calls-v3**: a broker call is not followed while the regime's live breadth is under 40%. Its entries carried no market tag,
+  so there is no record to look at; the reason is only that a long against a falling market starts behind.
+- **news-v5 is unchanged**: it is the one account in profit, 10 of its 11 trades were on STRONG days anyway, and its reason to
+  buy is the filing. **swing-v6 is unchanged**: its AI already reads the market context and the hot groups (`MarketPulse`).
+Refused signals are recorded as SKIPPED with the reason. Forward tests of orb-v7, gaponly-v6 and calls-v3 start 2026-11-13.
+
+## Swing position size: rounding to the nearest share (swing-v7, 2026-11-13; the owner's point)
+
+The owner found the swing positions too small to earn much from a winner. They were smaller than intended: the target is 8.8%
+of equity (about Rs 2,150) but the 17 closed trades averaged Rs 1,339 (Rs 657 to Rs 2,175), because the risk engine always
+rounded whole shares down (a Rs 1,480 share on a Rs 2,150 target was one share) and late buys took the leftover cash.
+
+The 10-year live-configuration backtest at the real 0.3% delivery plan (`logs/research_swing_sizes.log`, `..._sizes2.log`; the
+same harness and data as 2026-11-11), the rounding change in every row:
+
+| setup | full: return / Sharpe / maxDD / fees | last 3 years: return / Sharpe / maxDD |
+|---|---|---|
+| live before (15 x 8.8%, rounded down; 2026-11-11 run) | +235% / 0.78 / -49.4% / 62% | +90% / 1.05 / -38.0% |
+| **15 x 8.8%, rounded to nearest (adopted)** | **+281% / 0.85 / -50.0% / 59%** | **+133% / 1.34 / -29.2%** |
+| 15 x 8.8%, nearest, no buy with fees over 2.5% | +252% / 0.79 / -40.5% / 55% | +109% / 1.18 / -36.8% |
+| 8 x 10.8% (2 ETFs + 6 stocks), 2.5% floor | +220% / 0.73 / -49.9% / 45% | +105% / 1.13 / -36.1% |
+| 6 stocks x 14.4%, 2.5% floor | +210% / 0.69 / -53.6% / 40% | +160% / 1.37 / -32.5% |
+
+Adopted: rounding to the share count nearest the target, at most 25% over it and never past the cash or exposure limits
+(`risk_engine.ROUND_UP_LIMIT`); better in both windows on return and Sharpe, drawdown about the same. Not adopted: fewer, larger
+positions (less in fees, but worse over the full period: fewer stocks miss more of the rare big winners) and the 2.5% fee floor
+(worse in both windows). The rounding is a sizing mechanic, not a new signal, and the result is one backtest on today's listings,
+so it is NOT proven. The settings (15 positions, 8.8%, 4% fee cap) are unchanged. Forward test of swing-v7 from 2026-11-16.

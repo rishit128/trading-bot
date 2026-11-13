@@ -4,6 +4,7 @@ minutes: the opening-range breakout, gap-only (the 2% gap bought at 09:30, no br
 
 import dataclasses
 import os
+from functools import partial
 from typing import Any, Callable, Dict, NamedTuple, Optional, Set
 
 from sqlalchemy import select
@@ -24,6 +25,7 @@ from src.data.india import IndiaClock
 from src.data.intraday_bars import BarArchive, fetch_5m_bars, shared_download
 from src.data.market_context import MarketContextProvider
 from src.data.market_regime import RegimeProvider, with_regime
+from src.data.sectors import load_sectors
 from src.database import PaperPositionRecord, make_session_factory
 from src.engine.costs import intraday_fees
 from src.intraday.calls import CALLS_CASH, CallsEngine
@@ -32,9 +34,11 @@ from src.intraday.strategy import (
     GAP_ONLY_ENTRY_UNTIL,
     GAP_ONLY_LATEST_START,
     ORB_ENTRY_FROM,
+    day_gains,
     find_gap_only_setup,
     find_orb_setup,
     gap_only_refusals,
+    orb_leaders,
 )
 from src.intraday.universe import select_universe
 from src.monitoring.heartbeat import Heartbeat
@@ -67,6 +71,7 @@ def run_intraday(live: bool) -> None:
     token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
     notify = Notifier(token, chat_id).send if token and chat_id else None
     universe, label = select_universe(settings.intraday_universe)
+    sectors = load_sectors(CACHE_DIR, universe)  # symbol -> sector; a stock not yet looked up has no sector check
     # Angel One streams the universe into angel_bars; its bars, prices and quote checks serve every account here (and the swing
     # bot's quote checks and prices), Yahoo being the automatic backup. See src.data.angel_bars.
     sessions = make_session_factory(intraday_db_url())
@@ -113,7 +118,7 @@ def run_intraday(live: bool) -> None:
             label=name,
             version=version,
             step_deadline=deadline,
-            refusals_fn=refusals,
+            refusals_fn=partial(refusals, sectors=sectors),
             record_capped=True,
             split_cash=split,
         )
@@ -126,6 +131,8 @@ def run_intraday(live: bool) -> None:
             archive=BarArchive(broker.sessions) if settings.intraday_archive else None,
             find_setup=find_orb_setup,
             entry_from=ORB_ENTRY_FROM,
+            refusals_fn=partial(orb_leaders, sectors=sectors),
+            priority_fn=day_gains,
             record_capped=True,
             house_calls_fn=house_calls.current,
             act_on_calls=settings.intraday_calls_act,
@@ -148,6 +155,7 @@ def run_intraday(live: bool) -> None:
             risk_pct=settings.intraday_risk_pct,
             max_daily_loss_pct=settings.intraday_max_daily_loss_pct,
             house_calls_fn=house_calls.current,
+            breadth_fn=angel.breadth if angel else None,
         )
     )
     mode = "PAPER ORDERS (separate intraday accounts)" if live else "DRY RUN (signals only)"
@@ -162,8 +170,13 @@ def run_intraday(live: bool) -> None:
         "this is paper trading to gather live evidence"
     )
     print(
+        "breakout rule (orb-v7): only a stock up 2% on the day while 60% of the stocks are up and its sector is not down, "
+        "the strongest first; every other signal is recorded as skipped"
+    )
+    print(
         "gap-only (own account): the same gap, bought on the 09:30 close without a breakout, skipping crowded gap days "
-        "and stocks already up 3%; the stocks that qualify share the free cash (gaponly-v5)"
+        "stocks already up 3%, a weak market (under 40% of stocks up) and a falling sector; the stocks that qualify share "
+        "the free cash (gaponly-v6)"
     )
     if news is not None:
         print(
@@ -171,7 +184,8 @@ def run_intraday(live: bool) -> None:
             "news by fixed rules (STRATEGY.md, News-Catalyst v1). Untested: paper only"
         )
     print(
-        f"broker calls (own account, Rs {CALLS_CASH:,.0f}): follows the broker's Intraday BUY calls; needs /research_start each day. "
+        f"broker calls (own account, Rs {CALLS_CASH:,.0f}): follows the broker's Intraday BUY calls, "
+        "except while under 40% of stocks are up (calls-v3); needs /research_start each day. "
         "Not proven: paper only"
     )
     if notify:
@@ -188,6 +202,7 @@ class Angel(NamedTuple):
     context: Callable[[str, float], EntryContext]  # the quote checks and entry record, with the market regime added
     tokens: Dict[str, str]
     is_trade_to_trade: Callable[[str], bool]
+    breadth: Callable[[], Optional[float]]  # the share of stocks up on the day right now; None when it cannot be measured
 
 
 def start_angel(settings, sessions, universe, notify) -> Optional[Angel]:
@@ -201,8 +216,15 @@ def start_angel(settings, sessions, universe, notify) -> Optional[Angel]:
     stream.start()
     quotes = AngelQuotes(lambda: stream.api, tokens, universe)
     is_trade_to_trade = TradeToTrade(CACHE_DIR)
-    context = with_regime(quotes.entry_context, RegimeProvider(MarketContextProvider(), sessions))
-    return Angel(stream, no_trade_to_trade(context, is_trade_to_trade), tokens, is_trade_to_trade)
+    regime = RegimeProvider(MarketContextProvider(), sessions)
+    context = with_regime(quotes.entry_context, regime)
+
+    def breadth() -> Optional[float]:
+        now = regime.current()
+        share = now.facts.get("breadth") if now else None
+        return float(share) if isinstance(share, (int, float)) else None
+
+    return Angel(stream, no_trade_to_trade(context, is_trade_to_trade), tokens, is_trade_to_trade, breadth)
 
 
 def swing_holdings(sessions) -> Set[str]:

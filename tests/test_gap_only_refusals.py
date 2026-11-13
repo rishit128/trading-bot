@@ -19,7 +19,7 @@ def bars(prior_close, last_close, opened=None):
 
 def scan(gappers, others=20, **extra):
     stocks = {f"G{i}": bars(100, 100, 103) for i in range(gappers)}
-    stocks.update({f"F{i}": bars(100, 100, 100) for i in range(others)})
+    stocks.update({f"F{i}": bars(100, 100, 100.5) for i in range(others)})  # a rising market, no gap
     stocks.update(extra)
     return st.gap_only_refusals(stocks, DAY)
 

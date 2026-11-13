@@ -18,7 +18,11 @@ SCHEMA_VERSION = "signal-v1"  # the llm.SIGNAL_SCHEMA output contract, frozen fo
 #           stopped out after more than a day in the position could be bought straight back, against STRATEGY.md).
 # swing-v6 (2026-10-29): a held stock is sold when the broker's Swing Trade / Momentum / Stellar Pick BUY call on it ended
 #           (stop, target or profit booked) in the last day, after we bought it (HOUSE_EXIT, default on).
-STRATEGY_VERSION = "swing-v6"
+# swing-v7 (2026-11-13, the owner's point that positions were too small): whole shares are rounded to the count nearest the
+#           position's target, at most 25% over it (src.engine.risk_engine.ROUND_UP_LIMIT), instead of always down. 10-year
+#           backtest at the real fees: +281% (Sharpe 0.85) against +235% (0.78); last 3 years +133% (1.34) against +90% (1.05).
+#           Fewer, larger positions and a 2.5% fee floor were tested the same day and did worse: not adopted.
+STRATEGY_VERSION = "swing-v7"
 
 # The intraday engine (a separate paper account). Recorded with every signal so results can be split by system version.
 #   orb-v1: sizing borrowed from the swing settings (5% of equity), stop/target replay dropped each bar's tail, no record
@@ -36,7 +40,12 @@ STRATEGY_VERSION = "swing-v6"
 #   orb-v6 (2026-11-06, the owner's decision; NOT proven): the opening range is the 09:15 bar alone, signals from 09:20, stop at
 #           its low, no target (out at 15:15). Screen E4a: lost less than orb-v5 on the same stock-days (+0.041% a date, t 2.7, both
 #           halves) but still lost money. Fees: src.engine.costs.intraday_fees (the account's 0.03% plan).
-INTRADAY_VERSION = "orb-v6"
+#   orb-v7 (2026-11-12, the owner's decision: judgement on the present market, not a backtest pass; NOT proven): a breakout is
+#           bought only in a stock up at least 2% on its previous close while at least 60% of the scanned stocks are up on
+#           theirs, and one scan's signals are tried strongest first (was the list's order). Every other signal is recorded
+#           as SKIPPED. Nor is it bought when its sector (Yahoo's, src.data.sectors) is down on the day.
+#           Check on the 8-year bars: about -0.09% a trade in 2026 against -0.22% for the first five in list order.
+INTRADAY_VERSION = "orb-v7"
 # The gap-only paper strategy (its own account): a gap >= 2%, bought on the 09:30 close with no breakout. (The gap-and-go account,
 # a gap plus a breakout by 10:30, ran as gapgo-v1 to v3 and was removed on 2026-11-09.)
 # gaponly-v2: v1 plus the universe and Angel One entry checks of orb-v4 (bumped 2026-10-26).
@@ -45,13 +54,18 @@ INTRADAY_VERSION = "orb-v6"
 # session before the gap; the refused signals stay recorded.
 # gaponly-v5 (2026-11-06, the owner's decision): the stocks that qualify at 09:30 share the free cash evenly (never under 20% of
 # equity each; the 0.5%-of-equity stop-loss limit still applies), instead of at most 20% each. Entries unchanged.
-GAPONLY_VERSION = "gaponly-v5"
+# gaponly-v6 (2026-11-12, the owner's decision: use the market details the bot already has; NOT proven): no entry while under 40%
+# of the scanned stocks are above their previous close (a weak market), nor in a stock whose sector is down on the day.
+# In the account's own record the weak-market days lost -0.86% a trade (20 trades, 5 days) against -0.19% on strong days.
+GAPONLY_VERSION = "gaponly-v6"
 # The news-catalyst paper strategy (its own account): a material exchange filing, read by the AI, traded long by fixed
 # rules (src.news.strategy).
 NEWS_VERSION = "news-v5"  # v5: v4 plus the trade-to-trade check of orb-v5; v2: gap floor 0% (was +2%), live order-book veto; v3: rule A until 12:00, filings after 14:30 roll over, no entry into an F&O short build-up; v4: rule A holds its stop within 0.6-3% instead of refusing the setup, no order-book balance veto (the spread veto stays)
 # The broker-calls paper account (its own account, Rs 30,000): the broker's Intraday BUY calls, followed (src.intraday.calls).
 # calls-v2 (2026-11-06): 3 positions sharing Rs 28,000 of the Rs 30,000, about Rs 9,333 each (was the shared 5 x 20%).
-CALLS_VERSION = "calls-v2"
+# calls-v3 (2026-11-12, the owner's decision; NOT proven): a call is not followed while under 40% of stocks are above their
+# previous close (the regime's live breadth): a long against a falling market.
+CALLS_VERSION = "calls-v3"
 
 VERSIONS = {
     "feature": FEATURE_VERSION,

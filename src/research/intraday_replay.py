@@ -39,9 +39,11 @@ from src.intraday.strategy import (
     GAP_ONLY_ENTRY_UNTIL,
     ORB_ENTRY_FROM,
     Setup,
+    day_gains,
     find_gap_only_setup,
     find_orb_setup,
     find_setup,
+    orb_leaders,
 )
 from src.versions import GAPONLY_VERSION, INTRADAY_VERSION
 
@@ -154,6 +156,7 @@ def _run_session(engine: IntradayEngine, feed: ReplayFeed, day: Date) -> None:
 Rule = Callable[[str, pd.DataFrame, Optional[float]], Optional[Setup]]
 STRATEGIES: Dict[str, Tuple[Rule, dtime, str, str]] = {
     "orb": (find_orb_setup, ENTRY_UNTIL, "INTRADAY", INTRADAY_VERSION),
+    "orb6": (find_orb_setup, ENTRY_UNTIL, "INTRADAY", "orb-v6"),  # to 2026-11-12: any breakout, in the list's order
     "orb5": (find_setup, ENTRY_UNTIL, "INTRADAY", "orb-v5"),  # the breakout account's rule to 2026-11-06 (15-minute range, 2R)
     "gaponly": (find_gap_only_setup, GAP_ONLY_ENTRY_UNTIL, "GAP-ONLY", GAPONLY_VERSION),
 }
@@ -170,7 +173,8 @@ def replay(
 ) -> ReplayResult:
     """Run the live engine over every stored session in [start, end] and return what it did. One continuous account, so
     equity compounds and drawdowns carry across days exactly as they would live. `strategy` picks the rule the same way
-    the launcher (src/app/intraday_cli.py) does: "orb", "orb5" or "gaponly"."""
+    the launcher (src/app/intraday_cli.py) does: "orb" (orb-v7: leaders in a rising market, strongest first), "orb6", "orb5" or
+    "gaponly"."""
     if strategy not in STRATEGIES:
         raise ValueError(f"strategy must be one of {sorted(STRATEGIES)}, got {strategy!r}")
     days = session_days(bars, start, end)
@@ -189,10 +193,8 @@ def replay(
             slippage=SLIPPAGE if config.slippage is None else config.slippage,
         )
         rule, until, label, version = STRATEGIES[strategy]
-        gap = strategy not in (
-            "orb",
-            "orb5",
-        )  # the gap rules need the previous session's close and record capped signals, as live
+        # orb-v7 and the gap rule need the previous session's close and record capped signals, as live
+        gap = strategy in ("orb", "gaponly")
         engine = IntradayEngine(
             broker,
             symbols,
@@ -206,7 +208,9 @@ def replay(
             universe_source="",
             now_fn=lambda: feed.now,
             find_setup=rule,
-            entry_from=ORB_ENTRY_FROM if strategy == "orb" else ENTRY_FROM,
+            entry_from=ORB_ENTRY_FROM if strategy in ("orb", "orb6") else ENTRY_FROM,
+            refusals_fn=orb_leaders if strategy == "orb" else None,
+            priority_fn=day_gains if strategy == "orb" else None,
             entry_until=until,
             label=label,
             version=version,

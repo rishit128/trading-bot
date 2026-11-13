@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from datetime import time as dtime
-from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 import pandas as pd
 from sqlalchemy import func, select
@@ -80,6 +80,9 @@ class IntradayEngine:
     version: str = INTRADAY_VERSION  # recorded with every signal and universe row
     # (this scan's bars, today) -> (symbol) -> why a found setup is not bought, or None: refusals that need the whole scan. None = no such rule
     refusals_fn: Optional[Callable[[Dict[str, pd.DataFrame], date], Callable[[str], Optional[str]]]] = None
+    # (this scan's bars, today) -> a score by symbol: the scan tries its stocks highest score first (unscored ones last), so the
+    # free positions go to the strongest signals and not to the first in the list. None = the list's order
+    priority_fn: Optional[Callable[[Dict[str, pd.DataFrame], date], Mapping[str, float]]] = None
     record_capped: bool = False  # also record (as SKIPPED) the signals the position limit left out: the gap experiments
     # True: the setups of one scan are bought together, the free cash split evenly among them (never under max_position_pct of
     # equity each; the risk_pct stop-loss limit still applies), so 2 qualifying stocks get far more than 20% each. Gap-only.
@@ -267,6 +270,9 @@ class IntradayEngine:
             f"the scan got bars for only {len(bars)} of {len(candidates)} stocks (under {MIN_COVERAGE:.0%}): "
             "breakouts may be missed",
         )
+        if self.priority_fn:
+            score = self.priority_fn(bars, local.date())
+            bars = dict(sorted(bars.items(), key=lambda item: -score.get(item[0], float("-inf"))))
         entered = skipped = 0
         cash = pf.cash
         pending: List[st.Setup] = []  # with split_cash: this scan's setups, bought after the scan

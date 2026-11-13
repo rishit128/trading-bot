@@ -33,6 +33,7 @@ def test_env_typo_fails_loudly_instead_of_allowing_500_percent_positions(monkeyp
 
 
 def test_env_overrides_are_applied(monkeypatch):
+    monkeypatch.delenv("MIN_POSITION_PCT", raising=False)  # the real .env must not leak in
     monkeypatch.setenv("MAX_POSITION_PCT", "0.10")
     monkeypatch.setenv("REBUY_COOLDOWN_HOURS", "6")
     monkeypatch.setenv("WATCHLIST", "nvda, amd")

@@ -82,7 +82,7 @@ def test_an_open_intraday_buy_call_is_bought_at_the_calls_stop_and_target(tmp_pa
     assert held["symbol"] == "AAA" and held["qty"] == 93 and held["stop"] == 99.0  # Rs 28,000 / 3 at Rs 100
     row = signals(broker)["AAA"]
     assert (
-        row.outcome == "ENTERED" and row.system_version == "calls-v2" and row.target == 102.0 and row.house_call == "Intraday buy"
+        row.outcome == "ENTERED" and row.system_version == "calls-v3" and row.target == 102.0 and row.house_call == "Intraday buy"
     )
     assert "broker's Intraday call" in messages[0] and "breakout" not in messages[0]
 
@@ -168,3 +168,13 @@ def test_the_risk_rule_still_caps_a_call_with_a_wide_stop(tmp_path):
     eng, broker, _, _ = setup(tmp_path, [call(stop=95.0)])
     eng.step()
     assert broker.holdings()[0]["qty"] == 30  # 0.5% of Rs 30,000 = Rs 150 at risk over a Rs 5 stop distance
+
+
+def test_a_call_is_not_followed_in_a_weak_market_and_is_when_the_market_cannot_be_measured(tmp_path):
+    eng, broker, *_ = setup(tmp_path, [call()], breadth_fn=lambda: 0.39)
+    assert "entered 0" in eng.step() and not broker.holdings()
+    assert "weak market: 39% of stocks are up" in signals(broker)["AAA"].reason
+    for i, breadth in enumerate((0.40, None)):
+        (tmp_path / str(i)).mkdir()
+        eng, broker, *_ = setup(tmp_path / str(i), [call()], breadth_fn=lambda b=breadth: b)
+        assert "entered 1" in eng.step()

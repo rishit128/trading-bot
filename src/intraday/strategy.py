@@ -39,6 +39,7 @@ import numpy as np
 import pandas as pd
 
 from src.data.india import IST
+from src.data.market_regime import WEAK_BREADTH
 from src.engine.ports import BAR
 
 RANGE_BARS = 3
@@ -46,6 +47,12 @@ MARKET_OPEN = dtime(9, 15)
 ENTRY_FROM, ENTRY_UNTIL, SQUARE_OFF = dtime(9, 30), dtime(14, 0), dtime(15, 15)
 # orb-v6 (2026-11-06): the breakout account's range is the 09:15 bar alone, signals from 09:20, no target (screen E4a)
 ORB_RANGE_BARS, ORB_ENTRY_FROM = 1, dtime(9, 20)
+# orb-v7 (2026-11-12): a breakout is bought only in a leader (up at least ORB_MIN_GAIN on its previous close) while the market
+# is rising (at least ORB_MIN_BREADTH of the scanned stocks up on theirs); a scan's signals are tried strongest first
+ORB_MIN_BREADTH, ORB_MIN_GAIN = 0.60, 0.02
+# 2026-11-12 (orb-v7, gaponly-v6): nothing is bought in a stock whose sector is down on the day (the median of its
+# stocks in the scan, at least MIN_SECTOR_STOCKS of them); gap-only also buys nothing in a weak market (under WEAK_BREADTH up)
+MIN_SECTOR_STOCKS = 3
 MIN_RANGE, MAX_RANGE = 0.003, 0.025
 VOLUME_MULT = 1.5
 TARGET_R = 2.0
@@ -232,7 +239,68 @@ def _breakout_setup(
     )
 
 
-def gap_only_refusals(bars: Mapping[str, pd.DataFrame], day: date) -> Callable[[str], Optional[str]]:
+def day_gains(bars: Mapping[str, pd.DataFrame], day: date) -> Dict[str, float]:
+    """Each stock's latest price over its previous session's close, less 1; only the stocks whose frame holds both. `bars` are
+    the scan's frames with earlier sessions."""
+    start = pd.Timestamp(day, tz=IST)
+    gains: Dict[str, float] = {}
+    for symbol, frame in bars.items():
+        earlier = np.asarray(pd.DatetimeIndex(frame.index) < start)
+        if not len(frame) or earlier[-1] or not earlier.any():
+            continue
+        close = frame["Close"].to_numpy(float)
+        gain = close[-1] / close[earlier][-1] - 1
+        if np.isfinite(gain):
+            gains[symbol] = float(gain)
+    return gains
+
+
+def sector_gains(gains: Mapping[str, float], sectors: Mapping[str, str]) -> Dict[str, float]:
+    """Each industry group's gain on the day: the median of its stocks' gains, for the groups with at least MIN_SECTOR_STOCKS
+    stocks in `gains`. `sectors` is symbol -> group (src.data.sectors)."""
+    members: Dict[str, list] = {}
+    for symbol, gain in gains.items():
+        if symbol in sectors:
+            members.setdefault(sectors[symbol], []).append(gain)
+    return {sector: float(np.median(g)) for sector, g in members.items() if len(g) >= MIN_SECTOR_STOCKS}
+
+
+def weak_sector(symbol: str, sectors: Mapping[str, str], by_sector: Mapping[str, float]) -> Optional[str]:
+    """Why `symbol` is not bought on its group's account, or None (also when its group is unknown or too small to read)."""
+    gain = by_sector.get(sectors.get(symbol, ""))
+    if gain is None or gain > 0:
+        return None
+    return f"weak sector: the median {sectors[symbol]} stock is {gain:+.1%} on the day"
+
+
+def orb_leaders(
+    bars: Mapping[str, pd.DataFrame], day: date, sectors: Optional[Mapping[str, str]] = None
+) -> Callable[[str], Optional[str]]:
+    """orb-v7's refusals for one scan: (symbol) -> why its breakout is not bought, or None. A breakout is noise unless money
+    is really moving into the stock and nothing is pulling against it: the market must be rising (ORB_MIN_BREADTH of the
+    scanned stocks above their previous close), the stock must be one of the day's leaders (up ORB_MIN_GAIN on its own) and its
+    industry group must not be down on the day (`sectors`: symbol -> group; None = no sector check)."""
+    gains = day_gains(bars, day)
+    breadth = sum(g > 0 for g in gains.values()) / len(gains) if gains else 0.0
+    by_sector = sector_gains(gains, sectors or {})
+
+    def refusal(symbol: str) -> Optional[str]:
+        if len(gains) < GAP_ONLY_MIN_COUNTED * len(bars):
+            return f"the market cannot be measured (previous close for only {len(gains)} of {len(bars)})"
+        if breadth < ORB_MIN_BREADTH:
+            return f"weak market: {breadth:.0%} of stocks are up (needs {ORB_MIN_BREADTH:.0%})"
+        gain = gains.get(symbol)
+        if gain is None or gain < ORB_MIN_GAIN:
+            shown = "unknown" if gain is None else f"{gain:+.1%}"
+            return f"not a leader: {shown} on the day (needs {ORB_MIN_GAIN:+.0%})"
+        return weak_sector(symbol, sectors or {}, by_sector)
+
+    return refusal
+
+
+def gap_only_refusals(
+    bars: Mapping[str, pd.DataFrame], day: date, sectors: Optional[Mapping[str, str]] = None
+) -> Callable[[str], Optional[str]]:
     """gaponly-v4's two refusals for one scan of a session: (symbol) -> why it is not bought, or None. `bars` are the stocks' finished
     bars, with earlier sessions. Counts every stock that opened at least GAP_MIN above its previous close."""
     gappers = counted = 0
@@ -245,6 +313,9 @@ def gap_only_refusals(bars: Mapping[str, pd.DataFrame], day: date) -> Callable[[
         if len(today) and len(closes):
             counted += 1
             gappers += float(today["Open"].iloc[0]) >= float(closes.iloc[-1]) * (1 + GAP_MIN)
+    gains = day_gains(bars, day)  # gaponly-v6: the market and the stock's industry group, as the scan sees them
+    breadth = sum(g > 0 for g in gains.values()) / len(gains) if gains else None
+    by_sector = sector_gains(gains, sectors or {})
 
     def refusal(symbol: str) -> Optional[str]:
         if counted < GAP_ONLY_MIN_COUNTED * len(bars):
@@ -254,7 +325,9 @@ def gap_only_refusals(bars: Mapping[str, pd.DataFrame], day: date) -> Callable[[
         rise = prior_rise.get(symbol)
         if rise is not None and rise > GAP_ONLY_MAX_PRIOR_RISE:
             return f"already up {rise:.1%} the session before the gap (limit {GAP_ONLY_MAX_PRIOR_RISE:.0%})"
-        return None
+        if breadth is not None and breadth < WEAK_BREADTH:
+            return f"weak market: {breadth:.0%} of stocks are up (needs {WEAK_BREADTH:.0%})"
+        return weak_sector(symbol, sectors or {}, by_sector)
 
     return refusal
 

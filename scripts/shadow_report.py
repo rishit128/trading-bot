@@ -77,7 +77,7 @@ def scored_signals() -> pd.DataFrame:
     signals = read(
         "intraday.db",
         "select day, symbol, bar_time, signal_price, stop, target, outcome, final_signal from intraday_signals "
-        "where system_version in ('orb-v4', ?) and signal_price > 0 and coalesce(reason, '') not like '%trade-to-trade%'",
+        "where system_version in ('orb-v4', 'orb-v6', ?) and signal_price > 0 and coalesce(reason, '') not like '%trade-to-trade%'",
         (INTRADAY_VERSION,),
     )
     if signals.empty:
@@ -109,7 +109,7 @@ def tag_news(signals: pd.DataFrame) -> pd.DataFrame:
 
 def report_news_breakouts(signals: pd.DataFrame) -> None:
     print(
-        f"\nS1 breakouts in stocks with material good news (orb-v4 and {INTRADAY_VERSION}, net of costs, taken or skipped, not trade-to-trade):"
+        f"\nS1 breakouts in stocks with material good news (orb-v4, orb-v6 and {INTRADAY_VERSION}, net of costs, taken or skipped, not trade-to-trade):"
     )
     if signals.empty:
         print("  no signals")

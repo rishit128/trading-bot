@@ -107,14 +107,16 @@ def test_an_account_carries_over_from_one_session_to_the_next():
 
 
 def test_a_stock_too_dear_for_the_account_is_skipped_with_its_reason_and_costs_nothing():
-    result = replay(scripted(days=1, price_scale=40.0), ReplayConfig(capital=20_000.0))  # ~Rs 4,040 a share > the Rs 4,000 cap
+    result = replay(
+        scripted(days=1, price_scale=40.0), ReplayConfig(capital=20_000.0), strategy="orb6"
+    )  # ~Rs 4,040 a share > the Rs 4,000 cap
     assert result.trades.empty and result.daily_equity.iloc[-1] == 20_000
     [signal] = result.signals.to_dict("records")
     assert signal["outcome"] == "SKIPPED" and "costs more than the largest position" in signal["reason"]
 
 
 def test_the_replay_is_deterministic():
-    a, b = replay(scripted(days=2)), replay(scripted(days=2))
+    a, b = replay(scripted(days=2), strategy="orb6"), replay(scripted(days=2), strategy="orb6")
     times = ["opened_at", "closed_at"]
     pd.testing.assert_frame_equal(a.trades.drop(columns=times), b.trades.drop(columns=times))
     pd.testing.assert_series_equal(a.daily_equity, b.daily_equity)
@@ -137,7 +139,7 @@ def test_progress_is_reported_once_per_session():
 
 
 def test_the_slippage_setting_reaches_the_broker():
-    result = replay(scripted(days=1), ReplayConfig(slippage=0.0))
+    result = replay(scripted(days=1), ReplayConfig(slippage=0.0), strategy="orb6")
     assert result.trades["entry_price"].iloc[0] == pytest.approx(101.0)
 
 
@@ -147,12 +149,12 @@ def test_the_summary_reports_return_drawdown_win_rate_exits_and_skips():
     assert s.total_return > 0 and s.end > s.start and s.max_drawdown == 0.0 and s.profitable_days == 1.0
     assert s.signals == {"ENTERED": 3} and s.fees > 0
     assert s.first_half_pnl + s.second_half_pnl == pytest.approx(s.end - s.start)
-    empty = summarise(replay(scripted(days=1, price_scale=40.0), ReplayConfig(capital=20_000.0)))
+    empty = summarise(replay(scripted(days=1, price_scale=40.0), ReplayConfig(capital=20_000.0), strategy="orb6"))
     assert (empty.trades, empty.total_return, empty.win_rate, empty.signals) == (0, 0.0, 0.0, {"SKIPPED": 1})
 
 
 def test_the_summary_prints_as_text():
-    text = format_summary(summarise(replay(scripted(days=2), ReplayConfig(capital=20_000.0))))
+    text = format_summary(summarise(replay(scripted(days=2), ReplayConfig(capital=20_000.0), strategy="orb6")))
     assert "2 sessions, 2 trades | win rate 100%" in text and "start Rs 20,000 -> end Rs" in text and "max drawdown 0.0%" in text
 
 
@@ -173,7 +175,7 @@ def flat_after_entry():
 
 
 def test_a_position_still_open_at_1515_is_squared_off_and_the_account_ends_the_session_flat():
-    result = replay(flat_after_entry(), ReplayConfig(capital=20_000.0, slippage=0.0))
+    result = replay(flat_after_entry(), ReplayConfig(capital=20_000.0, slippage=0.0), strategy="orb6")
     [trade] = result.trades.to_dict("records")
     assert trade["reason"] == "SIGNAL" and trade["exit_price"] == pytest.approx(101.0) and trade["qty"] == 39
     assert trade["closed_at"].astimezone(IST).time().isoformat() == "15:15:15"
@@ -181,9 +183,11 @@ def test_a_position_still_open_at_1515_is_squared_off_and_the_account_ends_the_s
 
 
 def test_a_losing_session_shows_as_a_drawdown_and_trades_come_back_oldest_first():
-    s = summarise(replay(flat_after_entry(), ReplayConfig(capital=20_000.0)))  # slippage + fees make a flat trade a small loss
+    s = summarise(
+        replay(flat_after_entry(), ReplayConfig(capital=20_000.0), strategy="orb6")
+    )  # slippage + fees make a flat trade a small loss
     assert s.total_return < 0 and s.max_drawdown == pytest.approx(s.total_return) and s.profitable_days == 0.0
-    trades = replay(scripted(days=3)).trades
+    trades = replay(scripted(days=3), strategy="orb6").trades
     assert trades["opened_at"].is_monotonic_increasing
 
 

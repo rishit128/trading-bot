@@ -55,9 +55,9 @@ ACCOUNTS = {
         INTRADAY_VERSION,
         0.0025,
         -0.0009,
-        "screen E4a, 72 sessions, 9,478 trades",
+        "orb-v7 on the Angel One bars of 2026, 2,110 signals",
         True,
-        "2026-11-09",
+        "2026-11-13",
     ),
     "gaponly": Account(
         "gaponly.db",
@@ -66,7 +66,7 @@ ACCOUNTS = {
         0.0044,
         "replay of 68 sessions, 151 trades, the sample the rule came from",
         True,
-        "2026-11-09",
+        "2026-11-13",
     ),
     "news": Account("news.db", NEWS_VERSION, 0.0025, None, "no backtest (needs results history)", True),
     "calls": Account(
@@ -76,9 +76,9 @@ ACCOUNTS = {
         -0.0003,
         "first look at 15 BUY calls on saved Angel One bars",
         True,
-        "2026-11-09",
+        "2026-11-13",
     ),
-    "swing": Account("trading.db", STRATEGY_VERSION, 0.03, 0.081, "10-year live-configuration backtest", False, "2026-10-30"),
+    "swing": Account("trading.db", STRATEGY_VERSION, 0.03, 0.081, "10-year live-configuration backtest", False, "2026-11-16"),
 }
 
 

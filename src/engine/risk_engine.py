@@ -48,6 +48,9 @@ def drawdown_pause(peak: float, equity: float, halted_since, today, limit: float
     return peak, halted_since
 
 
+ROUND_UP_LIMIT = 1.25  # a position may be rounded up to this share of its target, never more
+
+
 def _reject(reason: str) -> RiskDecision:
     return RiskDecision(False, 0, reason)
 
@@ -120,9 +123,15 @@ class RiskEngine:
         exposure_room = p.equity * lim.max_portfolio_exposure_pct - total_exposure
         budget = min(position_room, exposure_room, p.cash)
 
-        if budget < price:
-            return _reject(f"no room: position_room={position_room:,.0f} exposure_room={exposure_room:,.0f} cash={p.cash:,.0f}")
         qty = int(budget // price)
+        # swing-v7: whole shares are rounded to the count nearest the target, not always down (a Rs 1,480 share on a Rs 2,635
+        # target was one share, 56% of it). One more share is bought only within ROUND_UP_LIMIT of the target and the
+        # exposure and cash limits.
+        hard_room = min(position_room * ROUND_UP_LIMIT, exposure_room, p.cash)
+        if (qty + 1) * price <= hard_room and abs((qty + 1) * price - position_room) < abs(qty * price - position_room):
+            qty += 1
+        if qty < 1:
+            return _reject(f"no room: position_room={position_room:,.0f} exposure_room={exposure_room:,.0f} cash={p.cash:,.0f}")
         if self.fees is not None and lim.max_fee_drag_pct > 0:
             value = qty * price
             drag = (self.fees(Action.BUY, value) + self.fees(Action.SELL, value)) / value

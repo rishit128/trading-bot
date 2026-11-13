@@ -9,7 +9,7 @@ import pytest
 
 from src.config import RiskLimits
 from src.engine.costs import india_delivery_fees
-from src.engine.risk_engine import Portfolio, RiskEngine, drawdown_pause
+from src.engine.risk_engine import ROUND_UP_LIMIT, Portfolio, RiskEngine, drawdown_pause
 
 # min_position_pct == max_position_pct here: a flat 5% regardless of confidence, so the existing quantity assertions
 # below (written before confidence-scaled sizing existed) still hold. Scaling itself is tested separately below.
@@ -35,6 +35,25 @@ def pf(**kw):
 def test_buy_is_capped_at_position_limit():
     d = ENGINE.evaluate("BUY", 0.9, "AAPL", 150.0, pf())
     assert d.approved and d.quantity == 33  # 5% of 100k = 5000 -> 33 shares
+
+
+def test_whole_shares_are_rounded_to_the_count_nearest_the_target_but_never_far_over_it():
+    target = pf(
+        cash=100_000.0, equity=26_350.0, start_of_day_equity=26_350.0, peak_equity=26_350.0
+    )  # 10% of 26,350 = a Rs 2,635 target
+    lim = RiskLimits(min_position_pct=0.10, max_position_pct=0.10, max_portfolio_exposure_pct=0.90, min_confidence=0.6)
+    engine = RiskEngine(lim)
+    assert engine.evaluate("BUY", 0.9, "A", 1480.0, target).quantity == 2  # Rs 2,960 is nearer Rs 2,635 than Rs 1,480
+    assert engine.evaluate("BUY", 0.9, "B", 1000.0, target).quantity == 3  # Rs 3,000 nearer than Rs 2,000, within 25%
+    assert engine.evaluate("BUY", 0.9, "C", 1900.0, target).quantity == 1  # Rs 3,800 would be 44% over the target
+    assert engine.evaluate("BUY", 0.9, "D", 3000.0, target).quantity == 1  # one share 14% over: nearer than none
+    assert not engine.evaluate("BUY", 0.9, "E", 3400.0, target).approved  # one share 29% over: refused
+    assert (
+        engine.evaluate(
+            "BUY", 0.9, "A", 1480.0, pf(cash=2_000.0, equity=26_350.0, start_of_day_equity=26_350.0, peak_equity=26_350.0)
+        ).quantity
+        == 1
+    )  # never past the cash
 
 
 def test_buy_rejected_when_position_full():
@@ -285,6 +304,7 @@ def test_an_approved_buy_never_breaks_a_limit(seed):
         assert value <= p.cash + 1e-6  # never spends money it lacks
         assert value <= p.equity * engine.position_pct(conf) + price  # size follows confidence
         assert value <= p.equity * limits.max_position_pct + price  # ... and the position cap
+        assert value <= max(p.equity * engine.position_pct(conf) * ROUND_UP_LIMIT, value - price + 1e-6)  # rounded up at most 25%
         assert sum(p.positions.values()) + value <= p.equity * limits.max_portfolio_exposure_pct + price
         assert len(p.positions) < limits.max_open_positions  # never a slot beyond the cap
         assert engine.halt_reason(p) is None  # never buys while halted
