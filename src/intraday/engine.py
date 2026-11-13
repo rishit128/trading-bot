@@ -259,10 +259,14 @@ class IntradayEngine:
         sells = open_sells(self._calls) if self.act_on_calls else {}
         candidates = [s for s in self.universe + added if s not in pf.positions and s not in self._done_today]
         try:
-            bars = self.fetch_bars(candidates)
+            # the whole list, not just the candidates: the market and sector checks must see the stocks already bought or
+            # skipped today too (mostly the risers), or the market reads weaker as the day goes on
+            market = self.fetch_bars(self.universe + added) if self.refusals_fn or self.priority_fn else None
+            bars = {s: market[s] for s in candidates if s in market} if market is not None else self.fetch_bars(candidates)
         except Exception as e:
             self._flag("coverage", True, f"the 5-minute download failed ({type(e).__name__}: {e}): no scan this cycle")
             raise
+        market = bars if market is None else market
         self._with_data = max(self._with_data, len(bars))
         self._flag(
             "coverage",
@@ -271,7 +275,7 @@ class IntradayEngine:
             "breakouts may be missed",
         )
         if self.priority_fn:
-            score = self.priority_fn(bars, local.date())
+            score = self.priority_fn(market, local.date())
             bars = dict(sorted(bars.items(), key=lambda item: -score.get(item[0], float("-inf"))))
         entered = skipped = 0
         cash = pf.cash
@@ -296,7 +300,7 @@ class IntradayEngine:
                 skipped += 1
                 continue
             if self.refusals_fn and refusal is None:
-                refusal = self.refusals_fn(bars, local.date())
+                refusal = self.refusals_fn(market, local.date())
             why_not = refusal(setup.symbol) if refusal else None
             if why_not:
                 self._done_today.add(setup.symbol)

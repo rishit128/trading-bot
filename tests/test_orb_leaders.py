@@ -62,6 +62,22 @@ def test_a_scan_gives_its_free_positions_to_the_highest_scores(tmp_path):
     assert {h["symbol"] for h in broker.holdings()} == {"CCC", "BBB"}
 
 
+def test_the_market_check_still_sees_stocks_already_handled_today(tmp_path):
+    stocks = {s: make_bars(BREAKOUT, volumes=VOLS) for s in ("AAA", "BBB", "CCC")}
+    seen = []
+
+    def refusals(scan, day):
+        seen.append(sorted(scan))
+        return lambda symbol: None
+
+    eng, *_ = engine(tmp_path, stocks, at(9, 40), prices={s: 101.5 for s in stocks}, refusals_fn=refusals)
+    eng.universe = list(stocks)
+    eng._new_day(at(9, 40).date().isoformat())
+    eng._done_today.update({"AAA", "BBB"})  # skipped earlier today: not scanned again, but still part of the market
+    assert "scanned 1 stocks" in eng.step()
+    assert seen == [["AAA", "BBB", "CCC"]]
+
+
 def test_the_breakout_account_is_wired_to_the_leaders_rule():
     import inspect
 

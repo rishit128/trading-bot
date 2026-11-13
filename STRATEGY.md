@@ -1649,6 +1649,13 @@ the intraday accounts knew nothing about industry groups. The owner asked for bo
   buy is the filing. **swing-v6 is unchanged**: its AI already reads the market context and the hot groups (`MarketPulse`).
 Refused signals are recorded as SKIPPED with the reason. Forward tests of orb-v7, gaponly-v6 and calls-v3 start 2026-11-13.
 
+**Fix, 2026-11-13 (first live day; no version change).** The market and sector counts of ORB and gap-only were taken over the
+stocks still being scanned, and a scan leaves out every stock already bought or skipped that day: mostly the risers. So the
+market read weaker as the day went on (at 12:00 on 13 Nov ORB saw 15% up while all 500 stocks showed 34%). The counts now
+use every stock in the list; only the scanning is limited to the remaining ones (`IntradayEngine._scan`). This is what the
+rule described from the start (and what the 8-year check while choosing it measured), and no orb-v7 or gaponly-v6 trade
+was made before the fix, so the versions and the forward-test start stand. The replay tool runs the same engine, so it is fixed too.
+
 ## Swing position size: rounding to the nearest share (swing-v7, 2026-11-13; the owner's point)
 
 The owner found the swing positions too small to earn much from a winner. They were smaller than intended: the target is 8.8%
