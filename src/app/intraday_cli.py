@@ -21,6 +21,7 @@ from src.app.wiring import (
 from src.data.angel import CACHE_DIR, AngelStream, TradeToTrade, make_stream
 from src.data.angel_bars import AngelBars
 from src.data.angel_quotes import AngelQuotes, EntryContext, no_trade_to_trade
+from src.data.in_play import InPlay
 from src.data.india import IndiaClock
 from src.data.intraday_bars import BarArchive, fetch_5m_bars, shared_download
 from src.data.market_context import MarketContextProvider
@@ -71,12 +72,25 @@ def run_intraday(live: bool) -> None:
     token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
     notify = Notifier(token, chat_id).send if token and chat_id else None
     universe, label = select_universe(settings.intraday_universe)
-    sectors = load_sectors(CACHE_DIR, universe)  # symbol -> sector; a stock not yet looked up has no sector check
     # Angel One streams the universe into angel_bars; its bars, prices and quote checks serve every account here (and the swing
     # bot's quote checks and prices), Yahoo being the automatic backup. See src.data.angel_bars.
     sessions = make_session_factory(intraday_db_url())
     angel = start_angel(settings, sessions, universe, notify)
     stream = angel.stream if angel else None
+    in_play = angel.in_play if angel else None
+    # symbol -> sector, the list first and then every NSE stock (the whole-market sector check); a stock not yet looked up
+    # has no sector check
+    sectors = load_sectors(CACHE_DIR, universe + sorted(set(angel.tokens) - set(universe)) if angel else universe)
+
+    def orb_refusals(scan, day):
+        """orb-v8: the market and the sectors from the whole-market scan; while it is stale, from the list's own bars (the
+        stocks added from the scan are left out there, being chosen for rising)."""
+        market = in_play.gains() if in_play else None
+        if market is None:
+            market = day_gains({s: f for s, f in scan.items() if s in base}, day)
+        return orb_leaders(scan, day, sectors, market=market)
+
+    base = set(universe)
     broker = make_paper_broker(settings, intraday_db_url(), fees=intraday_fees, stream=stream)
 
     def engine(account, **rule: Any) -> IntradayEngine:
@@ -131,8 +145,9 @@ def run_intraday(live: bool) -> None:
             archive=BarArchive(broker.sessions) if settings.intraday_archive else None,
             find_setup=find_orb_setup,
             entry_from=ORB_ENTRY_FROM,
-            refusals_fn=partial(orb_leaders, sectors=sectors),
+            refusals_fn=orb_refusals,
             priority_fn=day_gains,
+            extra_fn=in_play.symbols if in_play else None,
             record_capped=True,
             house_calls_fn=house_calls.current,
             act_on_calls=settings.intraday_calls_act,
@@ -170,8 +185,9 @@ def run_intraday(live: bool) -> None:
         "this is paper trading to gather live evidence"
     )
     print(
-        "breakout rule (orb-v7): only a stock up 2% on the day while 60% of the stocks are up and its sector is not down, "
-        "the strongest first; every other signal is recorded as skipped"
+        "breakout rule (orb-v8): only a stock up 2% on the day while 60% of all NSE stocks are up and its sector is not down, "
+        "the strongest first; the list is joined during the day by the whole market's liquid movers (up 2%, Rs 5 crore "
+        "traded); every other signal is recorded as skipped"
     )
     print(
         "gap-only (own account): the same gap, bought on the 09:30 close without a breakout, skipping crowded gap days "
@@ -203,6 +219,7 @@ class Angel(NamedTuple):
     tokens: Dict[str, str]
     is_trade_to_trade: Callable[[str], bool]
     breadth: Callable[[], Optional[float]]  # the share of stocks up on the day right now; None when it cannot be measured
+    in_play: InPlay  # the whole market's quotes: its movers join the breakout scan, its gains feed the market checks
 
 
 def start_angel(settings, sessions, universe, notify) -> Optional[Angel]:
@@ -219,12 +236,19 @@ def start_angel(settings, sessions, universe, notify) -> Optional[Angel]:
     regime = RegimeProvider(MarketContextProvider(), sessions)
     context = with_regime(quotes.entry_context, regime)
 
+    in_play = InPlay(lambda: stream.api, tokens, universe, stream.add)
+    in_play.start()
+
     def breadth() -> Optional[float]:
+        """The whole market's share of rising stocks (in-play scan); while that is stale, the list's (the regime's)."""
+        whole = in_play.breadth()
+        if whole is not None:
+            return whole
         now = regime.current()
         share = now.facts.get("breadth") if now else None
         return float(share) if isinstance(share, (int, float)) else None
 
-    return Angel(stream, no_trade_to_trade(context, is_trade_to_trade), tokens, is_trade_to_trade, breadth)
+    return Angel(stream, no_trade_to_trade(context, is_trade_to_trade), tokens, is_trade_to_trade, breadth, in_play)
 
 
 def swing_holdings(sessions) -> Set[str]:

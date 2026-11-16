@@ -45,7 +45,11 @@ STRATEGY_VERSION = "swing-v7"
 #           theirs, and one scan's signals are tried strongest first (was the list's order). Every other signal is recorded
 #           as SKIPPED. Nor is it bought when its sector (Yahoo's, src.data.sectors) is down on the day.
 #           Check on the 8-year bars: about -0.09% a trade in 2026 against -0.22% for the first five in list order.
-INTRADAY_VERSION = "orb-v7"
+#   orb-v8 (2026-11-16, the owner's decision; NOT tested: the 8-year bars hold only 200 large stocks): the orb-v7 rule, but
+#           the scan is joined during the day by the whole NSE market's liquid movers (up 2%, Rs 5 crore traded, not near the
+#           upper circuit; src.data.in_play, at most 100 a day), and the market and sector checks read all NSE stocks rather
+#           than the list. The expected value is orb-v7's (no test of the added stocks exists).
+INTRADAY_VERSION = "orb-v8"
 # The gap-only paper strategy (its own account): a gap >= 2%, bought on the 09:30 close with no breakout. (The gap-and-go account,
 # a gap plus a breakout by 10:30, ran as gapgo-v1 to v3 and was removed on 2026-11-09.)
 # gaponly-v2: v1 plus the universe and Angel One entry checks of orb-v4 (bumped 2026-10-26).

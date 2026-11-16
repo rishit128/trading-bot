@@ -1678,3 +1678,40 @@ Adopted: rounding to the share count nearest the target, at most 25% over it and
 positions (less in fees, but worse over the full period: fewer stocks miss more of the rare big winners) and the 2.5% fee floor
 (worse in both windows). The rounding is a sizing mechanic, not a new signal, and the result is one backtest on today's listings,
 so it is NOT proven. The settings (15 positions, 8.8%, 4% fee cap) are unchanged. Forward test of swing-v7 from 2026-11-16.
+
+## orb-v8: the whole market's movers join the breakout scan (2026-11-16; the owner's decision; NOT tested)
+
+The owner's point: the fixed 500-stock list is not where the day's opportunities are. On 16 Nov at 10:30 (Angel One quotes
+of all 2,748 NSE equities that traded), 45 liquid stocks outside the list were up 2% or more (Rs 5 crore or more traded),
+against 25 inside it; the list and the whole market were equally weak (30% and 32% of stocks up).
+
+- `src/data/in_play.py` quotes every NSE equity every 5 minutes from 09:20 to 14:00 (about 60 requests, about 50 seconds) and
+  adds to the breakout scan the stocks up at least 2% with at least Rs 5 crore traded, priced at Rs 50 or more and not within
+  1% of the upper circuit, the most traded first, at most 100 a day. The stream subscribes them mid-session and fetches their
+  earlier bars, so the rule (09:15 bar range, volume, leader, sector) applies to them unchanged. Trade-to-trade stocks are
+  still refused at entry.
+- The market check (60% of stocks up) and the sector check now read all NSE stocks from the same scan; while the scan is
+  older than 15 minutes they read the list's own bars, leaving out the added stocks (chosen for rising). Broker calls'
+  40% check reads the same whole-market figure.
+- The market check stays. Checked on the 8-year bars before the change (200 stocks, every orb-v6 signal in a stock up 2% or
+  more): -0.14% a trade on days with 60% or more of stocks up (20,901 trades), -0.24% at 40-60%, -0.47% under 40% (2,235),
+  -0.68% under 40% for stocks up 4% or more. A breakout on a falling day lost the most, so falling days stay skipped.
+- No test of the added stocks is possible: the 8-year 5-minute cache holds only 200 large stocks. The forward test of orb-v8
+  starts 2026-11-16; its expected value is orb-v7's.
+
+## Swing exits at the real fees (2026-11-16; `scripts/research_swing_exits.py`; the owner's question): none passed
+
+The owner asked why holdings well up (CUPID +46% at best, CHENNPETRO +6% then -4%) are not sold. The live exits are a 15% stop
+below the entry, a close under the 200-day average and a +100% target. Rerun of the 26 Oct test at the 0.3% plan, tighter
+trails and profit targets added, gate unchanged. 10 years (2017-10-31 to 2026-10-22) / last 3 years:
+
+| exit | return | Sharpe | worst drop | last 3y return | last 3y Sharpe |
+|---|---|---|---|---|---|
+| live (15% stop, MA200, +100% target) | +281% | 0.85 | -50% | +133% | 1.34 |
+| trail 10% / 15% / 20% / 25% / 30% below the high | -72% / +132% / +127% / +87% / +72% | -1.41 to 0.57 | -53% to -73% | -42% to +51% | -0.73 to 0.72 |
+| stop to entry after +10% / +20% | +63% / +78% | 0.37 / 0.42 | -64% / -54% | +81% / +34% | 0.99 / 0.53 |
+| sell at +20% / +30% / +50% | +29% / +146% / +125% | 0.25 / 0.60 / 0.55 | -59% / -49% / -56% | -7% / +8% / +69% | 0.00 / 0.24 / 0.91 |
+
+Why: 32% of the live rule's trades win, and a few large winners carry it (average +6.8% a trade). Any earlier sale cuts those
+winners on an ordinary pull-back, and each extra sale pays about 0.9% plus Rs 23.60 to switch. The exits stay as they are.
+On 16 Nov the 15 holdings were Rs 2,329 up on Rs 19,875 invested and had given back Rs 340 from their best closes.

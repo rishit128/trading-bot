@@ -274,15 +274,20 @@ def weak_sector(symbol: str, sectors: Mapping[str, str], by_sector: Mapping[str,
 
 
 def orb_leaders(
-    bars: Mapping[str, pd.DataFrame], day: date, sectors: Optional[Mapping[str, str]] = None
+    bars: Mapping[str, pd.DataFrame],
+    day: date,
+    sectors: Optional[Mapping[str, str]] = None,
+    market: Optional[Mapping[str, float]] = None,
 ) -> Callable[[str], Optional[str]]:
     """orb-v7's refusals for one scan: (symbol) -> why its breakout is not bought, or None. A breakout is noise unless money
     is really moving into the stock and nothing is pulling against it: the market must be rising (ORB_MIN_BREADTH of the
     scanned stocks above their previous close), the stock must be one of the day's leaders (up ORB_MIN_GAIN on its own) and its
-    industry group must not be down on the day (`sectors`: symbol -> group; None = no sector check)."""
+    industry group must not be down on the day (`sectors`: symbol -> group; None = no sector check). `market` (orb-v8): every
+    NSE stock's gain on the day (src.data.in_play); when given, the market and the sectors are read from it, not from `bars`."""
     gains = day_gains(bars, day)
-    breadth = sum(g > 0 for g in gains.values()) / len(gains) if gains else 0.0
-    by_sector = sector_gains(gains, sectors or {})
+    counted = market if market else gains
+    breadth = sum(g > 0 for g in counted.values()) / len(counted) if counted else 0.0
+    by_sector = sector_gains(counted, sectors or {})
 
     def refusal(symbol: str) -> Optional[str]:
         if len(gains) < GAP_ONLY_MIN_COUNTED * len(bars):

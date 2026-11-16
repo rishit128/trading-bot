@@ -83,6 +83,8 @@ class IntradayEngine:
     # (this scan's bars, today) -> a score by symbol: the scan tries its stocks highest score first (unscored ones last), so the
     # free positions go to the strongest signals and not to the first in the list. None = the list's order
     priority_fn: Optional[Callable[[Dict[str, pd.DataFrame], date], Mapping[str, float]]] = None
+    # orb-v8: stocks added to the scan during the day (src.data.in_play: the whole market's movers). None = the list only
+    extra_fn: Optional[Callable[[], List[str]]] = None
     record_capped: bool = False  # also record (as SKIPPED) the signals the position limit left out: the gap experiments
     # True: the setups of one scan are bought together, the free cash split evenly among them (never under max_position_pct of
     # equity each; the risk_pct stop-loss limit still applies), so 2 qualifying stocks get far more than 20% each. Gap-only.
@@ -257,6 +259,8 @@ class IntradayEngine:
         self._calls = self._read_house_calls()
         added = [s for s in intraday_buys(self._calls, local.date()) if s not in self.universe] if self.act_on_calls else []
         sells = open_sells(self._calls) if self.act_on_calls else {}
+        extra = [s for s in (self.extra_fn() if self.extra_fn else []) if s not in self.universe and s not in added]
+        added = added + extra
         candidates = [s for s in self.universe + added if s not in pf.positions and s not in self._done_today]
         try:
             # the whole list, not just the candidates: the market and sector checks must see the stocks already bought or

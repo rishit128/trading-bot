@@ -229,6 +229,7 @@ class AngelStream:
     ):
         self.sessions, self.notify = sessions, notify
         self.symbols, self.refresh, self.all_tokens = symbols, refresh, tokens
+        self.base = list(symbols)
         self._use_tokens(tokens)
         self.builder = BarBuilder()
         self.lock = threading.Lock()
@@ -238,6 +239,8 @@ class AngelStream:
         self.backfilled = False
         self.alerted_on = ""
         self.logged_in_on = ""
+        self.symbols_day = ""  # the day `symbols` were last reset to the fixed list
+        self.ws: Any = None  # the open websocket, so stocks added mid-session can be subscribed (`add`)
 
     def _use_tokens(self, tokens: Dict[str, str]) -> None:
         self.tokens = {s: tokens[s] for s in self.symbols if s in tokens}
@@ -256,6 +259,22 @@ class AngelStream:
         self.all_tokens.clear()
         self.all_tokens.update(fresh)
         self._use_tokens(self.all_tokens)
+
+    def add(self, symbols: List[str]) -> None:
+        """Stream more stocks from now on (src.data.in_play): subscribe them on the open websocket and fetch their earlier bars
+        in the background. A stock without a token is ignored. The list returns to the fixed one at the next login."""
+        new = [s for s in symbols if s not in self.tokens and s in self.all_tokens]
+        if not new:
+            return
+        self.symbols = list(self.symbols) + new
+        self._use_tokens(self.all_tokens)
+        tokens = {s: self.tokens[s] for s in new}
+        if self.ws is not None:
+            try:
+                self.ws.subscribe("inplay", QUOTE_MODE, [{"exchangeType": 1, "tokens": list(tokens.values())}])
+            except Exception as e:
+                log.warning("could not subscribe %d added stocks (%s: %s)", len(new), type(e).__name__, e)
+        threading.Thread(target=self.backfill, kwargs={"only": tokens}, daemon=True, name="angel-backfill-added").start()
 
     def ready(self) -> bool:
         """True while ticks are arriving and the day's earlier bars are in."""
@@ -315,19 +334,20 @@ class AngelStream:
         with self.sessions() as s:
             return set(s.scalars(select(AngelBarRecord.symbol).where(AngelBarRecord.day < today).distinct()))
 
-    def backfill(self, now: Optional[datetime] = None) -> None:
+    def backfill(self, now: Optional[datetime] = None, only: Optional[Dict[str, str]] = None) -> None:
         """The bars the stream has not seen, from the broker's candles: today's earlier bars, and for a stock with no earlier
         session saved the previous HISTORY_DAYS calendar days too (one request each), so the engines have the previous close
         and time-of-day volumes from the first day. Mid-session it starts at the next bar boundary, so that the bar the stream
         joined in the middle of is complete. Before the open nothing has traded today, so a stock with history needs no
-        request: asking for a range that has not begun fails, and the retries kept the feed on Yahoo until about 10:05."""
+        request: asking for a range that has not begun fails, and the retries kept the feed on Yahoo until about 10:05.
+        `only`: just these stocks (symbol -> token), added mid-session; the stream's readiness is left as it is."""
         now = now or datetime.now(timezone.utc)
         local = now.astimezone(IST)
         if local.time() >= dtime(9, 20):
             time.sleep(max(0.0, (bar_start(now) + BAR - now).total_seconds() + 3))
         before_open = local.time() < SESSION_START
         today, known, failed = local.date(), self.has_history(), 0
-        for symbol, token in self.tokens.items():
+        for symbol, token in (only if only is not None else self.tokens).items():
             if before_open and symbol in known:
                 continue
             start = today if symbol in known else today - timedelta(days=HISTORY_DAYS)
@@ -362,8 +382,9 @@ class AngelStream:
                     rows.append(bar_row(symbol, ts, o, h, low, c, float(v), seen))
             self._insert(rows)
             time.sleep(CANDLE_PACE)
-        log.info("Angel One backfill done for %d stocks (%d requests failed)", len(self.tokens), failed)
-        self.backfilled = True
+        log.info("Angel One backfill done for %d stocks (%d requests failed)", len(only or self.tokens), failed)
+        if only is None:
+            self.backfilled = True
 
     def _alert_once(self, text: str) -> None:
         today = datetime.now(IST).date().isoformat()
@@ -381,7 +402,11 @@ class AngelStream:
     def _stream(self) -> None:
         from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 
+        today = datetime.now(IST).date().isoformat()
+        if self.symbols_day != today:
+            self.symbols, self.symbols_day = list(self.base), today  # yesterday's added stocks go; a reconnect keeps today's
         self.refresh_tokens()
+        self._use_tokens(self.all_tokens)
         self.api, jwt, feed = login()
         self._tell_login()
         ws = SmartWebSocketV2(jwt, os.environ["ANGEL_API_KEY"], os.environ["ANGEL_CLIENT_CODE"], feed)
@@ -390,12 +415,14 @@ class AngelStream:
         ws.on_error = lambda _w, *e: log.warning("Angel One stream error: %s", e)
         stopped = threading.Event()
         ws.on_close = lambda _w: stopped.set()
+        self.ws = ws
         self.builder, self.backfilled = BarBuilder(), False
         threading.Thread(target=ws.connect, daemon=True, name="angel-ws").start()
         threading.Thread(target=self.backfill, daemon=True, name="angel-backfill").start()
         while not stopped.is_set() and self._in_hours():
             time.sleep(SWEEP)
             self.save()
+        self.ws = None
         ws.close_connection()
         self.save(datetime.now(timezone.utc) + BAR)  # the last bar of the session
 

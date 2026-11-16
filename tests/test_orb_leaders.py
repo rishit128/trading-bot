@@ -84,7 +84,8 @@ def test_the_breakout_account_is_wired_to_the_leaders_rule():
     from src.app import intraday_cli
 
     source = inspect.getsource(intraday_cli.run_intraday)
-    assert "refusals_fn=partial(orb_leaders, sectors=sectors)" in source and "priority_fn=day_gains" in source
+    assert "refusals_fn=orb_refusals" in source and "priority_fn=day_gains" in source
+    assert "extra_fn=in_play.symbols" in source and "orb_leaders(scan, day, sectors, market=market)" in source
     assert IntradayEngine.__dataclass_fields__["priority_fn"].default is None
 
 
