@@ -185,7 +185,7 @@ def run_intraday(live: bool) -> None:
         "this is paper trading to gather live evidence"
     )
     print(
-        "breakout rule (orb-v8): only a stock up 2% on the day while 60% of all NSE stocks are up and its sector is not down, "
+        "breakout rule (orb-v9): only a stock up 2% on the day while 55% of all NSE stocks are up and its sector is not down, "
         "the strongest first; the list is joined during the day by the whole market's liquid movers (up 2%, Rs 5 crore "
         "traded); every other signal is recorded as skipped"
     )

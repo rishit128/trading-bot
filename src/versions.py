@@ -49,7 +49,10 @@ STRATEGY_VERSION = "swing-v7"
 #           the scan is joined during the day by the whole NSE market's liquid movers (up 2%, Rs 5 crore traded, not near the
 #           upper circuit; src.data.in_play, at most 100 a day), and the market and sector checks read all NSE stocks rather
 #           than the list. The expected value is orb-v7's (no test of the added stocks exists).
-INTRADAY_VERSION = "orb-v8"
+#   orb-v9 (2026-11-17): orb-v8 with the market line matched to the whole-market count: 55% of all NSE stocks up (60% when
+#           only the list can be read). Small caps are up less often than the ~200 tested stocks, so 60% of the whole market
+#           refused days the test let through (scripts/research_breadth_calibration.py: 55% lets through the same 35% of days).
+INTRADAY_VERSION = "orb-v9"
 # The gap-only paper strategy (its own account): a gap >= 2%, bought on the 09:30 close with no breakout. (The gap-and-go account,
 # a gap plus a breakout by 10:30, ran as gapgo-v1 to v3 and was removed on 2026-11-09.)
 # gaponly-v2: v1 plus the universe and Angel One entry checks of orb-v4 (bumped 2026-10-26).

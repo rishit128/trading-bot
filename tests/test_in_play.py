@@ -124,3 +124,12 @@ def test_the_breakout_scan_includes_the_added_stocks(tmp_path):
     eng.universe = ["AAA"]
     assert "scanned 2 stocks, entered 2" in eng.step()
     assert {h["symbol"] for h in broker.holdings()} == {"AAA", "NEW"}
+
+
+def test_the_whole_market_line_is_fifty_five_percent_and_the_lists_stays_sixty():
+    whole = {f"W{i}": (0.01 if i < 56 else -0.01) for i in range(100)}  # 56% of the whole market up
+    scan = market(up=5, down=5, LEAD=bars(100, 103))  # the list alone: 55% up
+    assert st.orb_leaders(scan, DAY, market=whole)("LEAD") is None
+    thinner = {**whole, **{f"W{i}": -0.01 for i in range(50, 56)}}  # 50% up
+    assert "needs 55%" in st.orb_leaders(scan, DAY, market=thinner)("LEAD")
+    assert "needs 60%" in st.orb_leaders(scan, DAY)("LEAD")

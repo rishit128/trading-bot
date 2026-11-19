@@ -10,6 +10,7 @@ from typing import Callable, Mapping, Optional, Tuple
 import httpx
 
 from src.data.india import IST
+from src.engine.paper_broker import MANUAL_COOLDOWN_DAYS, MANUAL_REASON, PaperBroker
 from src.engine.paper_report import group_by_day, group_by_week, merge_periods, totals
 from src.engine.ports import ListsHoldings, ListsTrades
 
@@ -21,7 +22,8 @@ HELP = (
     "/gaponly - gap-only paper account\n/gaponly_history - gap-only closed trades\n"
     "/news - news-catalyst paper account\n/news_history - news-catalyst closed trades\n"
     "/calls - broker-calls paper account\n/calls_history - broker-calls closed trades\n/pause - stop placing orders\n/resume - allow orders again\n"
-    "/rebase - reset the peak-equity baseline (clears a drawdown halt)"
+    "/rebase - reset the peak-equity baseline (clears a drawdown halt)\n"
+    "/sell SYMBOL - sell a whole swing holding yourself (shows the price first; send it again to sell)"
 )
 
 # The bot token is part of every request URL; never let the HTTP library log it.
@@ -242,6 +244,47 @@ def _rebase(control, broker, cur: str) -> str:
     )
 
 
+CONFIRM_WINDOW_S = 300  # a second /sell SYMBOL within 5 minutes of the preview confirms it
+_sell_previews: dict[str, float] = {}
+
+
+def manual_sell(text: str, broker, settings) -> str:
+    """/sell SYMBOL shows what selling the whole swing holding would give; sending /sell SYMBOL again within 5 minutes (or
+    /sell SYMBOL confirm) sells it (paper, at the live price, with the usual fees). The core-sleeve ETFs are not sold this
+    way: the bot would buy them straight back."""
+    from src.engine import core_sleeve
+
+    words = (text or "").split()[1:]
+    if not words:
+        return "Usage: /sell SYMBOL (for example /sell CUPID). Send the same /sell again within 5 minutes to sell."
+    symbol, confirm = words[0].upper(), len(words) > 1 and words[1].lower() == "confirm"
+    if symbol in core_sleeve.parse(getattr(settings, "core_sleeve", "") or ""):
+        return f"{symbol} is a core index ETF, held on purpose and bought back automatically; it is not sold with /sell."
+    held = next((h for h in broker.holdings() if h["symbol"] == symbol), None)
+    if held is None:
+        return f"{symbol} is not held in the swing account. /positions lists what is."
+    if not broker.is_market_open():
+        return f"The market is closed: {symbol} can be sold with /sell between 09:15 and 15:30 on a trading day."
+    cur = settings.currency
+    previewed = _sell_previews.pop(symbol, None)
+    if previewed is not None and time.monotonic() - previewed <= CONFIRM_WINDOW_S:
+        confirm = True
+    if not confirm:
+        _sell_previews[symbol] = time.monotonic()
+        return (
+            f"{symbol}: {held['qty']} shares bought at {cur}{held['avg_price']:,.2f}, now {cur}{held['price']:,.2f} "
+            f"({held['pnl_pct']:+.1%}, {cur}{held['pnl']:+,.0f} before fees).\n"
+            f"Send /sell {symbol} again within 5 minutes to sell all of it. The bot will not buy {symbol} back for {MANUAL_COOLDOWN_DAYS} days."
+        )
+    fill = broker.sell(symbol, held["qty"], reason=MANUAL_REASON)
+    trade = next((t for t in broker.trade_history(limit=5) if t["symbol"] == symbol), None)
+    after = f", {cur}{trade['net_pnl']:+,.0f} after fees" if trade else ""
+    log.info("manual sell: %s %d at %.2f", symbol, fill.filled_qty, fill.avg_price)
+    return (
+        f"Sold {fill.filled_qty} {symbol} at {cur}{fill.avg_price:,.2f}{after}. Not bought back for {MANUAL_COOLDOWN_DAYS} days."
+    )
+
+
 def _set_paused(control, paused: bool) -> str:
     control.set_paused(paused)
     if paused:
@@ -294,6 +337,8 @@ def handle_command(
         if account is not None:
             handlers[f"/{name}"] = partial(_account_view, account, name, False, cur)
             handlers[f"/{name}_history"] = partial(_account_view, account, name, True, cur)
+    if isinstance(broker, PaperBroker):  # paper only: never a real order
+        handlers["/sell"] = lambda: manual_sell(text, broker, settings)
     if cmd in handlers:
         return handlers[cmd]()
     return HELP + "".join(f"\n{name} - {line}" for name, (line, _) in (extra or {}).items())

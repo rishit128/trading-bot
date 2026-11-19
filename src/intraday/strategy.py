@@ -50,6 +50,10 @@ ORB_RANGE_BARS, ORB_ENTRY_FROM = 1, dtime(9, 20)
 # orb-v7 (2026-11-12): a breakout is bought only in a leader (up at least ORB_MIN_GAIN on its previous close) while the market
 # is rising (at least ORB_MIN_BREADTH of the scanned stocks up on theirs); a scan's signals are tried strongest first
 ORB_MIN_BREADTH, ORB_MIN_GAIN = 0.60, 0.02
+# The same line on the whole NSE market (orb-v8's count): small caps are up less often than the ~200 tested stocks, so 60% of the
+# whole market was a stricter rule than the one tested. 55% lets through the same days (35% of the last 3 years) as 60% on the
+# tested set (scripts/research_breadth_calibration.py, declared before any number, 2026-11-16).
+ORB_MIN_BREADTH_WHOLE = 0.55
 # 2026-11-12 (orb-v7, gaponly-v6): nothing is bought in a stock whose sector is down on the day (the median of its
 # stocks in the scan, at least MIN_SECTOR_STOCKS of them); gap-only also buys nothing in a weak market (under WEAK_BREADTH up)
 MIN_SECTOR_STOCKS = 3
@@ -287,13 +291,14 @@ def orb_leaders(
     gains = day_gains(bars, day)
     counted = market if market else gains
     breadth = sum(g > 0 for g in counted.values()) / len(counted) if counted else 0.0
+    line = ORB_MIN_BREADTH_WHOLE if market else ORB_MIN_BREADTH
     by_sector = sector_gains(counted, sectors or {})
 
     def refusal(symbol: str) -> Optional[str]:
         if len(gains) < GAP_ONLY_MIN_COUNTED * len(bars):
             return f"the market cannot be measured (previous close for only {len(gains)} of {len(bars)})"
-        if breadth < ORB_MIN_BREADTH:
-            return f"weak market: {breadth:.0%} of stocks are up (needs {ORB_MIN_BREADTH:.0%})"
+        if breadth < line:
+            return f"weak market: {breadth:.0%} of stocks are up (needs {line:.0%})"
         gain = gains.get(symbol)
         if gain is None or gain < ORB_MIN_GAIN:
             shown = "unknown" if gain is None else f"{gain:+.1%}"

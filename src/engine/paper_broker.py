@@ -52,6 +52,10 @@ def _newest_finished(bars: pd.DataFrame, now: datetime) -> Optional[datetime]:
     return newest
 
 
+MANUAL_REASON = "MANUAL"  # a sale the owner asked for (/sell)
+MANUAL_COOLDOWN_DAYS = 30  # such a stock is not bought back by the bot for this long (src.pipeline._in_cooldown)
+
+
 @dataclass
 class PaperBroker:
     """Simulated broker for markets with no sandbox: state kept in the database."""
@@ -214,8 +218,8 @@ class PaperBroker:
             s.commit()
             return True
 
-    def sell(self, symbol: str, qty: int) -> Fill:
-        """Simulated market sell of some or all of a position."""
+    def sell(self, symbol: str, qty: int, reason: str = "SIGNAL") -> Fill:
+        """Simulated market sell of some or all of a position (`reason` "MANUAL": the owner's /sell)."""
         with self._lock:
             with self.sessions() as s:
                 pos = s.get(PaperPositionRecord, symbol)
@@ -223,7 +227,7 @@ class PaperBroker:
                     raise ValueError(f"{symbol}: cannot sell {qty}, holding {pos.qty if pos else 0}")
             quote, quote_bar = self._quote(symbol)
             price = quote * (1 - self.slippage)
-            self._close(symbol, qty, price, "SIGNAL", quote_bar)
+            self._close(symbol, qty, price, reason, quote_bar)
             return Fill(f"paper-{uuid.uuid4().hex[:12]}", OrderStatus.FILLED, qty, price)
 
     # ---- internals ----------------------------------------------------------------------------------

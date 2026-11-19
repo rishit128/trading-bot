@@ -64,6 +64,8 @@ def simulate(
     trail_pct: Optional[float] = None,
     lock_at: Optional[float] = None,
     min_ticket: float = 0.0,
+    partial_at: Optional[float] = None,
+    partial_frac: float = 0.5,
 ) -> Result:
     """Replay signals through the real risk engine: next-open fills, stop/target levels off the signal-day close.
 
@@ -78,6 +80,10 @@ def simulate(
     `trail_pct` raises each position's stop to that fraction below its highest high since entry (never lowers it);
     `lock_at` (a gain such as 0.20) first moves the stop to the entry price once the high has gained that much.
     Both apply from the next day's open, like the live broker-side stop moves. Research only: the live bot does neither.
+
+    `partial_at` (a gain such as 0.30) sells `partial_frac` of a position once, at entry * (1 + partial_at) (or the open, when
+    it gaps above), recorded as a "PARTIAL" trade; the rest keeps the normal exits. A day that touches the stop exits fully
+    first (the cautious reading of one daily bar). Research only: the live bot does not do this.
 
     `min_ticket` skips a buy worth less than this in rupees (a fixed charge per sale makes small positions dear). Research only.
 
@@ -111,12 +117,18 @@ def simulate(
         i = df.index.searchsorted(day) - 1
         return float(df["Close"].iloc[i]) if i >= 0 else float("nan")
 
-    def close_position(sym, day, price, reason):
-        """Close a simulated position at a price and record the trade."""
+    def close_position(sym, day, price, reason, qty=None):
+        """Close a simulated position (or `qty` shares of it) at a price and record the trade."""
         nonlocal cash
-        pos = positions.pop(sym)
-        exit_fee = fees(Action.SELL, pos["qty"] * price) if fees else 0.0
-        cash += pos["qty"] * price - exit_fee
+        pos = positions[sym]
+        sold = pos["qty"] if qty is None or qty >= pos["qty"] else qty
+        entry_fee = pos["entry_fee"] * sold / pos["qty"]
+        if sold == pos["qty"]:
+            positions.pop(sym)
+        else:
+            pos["qty"], pos["entry_fee"] = pos["qty"] - sold, pos["entry_fee"] - entry_fee
+        exit_fee = fees(Action.SELL, sold * price) if fees else 0.0
+        cash += sold * price - exit_fee
         trades.append(
             Trade(
                 sym,
@@ -124,9 +136,9 @@ def simulate(
                 pos["entry_price"],
                 day,
                 price,
-                pos["qty"],
+                sold,
                 reason,
-                fees=exit_fee + pos["entry_fee"],
+                fees=exit_fee + entry_fee,
                 stop=pos["stop"],
                 target=pos["target"],
             )
@@ -213,6 +225,12 @@ def simulate(
                 close_position(sym, day, pos["stop"], "STOP")
             elif row.High >= pos["target"]:
                 close_position(sym, day, pos["target"], "TARGET")
+            elif partial_at is not None and not pos.get("partial_done"):
+                level = pos["entry_price"] * (1 + partial_at)
+                qty = int(pos["qty"] * partial_frac)
+                if row.High >= level and 0 < qty < pos["qty"]:
+                    pos["partial_done"] = True
+                    close_position(sym, day, max(level, float(row.Open)), "PARTIAL", qty)
 
         if trail_pct is not None or lock_at is not None:
             for sym, pos in positions.items():

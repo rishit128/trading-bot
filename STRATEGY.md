@@ -1715,3 +1715,108 @@ trails and profit targets added, gate unchanged. 10 years (2017-10-31 to 2026-10
 Why: 32% of the live rule's trades win, and a few large winners carry it (average +6.8% a trade). Any earlier sale cuts those
 winners on an ordinary pull-back, and each extra sale pays about 0.9% plus Rs 23.60 to switch. The exits stay as they are.
 On 16 Nov the 15 holdings were Rs 2,329 up on Rs 19,875 invested and had given back Rs 340 from their best closes.
+
+## Swing: book half the profit at a target (2026-11-16; `scripts/research_swing_partial.py`): none passed
+
+The owner's question: profits come and go while a winner is held. Pre-declared before any result: sell half the shares once the
+high reaches +20% / +30% / +50% (`simulate(partial_at=...)`), the rest on the live exits; the 16 Nov exit gate word for word.
+
+| Rule | Full: return | Sharpe | Worst | Last 3y: return | Sharpe | Worst |
+|---|---|---|---|---|---|---|
+| Live exits | +281% | 0.85 | -50.0% | +133% | 1.34 | -29.2% |
+| Half at +20% | +185% | 0.71 | -46.7% | +78% | 1.03 | -37.0% |
+| Half at +30% | +204% | 0.75 | -55.5% | +90% | 1.10 | -36.5% |
+| Half at +50% | +322% | 0.91 | -50.1% | +59% | 0.82 | -40.6% |
+
+Booking half wins more often (45-57% of trades against 32%) but earns less in the last three years in every row, with deeper falls;
+half at +50% is better over the full period only, from its first years. The live exits stay.
+
+## orb-v9: the market line matched to the whole-market count (2026-11-17; `scripts/research_breadth_calibration.py`)
+
+orb-v8 counts every NSE stock for the "market rising" check but kept the 60% line set on the ~200 tested stocks. Declared before
+any number: daily close-to-close breadth over the last 3 years from Angel One daily bars; the whole-market line that lets through
+the same share of days as 60% on the tested set replaces 60% if it differs by 5 points or more.
+
+| Stocks up on the day | Median | Days at 60%+ |
+|---|---|---|
+| Tested set (201) | 51% | 35% |
+| Live list (500) | 50% | 31% |
+| Whole market (2,985) | 48% | 27% |
+
+The matched line is 54.7%, so 55% (days classified alike with the tested set: 86%, against 85% at 60%). From 2026-11-17 the
+breakout account needs 55% of all NSE stocks up, and 60% when only the list can be read. 16 Nov itself was refused either way
+(whole market 30%, tested set 40%). The gap-only (list count, 40%) and broker-calls (40%) lines were not part of this test.
+
+## A short-term (2-20 session) delivery account: seven candidates, none passed (2026-11-16; ST1-ST7)
+
+Pre-declared in `scripts/research_short_term.py` before the data was downloaded. Angel One daily bars, 2,398 NSE stocks with 300+
+sessions, Nov 2016 to Nov 2026; judged at Rs 10,000 a trade, where a round trip costs 1.17% in fees plus 0.10% slippage.
+
+| Rule | Trades | Gross | Net | t | Beats the median stock by | Years profitable |
+|---|---|---|---|---|---|---|
+| ST1 RSI(2) dip in an uptrend | 31,074 | +0.62% | -0.65% | -12.7 | +0.72% (t 12.6) | 1/10 |
+| ST2 three-day sell-off in a strong trend | 20,652 | +0.77% | -0.50% | -10.3 | +0.79% (t 11.6) | 2/10 |
+| ST3 momentum leader back at its 20-day average | 9,090 | +0.54% | -0.73% | -5.5 | +0.35% (t 2.8) | 4/10 |
+| ST4 NR7 inside-day breakout | 15,574 | -0.13% | -1.40% | -22.5 | -0.32% | 0/10 |
+| ST5 weekly momentum top 10 | 4,800 | +0.27% | -0.99% | -4.6 | +0.32% (t 2.0) | 2/10 |
+| ST6 weekly reversal, 10 biggest losers | 4,800 | +0.57% | -0.70% | -3.8 | +0.62% (t 6.1) | 0/10 |
+| ST7 20-day breakout without a gap | 17,928 | +0.25% | -1.02% | -7.2 | +0.24% (t 0.3) | 3/10 |
+
+Every rule loses after costs, in both halves and from Nov 2024 alone; at Rs 25,000 a trade too (ST2 best, -0.36%). The dip rules
+(ST1, ST2, ST6) do find a real edge over the average stock, +0.6% to +0.8% a trade, but a delivery round trip on this account's
+plan (0.3% brokerage a side, STT 0.1% a side, Rs 23.60 DP) costs about twice that. No short-term delivery account is opened.
+Not re-run with other thresholds; a new idea is a new test.
+
+## Swing: skip a buy already up a lot over the last month (2026-11-18; `scripts/research_swing_runup.py`; the owner's question): none passed
+Owner's idea: a stock already up a lot in the past month still looks strong to the scanner but may fall back. Tested on Angel One
+daily bars (2,398 NSE stocks, 2017-11 to 2026-11, live configuration and real fees): drop a candidate whose close is more than X
+above its close 21 sessions earlier, before the top-N cut. Gate as for the exit tests (pre-declared). Log `logs/research_swing_runup.log`.
+
+| Skip if 1-month gain above | Full: return, Sharpe, maxDD | Last 3y: return, Sharpe, maxDD |
+|---|---|---|
+| none (live) | +99%, 0.48, -53.6% | +178%, 1.57, -33.6% |
+| 10% | +309%, 0.89, -38.9% | +49%, 0.70, -46.3% |
+| 15% | +159%, 0.62, -49.7% | +74%, 0.90, -30.1% |
+| 20% | +233%, 0.76, -51.8% | +59%, 0.78, -35.7% |
+| 25% | +199%, 0.71, -48.1% | +46%, 0.66, -33.4% |
+| 30% | +222%, 0.74, -50.9% | +90%, 1.04, -33.9% |
+
+All fail: every variant beats the live rule over 9 years but loses badly over the last 3. The live rule's own trades split by the
+1-month gain before the buy show no "already up, so it falls" pattern: full period up to 10% +7.1% (217), 10-20% -6.4% (66),
+20-30% +3.7% (20), over 30% +8.3% (20); last 3 years +11.3% (64), +0.2% (20), -7.1% (13), +34.8% (5). The big run-ups did best;
+the differences between rows come from which other stocks fill the freed slots, not from avoiding losers. RSI(14) < 70 stays the
+only stretch filter.
+
+## Short-term account, round 2: seven more candidates, none passed (2026-11-18; SU1-SU7; `scripts/research_short_term2.py`)
+Owner asked for more research after ST1-ST7. Round 2 aimed at bigger moves (market washouts, turn of the month, upper-limit closes,
+quiet pull-backs, leaders in weak markets, first 52-week highs after a base, 4-week risk-adjusted momentum); same data, costs,
+control and gate as round 1. Log `logs/research_short_term2.log`.
+
+| Rule | Trades | Gross | Net | t | Excess (t) | Years + |
+|---|---|---|---|---|---|---|
+| SU1 washout rebound | 173 | +3.47% | +2.21% | 0.5 | -0.33% (-1.7) | 3/4 |
+| SU2 turn of month | 2,220 | +0.61% | -0.66% | -2.3 | +0.10% (0.5) | 2/10 |
+| SU3 upper-limit close | 536 | -0.37% | -1.63% | -2.8 | -0.43% | 1/7 |
+| SU4 quiet pull-back | 1,893 | -0.04% | -1.31% | -4.0 | -0.07% | 2/9 |
+| SU5 leaders, weak market | 770 | -0.52% | -1.79% | -3.2 | -0.80% | 1/8 |
+| SU6 first 52-week high | 1,428 | +1.85% | +0.58% | 1.0 | +1.48% (2.9) | 5/10 |
+| SU7 4-week momentum | 815 | +2.52% | +1.26% | 1.5 | +2.18% (3.1) | 8/10 |
+
+All fail. The two that clear costs on average are both momentum held 4-6 weeks (SU6, SU7): their edge over the median stock is
+real (t about 3), but the date-clustered t of the net is only 1.0-1.5 because their trades bunch on few dates and move with the
+market. The lesson of both rounds: in this account's delivery costs, only effects held about a month or more are large enough;
+that is the swing account's own momentum effect on a shorter clock. Nothing re-run with other thresholds.
+
+## Short-term round 3: SU7 with profit-target exits (2026-11-19; SV1-SV4; `scripts/research_short_term3.py`; the owner's idea): none passed
+Same entries as SU7; exit at a profit target or a stop, at most 60 sessions. Log `logs/research_short_term3.log`.
+
+| Exit | Trades | Net | t | Excess (t) | Years + | From Nov 2024 |
+|---|---|---|---|---|---|---|
+| SU7: 20 sessions | 815 | +1.26% | 1.5 | +2.18% (3.1) | 8/10 | +1.57% |
+| SV1 +8% / stop 8% | 1,044 | -0.47% | -1.3 | +0.45% | 4/10 | -0.52% |
+| SV2 +10% / stop 8% | 1,027 | -0.30% | -0.6 | +0.47% | 5/10 | -0.49% |
+| SV3 +15% / stop 10% | 954 | +0.64% | 1.2 | +1.09% (2.6) | 7/10 | +0.01% |
+| SV4 +20% / stop 10% | 911 | +1.28% | 1.8 | +1.49% (2.9) | 7/10 | -0.07% |
+
+Small targets cut the winners that pay for the losers (as with the swing targets); +20% only matches the 20-session hold over 10
+years and is worse in the recent market. The time exit stays the better of the two for these entries.

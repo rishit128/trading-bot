@@ -55,9 +55,9 @@ ACCOUNTS = {
         INTRADAY_VERSION,
         0.0025,
         -0.0009,
-        "orb-v7 on the Angel One bars of 2026, 2,110 signals (orb-v8 adds the whole market's movers, untested)",
+        "orb-v7 on the Angel One bars of 2026, 2,110 signals (orb-v8/v9 add the whole market's movers, untested)",
         True,
-        "2026-11-16",
+        "2026-11-17",
     ),
     "gaponly": Account(
         "gaponly.db",

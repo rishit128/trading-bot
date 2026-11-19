@@ -23,6 +23,7 @@ from src.database import DecisionRecord, EquityRecord, OrderRecord
 from src.engine import core_sleeve
 from src.engine.agent_signal import AgentSignal, SignalDetails
 from src.engine.enums import NOT_A_PLACED_BUY, SILENT_STATUSES, Action, DecisionSource, OrderStatus
+from src.engine.paper_broker import MANUAL_COOLDOWN_DAYS, MANUAL_REASON
 from src.engine.ports import Broker, ChargesFees, ListsHoldings, ListsTrades
 from src.engine.risk_engine import Portfolio, RiskDecision, RiskEngine, drawdown_pause
 from src.engine.rules import rule_verdict
@@ -542,11 +543,17 @@ class TradingPipeline:
     def _in_cooldown(self, symbol: str) -> bool:
         """True when `symbol` was bought, or stopped out, within the cooldown (STRATEGY.md: a stop-out is not re-bought for 24
         hours). The broker closes a stop on its own, so a stop-out is read from its trade history, not from our orders."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=self.settings.rebuy_cooldown_hours)
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=self.settings.rebuy_cooldown_hours)
+        manual_cutoff = now - timedelta(days=MANUAL_COOLDOWN_DAYS)
         if isinstance(self.broker, ListsTrades):
-            stopped = (t for t in self.broker.trade_history(limit=STOP_LOOKBACK) if t["closed_at"] >= cutoff)
-            if any(t["symbol"] == symbol and t["reason"] == "STOP" for t in stopped):
-                return True
+            for t in self.broker.trade_history(limit=STOP_LOOKBACK):
+                if t["symbol"] != symbol:
+                    continue
+                if t["reason"] == "STOP" and t["closed_at"] >= cutoff:
+                    return True
+                if t["reason"] == MANUAL_REASON and t["closed_at"] >= manual_cutoff:  # the owner's /sell
+                    return True
         with self.sessions() as s:
             recent = s.scalar(
                 select(OrderRecord.id)
